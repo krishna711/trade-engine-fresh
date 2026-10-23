@@ -1,0 +1,94 @@
+Fresh Trade Engine
+
+I want to build fresh trade engine that is capable of running any kind of complex strategies. fault proof architecture. component based micro service architecture so one does not affect another if anything goes wrong while sharing same database.
+
+Phase 1
+-- Feed Manager (Micro Service)
+   -- Support Broker. IIFL XTS, SHOONYA, FYERS (Automatic Switch on failover based on priority set)
+   -- Support these segment NSE, NFO, BSE, BSEFO, MCX, MCXFO
+   -- In First Phase cover XTS and SHOONYA only
+   -- Default subscription, NIFTY, BANKNIFTY, SENSEX, (CRUDEOIL, NATURALGAS, GOLD, SILVER -> Current Month Future) Future should change automatically on next day of expiry.  
+   -- Feed Consumer - Frontend and Strategy Manager
+
+Phase 2 (Independent Module)
+-- Broker Order Manager
+   -- Support Broker, XTS, KOTAKNEO, SHOONYA, ZERODHA, DHAN, FYERS
+   -- Solid Order Reconcile via Socket and Webhook wherever supported and applicable.
+   -- Universal symbol mapping across all broker. 
+
+Phase 3
+-- Strategy Manager (Independent Module) Each strategy should be separate from each other. 
+   -- I want a strategy to run on own container so it get never disturb other strategy when new strategy added or other strategy code updated.
+   -- One strategy can map to multiple broker/client and fire order in parallel.
+   -- There should be option to duplicate strategy in cases when we need to run with different parameter or different symbols. main logic will be same.
+
+Since, all three components will run on same server and codebase it will be easier so they can communicate with each other locally instead of web api. Use web api for frontend and for component communication local api path so save network latency. 
+
+Front End Requirements
+
+Dashboard Page
+
+Header
+- Logo - Menus - PNL - U(Unrealised) R(Running) T(Total) - Current User Menu with logout option, dark/light theme switcher, setting page link.
+
+Ticker Row: 
+-- Default Instruments prices. scroll if does not fit in the available space.
+
+Client Cards
+-- List of all client/broker account list.
+-- Each Card show Unrealised/Realised/Total pnl across total strategies running in that account
+-- Paper/Live Mode Switcher
+-- Login Button/Terminate Button/Square Off prominent button. In sidemenu. option to view OrderBook, Trades, Position Net/Day, Holdings, Margins/Balance etc
+
+Strategy Lists
+-- Columns to show
+-- -- Client Name(with status active/inactive
+-- -- Strategy Name Admin (admin user will see this name)
+-- -- Strategy Name User (non admin user will see this only without slug everywhere in the application)
+-- -- Status - Running/Stopped
+-- -- Last Trade (Open/Closed)
+-- -- Start Date Time
+-- -- End Date Time
+-- -- PNL (include U/R/T, second row-show entry/exit price of last trade. in multi leg, show all legs entry exit prices.
+-- -- Action Menu - Enable/Disable, Terminate, SquareOff, Strategy Chart, Recent Trade List(include all legs in multileg), Strategy Log
+
+Strategies Page (This page will be available to admin only)
+
+-- Strategy List ( we have coded and registered in the system those are ready to map to client)
+
+-- Columns
+-- -- key (Only show to admin user)
+-- -- name admin (For Admin)
+-- -- name user (For Non Admin User)
+-- -- default config
+-- -- created
+
+Status Page - 
+ -- First Requirement - Most Important - Without healthy feed manager we won't be succeed.
+ -- Add Test Cases so we can just run if anything is not working correctly. 
+    -- Test Case Could be - 
+       -- 1 Symbol Subscription from each segment. 
+       -- OHLC fetch for one symbol from each segment.
+
+  -- Order Test With Order Status Update in real time - 
+     -- 1 Order Test from each segment. 
+
+Logs/Events page 
+  -- Clear Log - No Noise
+  -- Divide into three part. Use Single Table - Separate Menu with Strategy Level Filtering
+     -- Broker API Log - ERROR/SUCCESS
+     -- Feed Subscription - ERROR/SUCCESS/DATA RECIEVING -> Include OHLC Fetch ERROR/SUCCESS/EMPTY RESULT
+     -- Strategy Decision Log - 
+     -- HIGHLIGHT ANY ERROR PROMPTY so error can never sit in log only and DISMIS when user dismiss it. This way we will be able to fix it in first place.
+  -- I need strategy level consolidated log as well which include all type of log with timestamp for quick view.
+     -- Should show like this - for example: strategy using 1 hour ohlc.
+        -- Candle Fetch Success 
+	-- ENTRY CONDITION MATCH/NOT MATCH
+        -- ORDER SENT TO BROKER
+        -- ORDER FILLED/FAILED
+        -- TRADE ACTIVE
+        -- TRACKING SL/TARGET
+        -- AND SO ON - It will give us clear view what happened at first glance. 
+
+
+s

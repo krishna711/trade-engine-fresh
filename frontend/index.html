@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fresh Trade Engine | Fault-Proof Algorithmic Trading Architecture</title>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Chart.js for high performance strategy charting -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+
+    <!-- ===================================================================
+         APP HEADER
+         =================================================================== -->
+    <header class="app-header">
+        <div class="header-container">
+            <div class="brand-section">
+                <div class="logo-badge" title="Fresh Trade Engine">⚡</div>
+            </div>
+
+            <!-- Navigation Tabs -->
+            <nav class="nav-menu">
+                <button class="nav-btn active" data-view="dashboard" id="nav-dashboard">
+                    <span>📊</span> Dashboard
+                </button>
+                <button class="nav-btn" data-view="strategies" id="nav-strategies">
+                    <span>⚙️</span> Strategies <span class="brand-tag" style="font-size: 0.6rem; margin-left: 2px;">ADMIN</span>
+                </button>
+                <button class="nav-btn" data-view="status" id="nav-status">
+                    <span>🩺</span> Status & Diagnostics
+                </button>
+                <button class="nav-btn" data-view="logs" id="nav-logs">
+                    <span>📜</span> Logs & Events
+                </button>
+            </nav>
+
+            <!-- Consolidated PnL Widget (Short U: R: T:) -->
+            <div class="header-pnl-widget">
+                <div class="pnl-inline-item">
+                    <span class="pnl-tag">U:</span>
+                    <span class="pnl-val pnl-positive" id="header-unrealized-pnl">+₹0.00</span>
+                </div>
+                <div class="pnl-divider">|</div>
+                <div class="pnl-inline-item">
+                    <span class="pnl-tag">R:</span>
+                    <span class="pnl-val pnl-positive" id="header-realized-pnl">+₹0.00</span>
+                </div>
+                <div class="pnl-divider">|</div>
+                <div class="pnl-inline-item">
+                    <span class="pnl-tag">T:</span>
+                    <span class="pnl-val pnl-positive" id="header-total-pnl">+₹0.00</span>
+                </div>
+            </div>
+
+            <!-- Header Controls & User Menu -->
+            <div class="header-controls">
+                <!-- Admin vs User View Switcher -->
+                <div class="role-switcher" title="Toggle Admin vs Non-Admin User view">
+                    <button class="role-btn active" id="btn-role-admin">ADMIN</button>
+                    <button class="role-btn" id="btn-role-user">USER</button>
+                </div>
+
+                <!-- Dark / Light Theme Toggle -->
+                <button class="icon-btn" id="btn-theme-toggle" title="Toggle Dark/Light Theme">
+                    🌓
+                </button>
+
+                <!-- Broker & Feed Settings -->
+                <button class="icon-btn" id="btn-open-settings" title="Broker Feed & API Credentials">
+                    ⚙️
+                </button>
+
+                <!-- WebSocket Connection Status Dot -->
+                <div class="status-pill status-running" id="ws-status-badge" title="WebSocket Live Stream">
+                    <span class="status-dot"></span> <span id="ws-status-text">LIVE</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- ===================================================================
+         REAL-TIME TICKER ROW (Default Instruments)
+         =================================================================== -->
+    <div class="ticker-row-wrapper">
+        <div class="ticker-track" id="ticker-track">
+            <!-- Dynamically populated default instruments: NIFTY, BANKNIFTY, SENSEX, CRUDEOIL, NATURALGAS, GOLD, SILVER -->
+            <div class="ticker-item"><span class="ticker-name">Loading Live Feeds...</span></div>
+        </div>
+    </div>
+
+    <!-- ===================================================================
+         MAIN WORKSPACE CONTENT
+         =================================================================== -->
+    <main class="main-content">
+
+        <!-- Prompt Error Banner (Top of page if any unhandled/active error exists) -->
+        <div id="top-error-banner-container"></div>
+
+        <!-- ===============================================================
+             VIEW 1: DASHBOARD
+             =============================================================== -->
+        <section class="view-section active" id="view-dashboard">
+            
+            <!-- CLIENT CARDS SECTION -->
+            <div class="dashboard-block">
+                <div class="section-header" style="margin-bottom: 0.75rem;">
+                    <h2>👥 Client & Broker Accounts</h2>
+                    <div class="section-actions">
+                        <span style="font-size: 0.8rem; color: var(--text-muted);">Parallel Execution Enabled</span>
+                    </div>
+                </div>
+
+                <div class="client-cards-grid" id="client-cards-grid">
+                    <!-- Client Cards dynamically injected here -->
+                </div>
+            </div>
+
+            <!-- STRATEGY LISTS SECTION -->
+            <div class="dashboard-block" style="margin-top: 1.25rem;">
+                <div class="section-header" style="margin-bottom: 0.75rem;">
+                    <h2>⚡ Active Strategy Instances</h2>
+                    <div class="section-actions">
+                        <button class="action-btn-sm" id="btn-deploy-new-strategy" style="background: var(--accent-blue); color: white; padding: 0.4rem 0.8rem;">
+                            + Deploy Strategy
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-card">
+                    <div class="table-responsive">
+                        <table class="data-table" id="strategy-instances-table">
+                            <thead>
+                                <tr>
+                                    <th>Client / Account</th>
+                                    <th id="th-strategy-name">Strategy Name</th>
+                                    <th>Status</th>
+                                    <th>Last Trade</th>
+                                    <th>Start Time</th>
+                                    <th>End Time</th>
+                                    <th>PNL & Leg Details</th>
+                                    <th style="text-align: right;">Action Menu</th>
+                                </tr>
+                            </thead>
+                            <tbody id="strategy-instances-tbody">
+                                <!-- Populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ===============================================================
+             VIEW 2: STRATEGIES PAGE (Admin Only)
+             =============================================================== -->
+        <section class="view-section" id="view-strategies">
+            <div class="section-header" style="margin-bottom: 1rem;">
+                <div>
+                    <h2>🛠️ Registered Strategy Repository (Admin Only)</h2>
+                    <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">
+                        Coded and registered base strategies in the system ready to map to clients with container isolation.
+                    </p>
+                </div>
+            </div>
+
+            <div class="table-card">
+                <div class="table-responsive">
+                    <table class="data-table" id="strategy-templates-table">
+                        <thead>
+                            <tr>
+                                <th>Key (Admin Only)</th>
+                                <th>Name (Admin)</th>
+                                <th>Name (User Visible)</th>
+                                <th>Default Config</th>
+                                <th>Registered Date</th>
+                                <th style="text-align: right;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="strategy-templates-tbody">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===============================================================
+             VIEW 3: STATUS & DIAGNOSTICS PAGE
+             =============================================================== -->
+        <section class="view-section" id="view-status">
+            <!-- Feed Manager Health -->
+            <div class="section-header" style="margin-bottom: 1rem;">
+                <div>
+                    <h2>🩺 Feed Manager Health & Broker Status</h2>
+                    <p style="font-size: 0.8rem; color: var(--text-muted);">
+                        Phase 1 Microservice: Automatic failover between XTS, Shoonya, and Fyers based on priority set.
+                    </p>
+                </div>
+                <div class="section-actions">
+                    <button class="action-btn-sm" id="btn-trigger-failover" style="background: var(--accent-amber); color: black; font-weight: 700;">
+                        🔄 Trigger Failover Test
+                    </button>
+                </div>
+            </div>
+
+            <div class="client-cards-grid" id="feed-broker-cards" style="margin-bottom: 2rem;">
+                <!-- Feed broker cards (XTS, Shoonya, Fyers) -->
+            </div>
+
+            <!-- Diagnostics Test Suite -->
+            <div class="section-header" style="margin-bottom: 1rem;">
+                <div>
+                    <h2>🧪 Segment Diagnostics Test Suite</h2>
+                    <p style="font-size: 0.8rem; color: var(--text-muted);">
+                        Run live tests across all 6 supported segments: NSE, NFO, BSE, BSEFO, MCX, MCXFO.
+                    </p>
+                </div>
+                <div class="section-actions">
+                    <button class="action-btn-sm" id="btn-run-all-tests" style="background: var(--accent-blue); color: white; font-weight: 700;">
+                        ▶️ Run All Diagnostic Tests
+                    </button>
+                </div>
+            </div>
+
+            <!-- Test 1: Symbol Subscription & OHLC Fetch per segment -->
+            <div class="table-card" style="margin-bottom: 1.5rem;">
+                <div style="padding: 0.85rem 1.25rem; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: 600; font-size: 0.9rem;">Test Suite 1: Symbol Subscription & OHLC Fetch (1 Symbol per Segment)</span>
+                    <button class="action-btn-sm" id="btn-run-feed-test">Run Feed Test</button>
+                </div>
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Segment</th>
+                                <th>Test Symbol</th>
+                                <th>Subscription Status</th>
+                                <th>OHLC Fetch Status</th>
+                                <th>Bars Fetched</th>
+                                <th>Latest LTP</th>
+                                <th>Latency</th>
+                                <th>Result</th>
+                            </tr>
+                        </thead>
+                        <tbody id="feed-test-results-tbody">
+                            <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Click "Run Feed Test" to execute test cases across NSE, NFO, BSE, BSEFO, MCX, MCXFO</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Test 2: Order Test with real-time status update per segment -->
+            <div class="table-card">
+                <div style="padding: 0.85rem 1.25rem; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: 600; font-size: 0.9rem;">Test Suite 2: Real-time Order Execution (1 Order per Segment)</span>
+                    <button class="action-btn-sm" id="btn-run-order-test">Run Order Test</button>
+                </div>
+                <div class="table-responsive">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Segment</th>
+                                <th>Test Symbol</th>
+                                <th>Client Account</th>
+                                <th>Order ID</th>
+                                <th>Broker Ref ID</th>
+                                <th>Status</th>
+                                <th>Fill Price</th>
+                                <th>Latency</th>
+                            </tr>
+                        </thead>
+                        <tbody id="order-test-results-tbody">
+                            <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Click "Run Order Test" to test order execution across all 6 segments</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- ===============================================================
+             VIEW 4: LOGS & EVENTS PAGE
+             =============================================================== -->
+        <section class="view-section" id="view-logs">
+            <div class="section-header" style="margin-bottom: 1rem;">
+                <div>
+                    <h2>📜 Logs & Events (Clean & Divided)</h2>
+                    <p style="font-size: 0.8rem; color: var(--text-muted);">
+                        Zero noise architecture. Promptly highlighted error alerts with instant dismissal.
+                    </p>
+                </div>
+                <div class="section-actions">
+                    <select id="logs-strategy-filter" class="action-btn-sm" style="background: var(--bg-tertiary);">
+                        <option value="">All Strategies</option>
+                    </select>
+                    <button class="action-btn-sm" id="btn-dismiss-all-errors">Dismiss All Errors</button>
+                </div>
+            </div>
+
+            <!-- Tabbed Log Filter -->
+            <div class="drawer-tabs" style="margin-bottom: 1rem; border-radius: 6px; border: 1px solid var(--border-color);">
+                <button class="drawer-tab-btn active" data-log-cat="">All Logs</button>
+                <button class="drawer-tab-btn" data-log-cat="BROKER_API">1. Broker API Log (ERROR/SUCCESS)</button>
+                <button class="drawer-tab-btn" data-log-cat="FEED_SUBSCRIPTION">2. Feed Subscription & OHLC</button>
+                <button class="drawer-tab-btn" data-log-cat="STRATEGY_DECISION">3. Strategy Decision Log</button>
+            </div>
+
+            <div class="table-card">
+                <div class="table-responsive">
+                    <table class="data-table" id="system-logs-table">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Category</th>
+                                <th>Level</th>
+                                <th>Strategy / Symbol / Client</th>
+                                <th>Message</th>
+                                <th style="text-align: right;">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="system-logs-tbody">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- ===================================================================
+         SIDE-OVER DRAWER: CLIENT ACCOUNT DETAILS
+         =================================================================== -->
+    <div class="drawer-overlay" id="drawer-overlay"></div>
+    <div class="side-drawer" id="side-drawer">
+        <div class="drawer-header">
+            <div>
+                <h3 id="drawer-client-name">Account Details</h3>
+                <span id="drawer-client-id" style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);"></span>
+            </div>
+            <button class="icon-btn" id="drawer-close-btn">&times;</button>
+        </div>
+
+        <div class="drawer-tabs">
+            <button class="drawer-tab-btn active" data-drawer-tab="positions">Positions (Net/Day)</button>
+            <button class="drawer-tab-btn" data-drawer-tab="orders">OrderBook</button>
+            <button class="drawer-tab-btn" data-drawer-tab="trades">Trades</button>
+            <button class="drawer-tab-btn" data-drawer-tab="holdings">Holdings</button>
+            <button class="drawer-tab-btn" data-drawer-tab="margins">Margins & Balance</button>
+        </div>
+
+        <div class="drawer-body" id="drawer-body-content">
+            <!-- Dynamically populated tab content -->
+        </div>
+    </div>
+
+    <!-- ===================================================================
+         MODAL 1: STRATEGY INTERACTIVE CHART
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-chart">
+        <div class="modal-box" style="width: 800px;">
+            <div class="modal-header">
+                <div>
+                    <h3 id="chart-strategy-title">Strategy Chart</h3>
+                    <span id="chart-symbol-subtitle" style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);"></span>
+                </div>
+                <button class="icon-btn modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body" style="height: 380px;">
+                <canvas id="strategy-chart-canvas"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================
+         MODAL 2: STRATEGY RECENT TRADES (Multi-Leg Support)
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-trades">
+        <div class="modal-box" style="width: 700px;">
+            <div class="modal-header">
+                <div>
+                    <h3 id="trades-strategy-title">Recent Trades (All Legs)</h3>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">Multi-leg execution audit</span>
+                </div>
+                <button class="icon-btn modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body" id="trades-modal-content">
+                <!-- Injected dynamically -->
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================
+         MODAL 3: STRATEGY CONSOLIDATED DECISION LOG (Chronological Timeline)
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-strategy-logs">
+        <div class="modal-box" style="width: 700px;">
+            <div class="modal-header">
+                <div>
+                    <h3 id="strat-logs-title">Strategy Decision Timeline</h3>
+                    <p style="font-size: 0.75rem; color: var(--text-muted);">
+                        Candle Fetch → Condition Match → Order Sent → Order Filled → Active → SL/Target
+                    </p>
+                </div>
+                <button class="icon-btn modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="timeline-container" id="strat-timeline-container">
+                    <!-- Step-by-step audit entries -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================
+         MODAL 4: DUPLICATE STRATEGY MODAL
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-duplicate">
+        <div class="modal-box" style="width: 550px;">
+            <div class="modal-header">
+                <h3>Duplicate Strategy Instance</h3>
+                <button class="icon-btn modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 1rem;">
+                <p style="font-size: 0.8rem; color: var(--text-muted);">
+                    Create an isolated copy running on its own container with customized parameters or different symbols.
+                </p>
+                <div>
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Strategy Admin Name</label>
+                    <input type="text" id="dup-name-admin" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px;">
+                </div>
+                <div>
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Strategy User Name (Clean, Non-Admin)</label>
+                    <input type="text" id="dup-name-user" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px;">
+                </div>
+                <div>
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Trading Symbol</label>
+                    <select id="dup-symbol" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px;">
+                        <option value="NSE:NIFTY">NSE:NIFTY (NIFTY 50)</option>
+                        <option value="NSE:BANKNIFTY">NSE:BANKNIFTY (BANK NIFTY)</option>
+                        <option value="BSE:SENSEX">BSE:SENSEX</option>
+                        <option value="MCX:CRUDEOIL">MCX:CRUDEOIL (Current Fut)</option>
+                        <option value="MCX:NATURALGAS">MCX:NATURALGAS (Current Fut)</option>
+                        <option value="MCX:GOLD">MCX:GOLD (Current Fut)</option>
+                        <option value="MCX:SILVER">MCX:SILVER (Current Fut)</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Custom Parameters (JSON)</label>
+                    <textarea id="dup-config-json" rows="4" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.8rem; border-radius: 6px; margin-top: 4px;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="action-btn-sm modal-close-btn">Cancel</button>
+                <button class="action-btn-sm" id="btn-submit-duplicate" style="background: var(--accent-blue); color: white; font-weight: 600;">
+                    Duplicate & Deploy
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================
+         MODAL 5: BROKER & FEED SETTINGS MODAL (XTS Live Feed Credentials)
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-settings">
+        <div class="modal-box" style="width: 600px;">
+            <div class="modal-header">
+                <div>
+                    <h3>Broker & Feed Settings</h3>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">Configure Live Market Data & Broker APIs</span>
+                </div>
+                <button class="icon-btn modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 1.25rem;">
+                
+                <!-- Live Connection Badge -->
+                <div style="background: var(--bg-tertiary); padding: 0.75rem 1rem; border-radius: 8px; border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <strong style="font-size: 0.85rem;">IIFL XTS Market Data Feed</strong>
+                        <div id="xts-live-status-text" style="font-size: 0.75rem; color: var(--text-muted);">Standby (Simulation Active)</div>
+                    </div>
+                    <span id="xts-live-status-pill" class="status-pill status-stopped">
+                        <span class="status-dot"></span> Offline / Sim
+                    </span>
+                </div>
+
+                <div style="display: flex; flex-direction: column; gap: 0.85rem;">
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">XTS Market Data API Base URL</label>
+                        <input type="text" id="setting-xts-url" placeholder="https://xts.iifl.com/marketdata" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-family: var(--font-mono); font-size: 0.8rem;">
+                        <span style="font-size: 0.7rem; color: var(--text-muted);">Production: https://xts.iifl.com/marketdata | Sandbox: https://developers.symphonyfintech.in</span>
+                    </div>
+
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">XTS Market Data App Key (API Key)</label>
+                        <input type="text" id="setting-xts-key" placeholder="Paste your XTS Market Data App Key" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-family: var(--font-mono); font-size: 0.8rem;">
+                    </div>
+
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">XTS Market Data Secret Key</label>
+                        <input type="password" id="setting-xts-secret" placeholder="Paste your XTS Secret Key" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-family: var(--font-mono); font-size: 0.8rem;">
+                    </div>
+                </div>
+
+                <div style="font-size: 0.75rem; color: var(--text-muted); background: rgba(59, 130, 246, 0.08); padding: 0.65rem; border-radius: 6px; border-left: 3px solid var(--accent-blue);">
+                    💡 <strong>Note:</strong> Credentials can also be placed directly in <code>.env</code> in the project root directory. Saving here updates <code>.env</code> and re-authenticates the feed immediately without restarting.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="action-btn-sm modal-close-btn">Cancel</button>
+                <button class="action-btn-sm" id="btn-save-credentials" style="background: var(--accent-green); color: white; font-weight: 700;">
+                    💾 Save & Connect Real XTS Feed
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/ticker.js"></script>
+    <script src="js/client_cards.js"></script>
+    <script src="js/strategies.js"></script>
+    <script src="js/status_page.js"></script>
+    <script src="js/logs_page.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
