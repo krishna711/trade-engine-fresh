@@ -1,8 +1,9 @@
 import asyncio
 import datetime
 import json
+import requests
 from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Query, Body
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Query, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -28,6 +29,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_no_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 # ----------------- WEBSOCKET CLIENT MANAGER -----------------
 class WebSocketManager:
@@ -59,13 +68,61 @@ async def startup_event():
     event_bus.subscribe("order.update", lambda o: asyncio.create_task(ws_manager.broadcast({"type": "ORDER_UPDATE", "data": o})))
     event_bus.subscribe("strategy.event", lambda ev: asyncio.create_task(ws_manager.broadcast({"type": "STRATEGY_EVENT", "data": ev})))
 
-@websocket_route := app.websocket("/ws/live")
+def get_effective_feed_status(db: Optional[Session] = None) -> Dict[str, Any]:
+    """
+    Returns live feed status. If feed_manager is actively running in this process,
+    returns its in-memory status. If running in multi-terminal microservice mode,
+    reads live broker statuses directly from SQLite database table (updated by Terminal 1 in WAL mode).
+    """
+    if feed_manager._is_running and feed_manager.active_broker_name:
+        return feed_manager.get_status()
+
+    close_db = False
+    if db is None:
+        db = SessionLocal()
+        close_db = True
+    try:
+        statuses = db.query(FeedBrokerStatus).order_by(FeedBrokerStatus.priority).all()
+        if statuses:
+            broker_states = {}
+            priority_list = []
+            active_broker = None
+            total_sub = 0
+            for st in statuses:
+                priority_list.append(st.broker)
+                if st.is_active:
+                    active_broker = st.broker
+                    total_sub = st.subscribed_count
+                broker_states[st.broker] = {
+                    "name": st.broker,
+                    "is_connected": st.is_connected,
+                    "is_active": st.is_active,
+                    "latency_ms": st.latency_ms,
+                    "last_heartbeat": st.last_heartbeat.isoformat() if st.last_heartbeat else None,
+                    "subscribed_count": st.subscribed_count
+                }
+
+            return {
+                "active_broker": active_broker or "XTS",
+                "priority": priority_list,
+                "total_subscribed": total_sub,
+                "subscribed_symbols": list(feed_manager.ticks_cache.keys()),
+                "brokers": broker_states,
+                "uptime_seconds": 100,
+                "ticks_in_cache": len(feed_manager.ticks_cache)
+            }
+        return feed_manager.get_status()
+    finally:
+        if close_db:
+            db.close()
+
+@app.websocket("/ws/live")
 async def websocket_endpoint(websocket: WebSocket):
     await ws_manager.connect(websocket)
     try:
         # Send initial snapshot
         initial_ticks = feed_manager.get_all_ticks()
-        feed_st = feed_manager.get_status()
+        feed_st = get_effective_feed_status()
         await websocket.send_text(json.dumps({"type": "INITIAL_DATA", "ticks": initial_ticks, "feed_status": feed_st}))
 
         while True:
@@ -123,6 +180,13 @@ def list_accounts(db: Session = Depends(get_db)):
             if acc.client_id in (s.client_ids or []) and s.status == "RUNNING":
                 running_strats += 1
 
+        # Check if today's session token is active
+        creds = acc.credentials_json or {}
+        today_str = datetime.date.today().isoformat()
+        token = creds.get("token", "")
+        token_date = creds.get("token_date", "")
+        has_token_today = bool(token) and (token_date == today_str)
+
         result.append({
             "id": acc.id,
             "broker": acc.broker,
@@ -130,7 +194,7 @@ def list_accounts(db: Session = Depends(get_db)):
             "client_name": acc.client_name,
             "paper_mode": acc.paper_mode,
             "is_active": acc.is_active,
-            "is_logged_in": acc.is_logged_in,
+            "is_logged_in": acc.is_logged_in if has_token_today else (acc.is_logged_in and not bool(token)),
             "margin_available": acc.margin_available,
             "margin_used": acc.margin_used,
             "total_balance": acc.total_balance,
@@ -138,6 +202,15 @@ def list_accounts(db: Session = Depends(get_db)):
             "realized_pnl": round(r_pnl, 2),
             "total_pnl": round(t_pnl, 2),
             "running_strategies_count": running_strats,
+            "has_token_today": has_token_today,
+            "token_date": token_date,
+            "credentials": {
+                "api_key": creds.get("api_key", ""),
+                "token": token,
+                "token_date": token_date,
+                "interactive_url": creds.get("interactive_url", "https://ttblaze.iifl.com/interactive"),
+                "is_valid_today": has_token_today
+            },
             "last_login_at": acc.last_login_at.isoformat() if acc.last_login_at else None
         })
     return result
@@ -161,9 +234,217 @@ def toggle_account_login(client_id: str, db: Session = Depends(get_db)):
     db.commit()
     return {"success": True, "client_id": client_id, "is_logged_in": acc.is_logged_in}
 
+@app.post("/api/accounts/xts/generate-token")
+def generate_xts_token_endpoint(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """
+    Generate today's XTS session token via Symphony XTS API:
+    - Accepts api_key, api_secret, and optional client_id or interactive_url.
+    - If client_id provided, saves token and today's date into the client's credentials_json.
+    - Token once generated is valid for the whole trading day.
+    """
+    client_id = payload.get("client_id", "").strip()
+    api_key = payload.get("api_key", "").strip()
+    api_secret = payload.get("api_secret", "").strip()
+    base_url = payload.get("interactive_url", "https://ttblaze.iifl.com/interactive").strip().rstrip("/")
+    source = payload.get("source", "WEBAPI")
+
+    acc = None
+    if client_id:
+        acc = db.query(Account).filter(Account.client_id == client_id).first()
+        if acc and acc.credentials_json:
+            api_key = api_key or acc.credentials_json.get("api_key", "")
+            api_secret = api_secret or acc.credentials_json.get("api_secret", "")
+            base_url = acc.credentials_json.get("interactive_url", base_url)
+
+    if not api_key or not api_secret:
+        raise HTTPException(status_code=400, detail="XTS API Key (App Key) and API Secret are required to generate token")
+
+    # Format login URL for Symphony XTS Interactive session
+    if base_url.endswith("/interactive"):
+        login_url = f"{base_url}/user/session"
+    elif "/interactive" in base_url:
+        login_url = f"{base_url}/user/session"
+    else:
+        login_url = f"{base_url}/interactive/user/session"
+
+    req_body = {
+        "appKey": api_key,
+        "secretKey": api_secret,
+        "source": source
+    }
+
+    try:
+        resp = requests.post(
+            login_url,
+            json=req_body,
+            headers={"Content-Type": "application/json"},
+            timeout=12
+        )
+        try:
+            data = resp.json()
+        except Exception:
+            data = {}
+
+        today_date = datetime.date.today().isoformat()
+
+        if resp.status_code == 200 and data.get("type") == "success":
+            result = data.get("result", {})
+            token = result.get("token")
+            user_id = result.get("userID", client_id)
+
+            if acc:
+                creds = dict(acc.credentials_json or {})
+                creds["api_key"] = api_key
+                creds["api_secret"] = api_secret
+                creds["token"] = token
+                creds["token_date"] = today_date
+                creds["user_id"] = user_id
+                creds["interactive_url"] = base_url
+                acc.credentials_json = creds
+                acc.is_logged_in = True
+                acc.last_login_at = datetime.datetime.utcnow()
+                db.commit()
+
+            # Record system log
+            log_entry = SystemLog(
+                category="BROKER_API",
+                level="SUCCESS",
+                message=f"XTS session token generated for {client_id or 'account'} (User: {user_id}). Valid for {today_date}.",
+                details={"user_id": user_id, "token_prefix": token[:10] + "..." if token else "", "date": today_date}
+            )
+            db.add(log_entry)
+            db.commit()
+
+            return {
+                "success": True,
+                "token": token,
+                "user_id": user_id,
+                "token_date": today_date,
+                "message": f"XTS token successfully generated for today ({today_date})! Valid for all broker API calls."
+            }
+        else:
+            error_msg = data.get("description") or data.get("message") or resp.text or f"HTTP status {resp.status_code}"
+            log_entry = SystemLog(
+                category="BROKER_API",
+                level="ERROR",
+                message=f"XTS session generation failed: {error_msg}",
+                details={"status_code": resp.status_code, "response": error_msg}
+            )
+            db.add(log_entry)
+            db.commit()
+
+            return {
+                "success": False,
+                "error": error_msg,
+                "status_code": resp.status_code
+            }
+    except Exception as e:
+        err_msg = f"Network error connecting to XTS server ({login_url}): {str(e)}"
+        return {
+            "success": False,
+            "error": err_msg
+        }
+
 @app.post("/api/accounts/{client_id}/square-off")
 async def square_off_account_positions(client_id: str):
     res = await order_manager.square_off_account(client_id)
+    return res
+
+@app.post("/api/accounts")
+def create_account(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    client_id = payload.get("client_id", "").strip()
+    client_name = payload.get("client_name", "").strip()
+    broker = payload.get("broker", "XTS").strip().upper()
+    paper_mode = payload.get("paper_mode", True)
+    margin_available = float(payload.get("margin_available", 500000.0))
+    credentials = dict(payload.get("credentials_json", {}))
+
+    if not client_id or not client_name:
+        raise HTTPException(status_code=400, detail="Client ID and Client Name are required")
+
+    existing = db.query(Account).filter(Account.client_id == client_id).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Account with Client ID {client_id} already exists")
+
+    # If token was supplied (e.g. today's token entered manually or generated), tag with today's date
+    if credentials.get("token"):
+        if not credentials.get("token_date"):
+            credentials["token_date"] = datetime.date.today().isoformat()
+
+    acc = Account(
+        broker=broker,
+        client_id=client_id,
+        client_name=client_name,
+        paper_mode=bool(paper_mode),
+        is_active=True,
+        is_logged_in=bool(credentials.get("token")) or True,
+        margin_available=margin_available,
+        margin_used=0.0,
+        total_balance=margin_available,
+        credentials_json=credentials
+    )
+    db.add(acc)
+    db.commit()
+    return {"success": True, "account": {"client_id": acc.client_id, "client_name": acc.client_name, "broker": acc.broker}}
+
+@app.put("/api/accounts/{client_id}")
+def update_account(client_id: str, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    acc = db.query(Account).filter(Account.client_id == client_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if "client_name" in payload:
+        acc.client_name = payload["client_name"].strip()
+    if "broker" in payload:
+        acc.broker = payload["broker"].strip().upper()
+    if "paper_mode" in payload:
+        acc.paper_mode = bool(payload["paper_mode"])
+    if "margin_available" in payload:
+        acc.margin_available = float(payload["margin_available"])
+        acc.total_balance = acc.margin_available + acc.margin_used
+    if "is_active" in payload:
+        acc.is_active = bool(payload["is_active"])
+    if "credentials_json" in payload:
+        new_creds = payload["credentials_json"]
+        if isinstance(new_creds, dict):
+            curr_creds = dict(acc.credentials_json or {})
+            curr_creds.update(new_creds)
+            if curr_creds.get("token") and not curr_creds.get("token_date"):
+                curr_creds["token_date"] = datetime.date.today().isoformat()
+            acc.credentials_json = curr_creds
+            if curr_creds.get("token"):
+                acc.is_logged_in = True
+                acc.last_login_at = datetime.datetime.utcnow()
+    db.commit()
+    return {"success": True, "client_id": client_id}
+
+@app.delete("/api/accounts/{client_id}")
+def delete_account(client_id: str, db: Session = Depends(get_db)):
+    acc = db.query(Account).filter(Account.client_id == client_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    # Remove client_id from all mapped strategy instances
+    instances = db.query(StrategyInstance).all()
+    for inst in instances:
+        if inst.client_ids and client_id in inst.client_ids:
+            new_ids = [cid for cid in inst.client_ids if cid != client_id]
+            inst.client_ids = new_ids
+            db.add(inst)
+
+    # Delete trades for this client
+    db.query(Trade).filter(Trade.client_id == client_id).delete()
+
+    # Delete positions for this client
+    db.query(Position).filter(Position.client_id == client_id).delete()
+
+    # Delete the account (cascades to orders)
+    db.delete(acc)
+    db.commit()
+    return {"success": True, "deleted_client_id": client_id}
+
+@app.post("/api/accounts/{client_id}/strategies/{strategy_id}/square-off")
+async def square_off_account_strategy_positions(client_id: str, strategy_id: int):
+    res = await order_manager.square_off_account_strategy(client_id, strategy_id)
     return res
 
 @app.get("/api/accounts/{client_id}/details")
@@ -173,8 +454,24 @@ def get_account_drawer_details(client_id: str, db: Session = Depends(get_db)):
     positions = db.query(Position).filter(Position.client_id == client_id).all()
     acc = db.query(Account).filter(Account.client_id == client_id).first()
 
+    creds = acc.credentials_json or {} if acc else {}
+    today_str = datetime.date.today().isoformat()
+    token = creds.get("token", "")
+    token_date = creds.get("token_date", "")
+    has_token_today = bool(token) and (token_date == today_str)
+
     return {
         "client_id": client_id,
+        "broker": acc.broker if acc else "XTS",
+        "client_name": acc.client_name if acc else "",
+        "paper_mode": acc.paper_mode if acc else True,
+        "credentials": {
+            "api_key": creds.get("api_key", ""),
+            "token": token,
+            "token_date": token_date,
+            "interactive_url": creds.get("interactive_url", "https://ttblaze.iifl.com/interactive"),
+            "is_valid_today": has_token_today
+        },
         "margins": {
             "available": acc.margin_available if acc else 0,
             "used": acc.margin_used if acc else 0,
@@ -254,11 +551,25 @@ def list_strategy_instances(db: Session = Depends(get_db)):
         mapped_clients = []
         for cid in (inst.client_ids or []):
             acc = accounts.get(cid)
+            acc_positions = db.query(Position).filter(
+                Position.client_id == cid,
+                Position.strategy_instance_id == inst.id
+            ).all()
+            u_pnl = sum(p.unrealized_pnl for p in acc_positions)
+            r_pnl = sum(p.realized_pnl for p in acc_positions)
+            t_pnl = u_pnl + r_pnl
+
             mapped_clients.append({
                 "client_id": cid,
                 "name": acc.client_name if acc else cid,
                 "is_active": acc.is_active if acc else False,
-                "broker": acc.broker if acc else "UNKNOWN"
+                "paper_mode": acc.paper_mode if acc else True,
+                "broker": acc.broker if acc else "UNKNOWN",
+                "pnl": {
+                    "unrealized": round(u_pnl, 2),
+                    "realized": round(r_pnl, 2),
+                    "total": round(t_pnl, 2)
+                }
             })
 
         # Multi-leg prices of last trade
@@ -285,6 +596,26 @@ def list_strategy_instances(db: Session = Depends(get_db)):
             "config": inst.config
         })
     return result
+
+@app.put("/api/strategies/{id}/clients")
+def update_strategy_clients(id: int, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()
+    if not inst:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    new_client_ids = payload.get("client_ids", [])
+    inst.client_ids = list(new_client_ids)
+    db.commit()
+    return {"success": True, "strategy_id": id, "client_ids": inst.client_ids}
+
+@app.post("/api/strategies/{id}/clients/{client_id}/unmap")
+def unmap_strategy_client(id: int, client_id: str, db: Session = Depends(get_db)):
+    inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()
+    if not inst:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+    if inst.client_ids and client_id in inst.client_ids:
+        inst.client_ids = [cid for cid in inst.client_ids if cid != client_id]
+        db.commit()
+    return {"success": True, "strategy_id": id, "client_ids": inst.client_ids}
 
 @app.post("/api/strategies/{id}/start")
 async def start_strategy_instance(id: int):
@@ -317,6 +648,16 @@ async def duplicate_strategy_instance(
     if not clone_id:
         raise HTTPException(status_code=400, detail="Failed to duplicate strategy")
     return {"success": True, "cloned_strategy_id": clone_id}
+
+@app.delete("/api/strategies/{id}")
+async def delete_strategy_instance(id: int, db: Session = Depends(get_db)):
+    await strategy_supervisor.stop_strategy(id)
+    inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()
+    if inst:
+        db.delete(inst)
+        db.commit()
+        return {"success": True, "deleted_id": id}
+    return {"success": False, "error": "Strategy not found"}
 
 @app.post("/api/strategies/{id}/square-off")
 async def square_off_strategy_positions(id: int):
@@ -371,12 +712,18 @@ def get_strategy_chronological_logs(id: int, db: Session = Depends(get_db)):
 
 # ----------------- STATUS & DIAGNOSTICS PAGE -----------------
 @app.get("/api/status/feed")
-def get_feed_status():
-    return feed_manager.get_status()
+def get_feed_status(db: Session = Depends(get_db)):
+    return get_effective_feed_status(db)
 
 @app.post("/api/status/feed/failover")
-async def trigger_feed_failover():
-    next_broker = await feed_manager.failover_to_next("Triggered via Status Diagnostic Panel")
+async def trigger_feed_failover(db: Session = Depends(get_db)):
+    if feed_manager._is_running and feed_manager.active_broker_name:
+        next_broker = await feed_manager.failover_to_next("Triggered via Status Diagnostic Panel")
+    else:
+        await event_bus.publish("feed.failover", "Triggered via Status Diagnostic Panel")
+        await asyncio.sleep(0.5)
+        st = get_effective_feed_status(db)
+        next_broker = st.get("active_broker", "SHOONYA")
     return {"success": True, "active_broker": next_broker}
 
 @app.post("/api/status/feed/priority")

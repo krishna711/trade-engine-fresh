@@ -71,6 +71,12 @@ class LocalEventBus:
                 except Exception:
                     if writer in self._ipc_clients:
                         self._ipc_clients.remove(writer)
+        elif not self._is_ipc_server and not _from_ipc and getattr(self, "_ipc_client_writer", None):
+            try:
+                msg_bytes = (json.dumps({"topic": topic, "data": data}) + "\n").encode()
+                self._ipc_client_writer.write(msg_bytes)
+            except Exception:
+                pass
 
     async def start_ipc_server(self, host: str = "127.0.0.1", port: int = 8765):
         """Starts a local TCP broadcast server for cross-terminal microservice IPC"""
@@ -85,6 +91,14 @@ class LocalEventBus:
                     line = await reader.readline()
                     if not line:
                         break
+                    try:
+                        packet = json.loads(line.decode().strip())
+                        topic = packet.get("topic")
+                        data = packet.get("data")
+                        if topic and data is not None:
+                            await self.publish(topic, data, _from_ipc=True)
+                    except Exception:
+                        pass
             except Exception:
                 pass
             finally:
@@ -102,6 +116,7 @@ class LocalEventBus:
         while True:
             try:
                 reader, writer = await asyncio.open_connection(host, port)
+                self._ipc_client_writer = writer
                 print(f"[EventBus IPC] Connected to live IPC event broadcast at {host}:{port}")
                 while True:
                     line = await reader.readline()
@@ -115,9 +130,11 @@ class LocalEventBus:
                             await self.publish(topic, data, _from_ipc=True)
                     except Exception:
                         pass
+                self._ipc_client_writer = None
                 writer.close()
                 await writer.wait_closed()
             except Exception:
+                self._ipc_client_writer = None
                 # Retry connection periodically
                 await asyncio.sleep(2.0)
 

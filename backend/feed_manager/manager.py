@@ -124,6 +124,11 @@ class FeedManager:
         if rolled:
             print(f"[FeedManager] Auto-rolled expired commodity contracts: {rolled}")
 
+        # Pre-assign default active broker based on priority so initial snapshot quotes during connect are accepted
+        if not self.active_broker_name and self.priority_list:
+            self.active_broker_name = self.priority_list[0]
+            self.active_broker = self.brokers.get(self.active_broker_name)
+
         # Connect all brokers in standby or active mode
         for name, broker in self.brokers.items():
             broker.set_callbacks(
@@ -159,12 +164,13 @@ class FeedManager:
         for broker_name in self.priority_list:
             broker = self.brokers.get(broker_name)
             if broker and broker.is_connected:
-                if self.active_broker_name != broker_name:
-                    old_broker = self.active_broker_name
-                    self.active_broker_name = broker_name
-                    self.active_broker = broker
-                    self._update_db_broker_status()
+                old_broker = self.active_broker_name
+                self.active_broker_name = broker_name
+                self.active_broker = broker
+                broker.last_heartbeat = datetime.datetime.utcnow()
+                self._update_db_broker_status()
 
+                if old_broker != broker_name:
                     log_msg = f"Feed Manager active source switched to {broker_name}"
                     if old_broker:
                         log_msg += f" (Failover from {old_broker})"
@@ -329,6 +335,16 @@ class FeedManager:
                 st.last_heartbeat = b.last_heartbeat
                 st.subscribed_count = len(b.subscribed_symbols)
             db.commit()
+
+            if self._loop and self._loop.is_running():
+                try:
+                    curr_loop = asyncio.get_running_loop()
+                    if curr_loop == self._loop:
+                        self._loop.create_task(event_bus.publish("feed.status", self.get_status()))
+                    else:
+                        asyncio.run_coroutine_threadsafe(event_bus.publish("feed.status", self.get_status()), self._loop)
+                except Exception:
+                    pass
         except Exception as e:
             db.rollback()
         finally:

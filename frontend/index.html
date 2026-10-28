@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fresh Trade Engine | Fault-Proof Algorithmic Trading Architecture</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=3.0">
     <!-- Chart.js for high performance strategy charting -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -104,10 +104,15 @@
             
             <!-- CLIENT CARDS SECTION -->
             <div class="dashboard-block">
-                <div class="section-header" style="margin-bottom: 0.75rem;">
-                    <h2>👥 Client & Broker Accounts</h2>
-                    <div class="section-actions">
+                <div class="section-header" style="margin-bottom: 0.75rem; display: flex; align-items: center; justify-content: space-between;">
+                    <div style="display: flex; align-items: center; gap: 0.75rem;">
+                        <h2>👥 Client & Broker Accounts</h2>
                         <span style="font-size: 0.8rem; color: var(--text-muted);">Parallel Execution Enabled</span>
+                    </div>
+                    <div class="section-actions" style="display: flex; gap: 0.5rem; align-items: center;">
+                        <button class="action-btn-sm" id="btn-add-client-account" onclick="window.openAddClientModal()" style="background: var(--accent-green, #10b981); color: white; padding: 0.4rem 0.85rem; border-radius: 6px; font-weight: 600; cursor: pointer; border: none; display: flex; align-items: center; gap: 0.35rem;">
+                            <span>+</span> Add Client Account
+                        </button>
                     </div>
                 </div>
 
@@ -118,8 +123,16 @@
 
             <!-- STRATEGY LISTS SECTION -->
             <div class="dashboard-block" style="margin-top: 1.25rem;">
-                <div class="section-header" style="margin-bottom: 0.75rem;">
-                    <h2>⚡ Active Strategy Instances</h2>
+                <div class="section-header" style="margin-bottom: 0.75rem; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem;">
+                    <div style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;">
+                        <h2>⚡ Active Strategy Instances</h2>
+                        <!-- 3-Way Flexible View Mode Switcher -->
+                        <div class="view-mode-selector" id="strategy-view-mode-selector" style="display: inline-flex; background: var(--bg-tertiary); padding: 3px; border-radius: 8px; border: 1px solid var(--border-color);">
+                            <button class="view-mode-btn active" id="btn-mode-by-strategy" data-mode="by-strategy">🏷️ Group by Strategy</button>
+                            <button class="view-mode-btn" id="btn-mode-individual" data-mode="individual">📑 Individual Rows</button>
+                            <button class="view-mode-btn" id="btn-mode-by-client" data-mode="by-client">👥 Group by Client</button>
+                        </div>
+                    </div>
                     <div class="section-actions">
                         <button class="action-btn-sm" id="btn-deploy-new-strategy" style="background: var(--accent-blue); color: white; padding: 0.4rem 0.8rem;">
                             + Deploy Strategy
@@ -127,18 +140,18 @@
                     </div>
                 </div>
 
-                <div class="table-card">
+                <div class="table-card" id="strategy-table-card">
                     <div class="table-responsive">
                         <table class="data-table" id="strategy-instances-table">
                             <thead>
-                                <tr>
-                                    <th>Client / Account</th>
+                                <tr id="strategy-table-header-row">
+                                    <th id="th-col-1">Client / Account</th>
                                     <th id="th-strategy-name">Strategy Name</th>
                                     <th>Status</th>
                                     <th>Last Trade</th>
                                     <th>Start Time</th>
                                     <th>End Time</th>
-                                    <th>PNL & Leg Details</th>
+                                    <th id="th-pnl-col">PNL & Leg Details</th>
                                     <th style="text-align: right;">Action Menu</th>
                                 </tr>
                             </thead>
@@ -147,6 +160,11 @@
                             </tbody>
                         </table>
                     </div>
+                </div>
+
+                <!-- Group by Client Container (Used when 'by-client' mode is selected) -->
+                <div class="by-client-container" id="strategy-by-client-container" style="display: none; flex-direction: column; gap: 1rem;">
+                    <!-- Populated dynamically -->
                 </div>
             </div>
 
@@ -349,6 +367,7 @@
             <button class="drawer-tab-btn" data-drawer-tab="trades">Trades</button>
             <button class="drawer-tab-btn" data-drawer-tab="holdings">Holdings</button>
             <button class="drawer-tab-btn" data-drawer-tab="margins">Margins & Balance</button>
+            <button class="drawer-tab-btn" data-drawer-tab="credentials">🔑 API & Token</button>
         </div>
 
         <div class="drawer-body" id="drawer-body-content">
@@ -517,12 +536,171 @@
         </div>
     </div>
 
-    <!-- Scripts -->
-    <script src="js/ticker.js"></script>
-    <script src="js/client_cards.js"></script>
-    <script src="js/strategies.js"></script>
-    <script src="js/status_page.js"></script>
-    <script src="js/logs_page.js"></script>
-    <script src="js/app.js"></script>
+    <!-- ===================================================================
+         MODAL 6: ADD REAL CLIENT / BROKER ACCOUNT
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-add-client">
+        <div class="modal-box" style="width: 540px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <div>
+                    <h3>Add Real Client / Broker Account</h3>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">Add new live or paper trading client accounts</span>
+                </div>
+                <button class="icon-btn modal-close-btn" type="button" onclick="window.closeAddClientModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 0.85rem;">
+                <div>
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Broker Platform</label>
+                    <select id="new-account-broker" onchange="clientCardsManager.onBrokerSelectChange(this.value)" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-weight: 600;">
+                        <option value="XTS" selected>IIFL Securities (XTS)</option>
+                        <option value="SHOONYA">Shoonya (Finvasia)</option>
+                        <option value="KOTAKNEO">Kotak Neo (Kotak Securities)</option>
+                        <option value="ZERODHA">Zerodha (Kite Connect)</option>
+                        <option value="DHAN">Dhan HQ</option>
+                        <option value="FYERS">Fyers API</option>
+                    </select>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Client ID / User ID *</label>
+                        <input type="text" id="new-account-client-id" placeholder="e.g. SH10023 or 25689" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-family: var(--font-mono); font-size: 0.85rem;" required>
+                    </div>
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Client / Desk Name *</label>
+                        <input type="text" id="new-account-name" placeholder="e.g. Real Alpha Trader" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-size: 0.85rem;" required>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Trading Mode</label>
+                        <select id="new-account-mode" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px;">
+                            <option value="paper">📄 Paper Trading (Simulated)</option>
+                            <option value="live">🟢 Live Real Broker</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Margin / Capital (₹)</label>
+                        <input type="number" id="new-account-margin" value="500000" step="10000" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-family: var(--font-mono); font-size: 0.85rem;">
+                    </div>
+                </div>
+
+                <!-- DYNAMIC BROKER CREDENTIALS CONTAINER -->
+                <div id="broker-credentials-container" style="background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 8px; padding: 0.85rem; display: flex; flex-direction: column; gap: 0.75rem;">
+                    <!-- XTS Credentials Block -->
+                    <div id="fields-broker-xts">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.4rem;">
+                            <span style="font-size: 0.8rem; font-weight: 700; color: var(--accent-blue, #3b82f6); display: flex; align-items: center; gap: 5px;">
+                                🎛️ IIFL Securities (XTS) Credentials
+                            </span>
+                            <span style="font-size: 0.7rem; color: var(--text-muted);">Symphony XTS API</span>
+                        </div>
+
+                        <div style="display: flex; flex-direction: column; gap: 0.65rem;">
+                            <!-- 1. API Key -->
+                            <div>
+                                <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">1. XTS API Key (App Key) *</label>
+                                <input type="text" id="xts-api-key" placeholder="Enter XTS Interactive App Key" style="width: 100%; padding: 0.5rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 3px; font-family: var(--font-mono); font-size: 0.8rem;">
+                            </div>
+
+                            <!-- 2. API Secret -->
+                            <div>
+                                <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">2. XTS API Secret *</label>
+                                <div style="position: relative; margin-top: 3px;">
+                                    <input type="password" id="xts-api-secret" placeholder="Enter XTS Secret Key" style="width: 100%; padding: 0.5rem 2.2rem 0.5rem 0.5rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem;">
+                                    <button type="button" onclick="clientCardsManager.toggleSecretVisibility('xts-api-secret')" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 0.85rem;" title="Show/Hide Secret">👁️</button>
+                                </div>
+                            </div>
+
+                            <!-- 3. Today Token -->
+                            <div>
+                                <div style="display: flex; justify-content: space-between; align-items: center;">
+                                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">3. Today's Token (Session Token)</label>
+                                    <span style="font-size: 0.7rem; color: var(--accent-green, #10b981);">Valid for entire day</span>
+                                </div>
+                                <div style="display: flex; gap: 0.5rem; align-items: center; margin-top: 3px;">
+                                    <input type="text" id="xts-today-token" placeholder="Paste today's token (optional) or click Generate" style="flex: 1; padding: 0.5rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem;">
+                                    <button type="button" id="btn-generate-xts-token" onclick="clientCardsManager.generateXtsTokenNow()" style="background: var(--accent-blue, #2563eb); color: white; border: none; padding: 0.52rem 0.85rem; border-radius: 6px; font-weight: 600; font-size: 0.8rem; cursor: pointer; white-space: nowrap; display: flex; align-items: center; gap: 4px;">
+                                        🔑 Generate Token
+                                    </button>
+                                </div>
+                                <div id="xts-token-feedback" style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px; line-height: 1.3;">
+                                    ℹ️ Optional: Leave empty or paste existing token. Click <strong>Generate Token</strong> to login and generate today's session token. It will be used for all further broker API calls.
+                                </div>
+                            </div>
+
+                            <!-- Advanced Collapsible -->
+                            <details style="margin-top: 0.35rem; font-size: 0.75rem;">
+                                <summary style="cursor: pointer; color: var(--accent-blue); font-weight: 500;">⚙️ Advanced Endpoints (Optional)</summary>
+                                <div style="margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.4rem;">
+                                    <div>
+                                        <label style="font-size: 0.7rem; color: var(--text-secondary);">Interactive URL (Orders & Sessions)</label>
+                                        <input type="text" id="xts-interactive-url" value="https://ttblaze.iifl.com/interactive" style="width: 100%; padding: 0.45rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 4px; font-family: var(--font-mono); font-size: 0.75rem;">
+                                    </div>
+                                </div>
+                            </details>
+                        </div>
+                    </div>
+
+                    <!-- Other Brokers Fallback Block -->
+                    <div id="fields-broker-other" style="display: none; text-align: center; padding: 0.5rem;">
+                        <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); margin-bottom: 0.25rem;">
+                            Broker Configuration: <span id="other-broker-title">Shoonya</span>
+                        </div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.6rem;">
+                            XTS credentials are fully configured first. Detailed API key/secret options for this broker will be enabled next.
+                        </div>
+                        <div>
+                            <input type="password" id="other-broker-api-key" placeholder="Optional API Key or Token" style="width: 100%; padding: 0.5rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem;">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="action-btn-sm modal-close-btn" type="button" onclick="window.closeAddClientModal()">Cancel</button>
+                <button class="action-btn-sm" id="btn-submit-add-client" type="button" onclick="clientCardsManager.submitAddClient()" style="background: var(--accent-green, #10b981); color: white; font-weight: 600;">
+                    ✓ Add Client Account
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================
+         MODAL 7: RE-MAP STRATEGY CLIENTS MODAL
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-remap-clients">
+        <div class="modal-box" style="width: 500px;">
+            <div class="modal-header">
+                <div>
+                    <h3>Re-map Strategy Clients</h3>
+                    <span id="remap-strategy-subtitle" style="font-size: 0.75rem; color: var(--text-muted);">Select client accounts to execute this strategy</span>
+                </div>
+                <button class="icon-btn modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.75rem;">
+                    Check or uncheck client accounts below. Orders from this strategy will be dispatched in parallel across all checked accounts:
+                </p>
+                <div id="remap-clients-list" style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 280px; overflow-y: auto; padding-right: 4px;">
+                    <!-- Injected dynamically -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="action-btn-sm modal-close-btn">Cancel</button>
+                <button class="action-btn-sm" id="btn-submit-remap-clients" style="background: var(--accent-blue); color: white; font-weight: 600;">
+                    Save Mapped Clients
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts with Cache Busting -->
+    <script src="js/ticker.js?v=3.0"></script>
+    <script src="js/client_cards.js?v=3.0"></script>
+    <script src="js/strategies.js?v=3.0"></script>
+    <script src="js/status_page.js?v=3.0"></script>
+    <script src="js/logs_page.js?v=3.0"></script>
+    <script src="js/app.js?v=3.0"></script>
 </body>
 </html>

@@ -227,6 +227,35 @@ class OrderManager:
         finally:
             db.close()
 
+    async def square_off_account_strategy(self, client_id: str, strategy_id: int) -> Dict[str, Any]:
+        """Square off open positions for a specific client under a specific strategy"""
+        db = SessionLocal()
+        squared_count = 0
+        try:
+            positions = db.query(Position).filter(
+                Position.client_id == client_id,
+                Position.strategy_instance_id == strategy_id,
+                Position.net_quantity != 0
+            ).all()
+
+            for pos in positions:
+                side = "SELL" if pos.net_quantity > 0 else "BUY"
+                qty = abs(pos.net_quantity)
+                await self.place_order(
+                    client_id=pos.client_id,
+                    symbol=pos.symbol,
+                    side=side,
+                    quantity=qty,
+                    order_type="MARKET",
+                    price=pos.ltp,
+                    strategy_instance_id=strategy_id
+                )
+                squared_count += 1
+
+            return {"success": True, "squared_positions": squared_count, "client_id": client_id, "strategy_id": strategy_id}
+        finally:
+            db.close()
+
     def _on_tick_update(self, tick: Dict[str, Any]):
         """Real-time MTM (Mark-To-Market) and Unrealized PnL recalculation on incoming ticks"""
         symbol = tick.get("symbol")

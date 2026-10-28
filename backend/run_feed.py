@@ -17,6 +17,7 @@ async def main():
     print(">>> [TERMINAL 1] FEED MANAGER MICROSERVICE (LIVE XTS FEED) <<<")
     print("=" * 65)
     await event_bus.start_ipc_server()
+    event_bus.subscribe("feed.failover", lambda reason: asyncio.create_task(feed_manager.failover_to_next(reason)))
     await feed_manager.start()
     print("[*] Feed Manager active. Press CTRL+C to stop.")
     try:

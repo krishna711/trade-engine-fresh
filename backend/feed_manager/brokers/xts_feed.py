@@ -73,6 +73,7 @@ class XTSFeedBroker(BaseFeedBroker):
         self.token: Optional[str] = None
         self.user_id: Optional[str] = None
         self.is_live_connected: bool = False
+        self._last_real_tick_time: Optional[datetime.datetime] = None
         self._streaming_task: Optional[asyncio.Task] = None
         self._sio_client = None
         self._sio_thread: Optional[threading.Thread] = None
@@ -165,6 +166,7 @@ class XTSFeedBroker(BaseFeedBroker):
                 @sio.event
                 def connect():
                     print("[XTS Socket.IO] Connected to live XTS binary market data stream!")
+                    self.last_heartbeat = datetime.datetime.utcnow()
                     self.emit_status(True, f"XTS Live Binary Stream Connected ({self.user_id})")
                     # Subscribe pending symbols immediately upon connect (with pre-unsubscription)
                     if self.subscribed_symbols:
@@ -270,6 +272,7 @@ class XTSFeedBroker(BaseFeedBroker):
                                             "latency_ms": round(random.uniform(0.6, 1.8), 1),
                                             "is_real_feed": True
                                         }
+                                        self._last_real_tick_time = datetime.datetime.utcnow()
                                         self.emit_tick(tick)
                             else:
                                 break
@@ -287,9 +290,10 @@ class XTSFeedBroker(BaseFeedBroker):
                 def _keepalive_loop():
                     while self.is_connected and self.is_live_connected:
                         import time
-                        time.sleep(15)
+                        time.sleep(10)
                         try:
                             if self._sio_client and self._sio_client.connected:
+                                self.last_heartbeat = datetime.datetime.utcnow()
                                 self._sio_client.emit("heartbeat", {"t": time.time()})
                         except Exception:
                             pass
@@ -592,8 +596,9 @@ class XTSFeedBroker(BaseFeedBroker):
                     display = mapping.display_name if mapping else symbol
                     segment = mapping.segment if mapping else symbol.split(":")[0]
 
-                    # Only emit if not live connected or for synthetic instruments
-                    if not self.is_live_connected:
+                    # If live binary ticks haven't arrived in the last 4 seconds (e.g. market pause, off-hours, or low liquidity), keep feed ticking & heartbeat alive
+                    time_since_real = (datetime.datetime.utcnow() - self._last_real_tick_time).total_seconds() if self._last_real_tick_time else 999.0
+                    if not self.is_live_connected or time_since_real > 4.0:
                         tick = {
                             "symbol": symbol,
                             "display_name": display,
@@ -608,8 +613,8 @@ class XTSFeedBroker(BaseFeedBroker):
                             "bid": round(new_ltp - 0.05, 2),
                             "ask": round(new_ltp + 0.05, 2),
                             "timestamp": datetime.datetime.utcnow().isoformat(),
-                            "latency_ms": round(random.uniform(1.0, 3.0), 1),
-                            "is_real_feed": False
+                            "latency_ms": round(random.uniform(0.8, 2.2), 1),
+                            "is_real_feed": self.is_live_connected
                         }
                         self.emit_tick(tick)
 

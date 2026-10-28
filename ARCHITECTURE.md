@@ -57,6 +57,8 @@ graph TD
 - **Automatic Expiry Auto-Roll:** The Expiry Engine detects when commodity futures reach expiration and automatically rolls the contract to the next active month on the following day.
 - **Streaming OHLC Aggregator:** Real-time in-memory candle builder for `1m`, `5m`, `15m`, and `1h` resolutions.
 
+Data Save
+
 ### 2. Phase 2: Broker Order Manager (Independent Module)
 - **Supported Brokers:** XTS, Kotak Neo, Shoonya, Zerodha, Dhan, Fyers.
 - **Universal Symbol Mapping:** Unified canonical token resolver (`NSE:NIFTY`, `NFO:...`, `MCX:...`) mapping to broker-specific trading symbols and exchange tokens across all 6 brokers.
@@ -65,7 +67,7 @@ graph TD
 - **Order Reconciliation Engine:** Processes WebSocket and Webhook execution reports, syncing positions and trade records.
 - **Prominent Emergency Square-Off:** Single-click square-off available at both Account level and Strategy level.
 
-### 3. Phase 3: Strategy Manager (Independent Module)
+### 3. Phase 3: Strategy Manager (Independent Module) Core Module
 - **Process Container Isolation:** Each strategy instance runs inside an isolated OS process (`multiprocessing.Process`). A fault, unhandled exception, or code modification in one strategy will **never** disturb another strategy or crash the engine.
 - **Multi-Leg Price Tracking:** Tracks entry, exit, and real-time PnL across all legs (e.g. 0DTE Short Straddles with Call & Put legs).
 - **Strategy Duplication:** Clones tested strategy templates with customized parameters or symbols while maintaining separate runtime state.

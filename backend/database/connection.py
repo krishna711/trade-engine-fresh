@@ -43,76 +43,88 @@ def seed_initial_data():
     db = SessionLocal()
     try:
         # 1. Seed Accounts in User's Priority Order (XTS > Kotak Neo > Shoonya > Zerodha > Dhan)
-        if db.query(Account).count() == 0:
-            accounts = [
-                Account(
-                    broker="XTS",
-                    client_id="XT88219",
-                    client_name="IIFL Prop Desk (XTS)",
-                    paper_mode=True,
-                    is_active=True,
-                    is_logged_in=True,
-                    margin_available=500000.0,
-                    margin_used=0.0,
-                    total_balance=500000.0
-                ),
-                Account(
-                    broker="KOTAKNEO",
-                    client_id="KT99231",
-                    client_name="Kotak Neo Hedger",
-                    paper_mode=True,
-                    is_active=True,
-                    is_logged_in=True,
-                    margin_available=500000.0,
-                    margin_used=0.0,
-                    total_balance=500000.0
-                ),
-                Account(
-                    broker="SHOONYA",
-                    client_id="SH10023",
-                    client_name="Alpha Prime (Shoonya)",
-                    paper_mode=True,
-                    is_active=True,
-                    is_logged_in=True,
-                    margin_available=500000.0,
-                    margin_used=0.0,
-                    total_balance=500000.0
-                ),
-                Account(
-                    broker="ZERODHA",
-                    client_id="ZR44102",
-                    client_name="Kite Momentum (Zerodha)",
-                    paper_mode=True,
-                    is_active=True,
-                    is_logged_in=True,
-                    margin_available=500000.0,
-                    margin_used=0.0,
-                    total_balance=500000.0
-                ),
-                Account(
-                    broker="DHAN",
-                    client_id="DH55102",
-                    client_name="Dhan Fast Scalper",
-                    paper_mode=True,
-                    is_active=True,
-                    is_logged_in=True,
-                    margin_available=500000.0,
-                    margin_used=0.0,
-                    total_balance=500000.0
-                ),
-                Account(
-                    broker="FYERS",
-                    client_id="FY11048",
-                    client_name="Fyers Commodity Desk",
-                    paper_mode=True,
-                    is_active=True,
-                    is_logged_in=True,
-                    margin_available=500000.0,
-                    margin_used=0.0,
-                    total_balance=500000.0
-                )
-            ]
-            db.add_all(accounts)
+        accounts_marker = db.query(SystemLog).filter(
+            SystemLog.category == "SYSTEM_INIT",
+            SystemLog.message == "ACCOUNTS_INITIALIZED"
+        ).first()
+
+        if not accounts_marker:
+            if db.query(Account).count() == 0:
+                accounts = [
+                    Account(
+                        broker="XTS",
+                        client_id="XT88219",
+                        client_name="IIFL Prop Desk (XTS)",
+                        paper_mode=True,
+                        is_active=True,
+                        is_logged_in=True,
+                        margin_available=500000.0,
+                        margin_used=0.0,
+                        total_balance=500000.0
+                    ),
+                    Account(
+                        broker="KOTAKNEO",
+                        client_id="KT99231",
+                        client_name="Kotak Neo Hedger",
+                        paper_mode=True,
+                        is_active=True,
+                        is_logged_in=True,
+                        margin_available=500000.0,
+                        margin_used=0.0,
+                        total_balance=500000.0
+                    ),
+                    Account(
+                        broker="SHOONYA",
+                        client_id="SH10023",
+                        client_name="Alpha Prime (Shoonya)",
+                        paper_mode=True,
+                        is_active=True,
+                        is_logged_in=True,
+                        margin_available=500000.0,
+                        margin_used=0.0,
+                        total_balance=500000.0
+                    ),
+                    Account(
+                        broker="ZERODHA",
+                        client_id="ZR44102",
+                        client_name="Kite Momentum (Zerodha)",
+                        paper_mode=True,
+                        is_active=True,
+                        is_logged_in=True,
+                        margin_available=500000.0,
+                        margin_used=0.0,
+                        total_balance=500000.0
+                    ),
+                    Account(
+                        broker="DHAN",
+                        client_id="DH55102",
+                        client_name="Dhan Fast Scalper",
+                        paper_mode=True,
+                        is_active=True,
+                        is_logged_in=True,
+                        margin_available=500000.0,
+                        margin_used=0.0,
+                        total_balance=500000.0
+                    ),
+                    Account(
+                        broker="FYERS",
+                        client_id="FY11048",
+                        client_name="Fyers Commodity Desk",
+                        paper_mode=True,
+                        is_active=True,
+                        is_logged_in=True,
+                        margin_available=500000.0,
+                        margin_used=0.0,
+                        total_balance=500000.0
+                    )
+                ]
+                db.add_all(accounts)
+            db.add(SystemLog(
+                category="SYSTEM_INIT",
+                level="INFO",
+                message="ACCOUNTS_INITIALIZED",
+                is_dismissed=True
+            ))
             db.commit()
 
         # 2. Seed Registered Strategy Templates (Admin catalog)
@@ -482,15 +494,8 @@ def seed_initial_data():
             (SystemLog.message.like("%IIFL XTS MarketData Socket connected%"))
         ).delete(synchronize_session=False)
 
-        # Reset any leftover dummy PnL on instances
-        for inst in db.query(StrategyInstance).all():
-            if inst.template_key != "strat_time_atm_seller_v1":
-                inst.unrealized_pnl = 0.0
-                inst.realized_pnl = 0.0
-                inst.total_pnl = 0.0
-                inst.legs_info = []
-                inst.last_trade_status = "IDLE"
-                inst.last_trade_at = None
+        # Purge any legacy dummy strategy instances
+        db.query(StrategyInstance).filter(StrategyInstance.template_key != "strat_time_atm_seller_v1").delete(synchronize_session=False)
 
         # Ensure MCX:CRUDEOILM mapping exists
         if not db.query(SymbolMapping).filter(SymbolMapping.canonical_symbol == "MCX:CRUDEOILM").first():

@@ -1,15 +1,26 @@
 /**
  * Strategies Management Module
- * Covers Dashboard Strategy List, Multi-Leg prices, Charting, Duplicate modal,
- * and the Admin-only Strategy Catalog page.
+ * Supports 3 flexible view modes:
+ *  1. 'by-strategy' : Consolidated view per strategy with client badges
+ *  2. 'individual'  : Individual row per (Client Account, Strategy) pair with account-specific PnL
+ *  3. 'by-client'   : Grouped cards per client account listing their mapped strategies
+ *
+ * Also handles Re-mapping clients, Charting, Trades, Logs, Duplication, and Admin Templates.
  */
 
 class StrategiesManager {
     constructor() {
         this.instancesTableBody = document.getElementById("strategy-instances-tbody");
+        this.tableCard = document.getElementById("strategy-table-card");
+        this.byClientContainer = document.getElementById("strategy-by-client-container");
         this.templatesTableBody = document.getElementById("strategy-templates-tbody");
         this.chartInstance = null;
         this.currentDuplicateSourceId = null;
+        this.currentRemapStrategyId = null;
+        this.latestInstances = [];
+        this.latestAccounts = [];
+
+        this.viewMode = localStorage.getItem("fresh_trade_strat_view_mode") || "by-strategy";
 
         this.initEventListeners();
     }
@@ -17,14 +28,42 @@ class StrategiesManager {
     initEventListeners() {
         // Modal close buttons
         document.querySelectorAll(".modal-close-btn").forEach(btn => {
-            btn.onclick = () => {
-                document.querySelectorAll(".modal-overlay").forEach(m => m.classList.remove("active"));
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                document.querySelectorAll(".modal-overlay").forEach(m => {
+                    m.classList.remove("active");
+                    m.style.display = "";
+                });
             };
         });
+
+        // Click outside modal box to close
+        document.querySelectorAll(".modal-overlay").forEach(overlay => {
+            overlay.onclick = (e) => {
+                if (e.target === overlay) {
+                    overlay.classList.remove("active");
+                    overlay.style.display = "";
+                }
+            };
+        });
+
+        // View mode selector buttons
+        const modeButtons = document.querySelectorAll(".view-mode-btn");
+        modeButtons.forEach(btn => {
+            btn.onclick = () => {
+                const mode = btn.dataset.mode;
+                this.switchViewMode(mode);
+            };
+        });
+        this.updateViewModeButtons();
 
         // Submit duplicate
         const btnSubDup = document.getElementById("btn-submit-duplicate");
         if (btnSubDup) btnSubDup.onclick = () => this.submitDuplicate();
+
+        // Submit remap clients
+        const btnSubRemap = document.getElementById("btn-submit-remap-clients");
+        if (btnSubRemap) btnSubRemap.onclick = () => this.submitRemapClients();
 
         const btnDeploy = document.getElementById("btn-deploy-new-strategy");
         if (btnDeploy) btnDeploy.onclick = () => {
@@ -32,19 +71,72 @@ class StrategiesManager {
         };
     }
 
+    switchViewMode(mode) {
+        this.viewMode = mode;
+        localStorage.setItem("fresh_trade_strat_view_mode", mode);
+        this.updateViewModeButtons();
+        if (this.latestInstances) {
+            this.renderInstances(this.latestInstances);
+        }
+    }
+
+    updateViewModeButtons() {
+        document.querySelectorAll(".view-mode-btn").forEach(btn => {
+            if (btn.dataset.mode === this.viewMode) {
+                btn.classList.add("active");
+            } else {
+                btn.classList.remove("active");
+            }
+        });
+    }
+
     async loadInstances() {
         try {
-            const res = await fetch("/api/strategies/instances");
-            const instances = await res.json();
-            this.renderInstances(instances);
+            const [resInst, resAcc] = await Promise.all([
+                fetch("/api/strategies/instances"),
+                fetch("/api/accounts")
+            ]);
+            this.latestInstances = await resInst.json();
+            this.latestAccounts = await resAcc.json();
+            this.renderInstances(this.latestInstances);
         } catch (e) {
             console.error("Failed to load strategy instances:", e);
         }
     }
 
     renderInstances(instances) {
+        this.latestInstances = instances;
+        if (this.viewMode === "by-client") {
+            this.renderByClient(instances);
+        } else if (this.viewMode === "individual") {
+            this.renderIndividual(instances);
+        } else {
+            this.renderByStrategy(instances);
+        }
+    }
+
+    // =========================================================================
+    // MODE 1: GROUP BY STRATEGY (Consolidated View)
+    // =========================================================================
+    renderByStrategy(instances) {
+        if (this.tableCard) this.tableCard.style.display = "block";
+        if (this.byClientContainer) this.byClientContainer.style.display = "none";
         if (!this.instancesTableBody) return;
+
+        // Update table headers
+        const thCol1 = document.getElementById("th-col-1");
+        const thPnlCol = document.getElementById("th-pnl-col");
+        if (thCol1) thCol1.innerText = "Mapped Accounts";
+        if (thPnlCol) thPnlCol.innerText = "Consolidated PNL & Legs";
+
         const isAdmin = window.app ? window.app.currentRole === "ADMIN" : true;
+
+        if (!instances || instances.length === 0) {
+            this.instancesTableBody.innerHTML = `
+                <tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 2rem;">No active strategy instances configured.</td></tr>
+            `;
+            return;
+        }
 
         this.instancesTableBody.innerHTML = instances.map(inst => {
             const isPos = inst.pnl.total >= 0;
@@ -52,12 +144,13 @@ class StrategiesManager {
             const pnlCls = isPos ? "pnl-positive" : "pnl-negative";
             const isRunning = inst.status === "RUNNING";
 
-            // Multi-client display
-            const clientsHtml = inst.mapped_clients.map(c => `
-                <span class="status-pill status-${c.is_active ? 'running' : 'stopped'}" style="margin-right: 4px; margin-bottom: 2px;">
-                    <span class="status-dot"></span> ${c.name}
+            // Multi-client display with interactive pills
+            const clientsHtml = (inst.mapped_clients && inst.mapped_clients.length) ? inst.mapped_clients.map(c => `
+                <span class="status-pill status-${c.is_active ? 'running' : 'stopped'}" style="margin-right: 4px; margin-bottom: 2px;" title="${c.broker} &bull; ${c.client_id} &bull; ${c.paper_mode ? 'Paper' : 'Live'}">
+                    <span class="status-dot"></span> <strong>${c.name}</strong>
+                    <span style="font-size: 0.68rem; opacity: 0.8; margin-left: 3px;">(${c.broker})</span>
                 </span>
-            `).join("");
+            `).join("") : `<span style="font-size: 0.75rem; color: var(--accent-amber);">⚠️ No accounts mapped</span>`;
 
             // Multi-leg prices of last trade
             const legsHtml = (inst.legs_info && inst.legs_info.length) ? `
@@ -65,19 +158,30 @@ class StrategiesManager {
                     ${inst.legs_info.map(leg => `
                         <span class="leg-pill">
                             <span class="leg-name">${leg.leg}</span>
-                            <span>Entry: ₹${leg.entry.toFixed(2)}</span>
-                            <span>Exit: ${leg.exit ? '₹' + leg.exit.toFixed(2) : '<em style="color:var(--accent-amber)">OPEN</em>'}</span>
-                            <span>LTP: ₹${leg.ltp.toFixed(2)}</span>
+                            <span>Entry: ₹${Number(leg.entry || 0).toFixed(2)}</span>
+                            <span>Exit: ${leg.exit ? '₹' + Number(leg.exit).toFixed(2) : '<em style="color:var(--accent-amber)">OPEN</em>'}</span>
+                            <span>LTP: ₹${Number(leg.ltp || 0).toFixed(2)}</span>
                         </span>
                     `).join("")}
                 </div>
             ` : '<div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px;">No active trade legs</div>';
 
+            const adminNameEsc = inst.name_admin.replace(/'/g, "\\'");
+            const userNameEsc = inst.name_user.replace(/'/g, "\\'");
+
             return `
                 <tr id="strat-row-${inst.id}">
                     <td>
-                        <div style="display: flex; flex-direction: column; gap: 4px;">
-                            ${clientsHtml}
+                        <div style="display: flex; flex-direction: column; gap: 4px; max-width: 280px;">
+                            <div style="display: flex; flex-wrap: wrap; gap: 3px;">
+                                ${clientsHtml}
+                            </div>
+                            <div>
+                                <button class="action-btn-sm" onclick="strategiesManager.openRemapClientsModal(${inst.id}, '${userNameEsc}')" 
+                                        style="font-size: 0.7rem; padding: 2px 7px; background: rgba(59, 130, 246, 0.12); color: var(--accent-blue); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 4px; cursor: pointer; margin-top: 3px;">
+                                    👥 Re-map Accounts
+                                </button>
+                            </div>
                         </div>
                     </td>
                     <td>
@@ -112,23 +216,455 @@ class StrategiesManager {
                             <button class="action-btn-icon btn-action-squareoff" onclick="strategiesManager.squareOff(${inst.id})" title="Emergency Square Off Strategy">
                                 ⚡
                             </button>
-                            <button class="action-btn-icon btn-action-chart" onclick="strategiesManager.openChart(${inst.id}, '${inst.name_user}')" title="Performance Chart">
+                            <button class="action-btn-icon btn-action-remap" onclick="strategiesManager.openRemapClientsModal(${inst.id}, '${userNameEsc}')" title="Re-map Accounts">
+                                👥
+                            </button>
+                            <button class="action-btn-icon btn-action-chart" onclick="strategiesManager.openChart(${inst.id}, '${userNameEsc}')" title="Performance Chart">
                                 📈
                             </button>
-                            <button class="action-btn-icon btn-action-trades" onclick="strategiesManager.openTrades(${inst.id}, '${inst.name_user}')" title="Recent Trades List (All Legs)">
+                            <button class="action-btn-icon btn-action-trades" onclick="strategiesManager.openTrades(${inst.id}, '${userNameEsc}')" title="Recent Trades List (All Legs)">
                                 📋
                             </button>
-                            <button class="action-btn-icon btn-action-log" onclick="strategiesManager.openLogs(${inst.id}, '${inst.name_user}')" title="Chronological Decision Audit Log">
+                            <button class="action-btn-icon btn-action-log" onclick="strategiesManager.openLogs(${inst.id}, '${userNameEsc}')" title="Chronological Decision Audit Log">
                                 📜
                             </button>
-                            <button class="action-btn-icon btn-action-dup" onclick="strategiesManager.openDuplicateModal(${inst.id}, '${inst.name_admin}', '${inst.name_user}', '${JSON.stringify(inst.config).replace(/"/g, '&quot;')}')" title="Duplicate Strategy">
+                            <button class="action-btn-icon btn-action-dup" onclick="strategiesManager.openDuplicateModal(${inst.id}, '${adminNameEsc}', '${userNameEsc}', '${JSON.stringify(inst.config).replace(/"/g, '&quot;')}')" title="Duplicate Strategy">
                                 📑
+                            </button>
+                            <button class="action-btn-icon btn-action-delete" onclick="strategiesManager.deleteStrategy(${inst.id}, '${userNameEsc}')" title="Delete Strategy" style="color: var(--accent-red);">
+                                🗑️
                             </button>
                         </div>
                     </td>
                 </tr>
             `;
         }).join("");
+    }
+
+    // =========================================================================
+    // MODE 2: INDIVIDUAL ROWS (Account + Strategy with Account PnL)
+    // =========================================================================
+    renderIndividual(instances) {
+        if (this.tableCard) this.tableCard.style.display = "block";
+        if (this.byClientContainer) this.byClientContainer.style.display = "none";
+        if (!this.instancesTableBody) return;
+
+        // Update table headers
+        const thCol1 = document.getElementById("th-col-1");
+        const thPnlCol = document.getElementById("th-pnl-col");
+        if (thCol1) thCol1.innerText = "Client Account";
+        if (thPnlCol) thPnlCol.innerText = "Account PNL & Details";
+
+        const isAdmin = window.app ? window.app.currentRole === "ADMIN" : true;
+
+        if (!instances || instances.length === 0) {
+            this.instancesTableBody.innerHTML = `
+                <tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 2rem;">No active strategy instances configured.</td></tr>
+            `;
+            return;
+        }
+
+        // Explode instances into individual rows per mapped client
+        const rows = [];
+        for (const inst of instances) {
+            const isRunning = inst.status === "RUNNING";
+            const adminNameEsc = inst.name_admin.replace(/'/g, "\\'");
+            const userNameEsc = inst.name_user.replace(/'/g, "\\'");
+
+            if (!inst.mapped_clients || inst.mapped_clients.length === 0) {
+                // Strategy has no client mapped
+                rows.push(`
+                    <tr id="strat-indiv-${inst.id}-unmapped">
+                        <td>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <span class="status-pill status-stopped" style="color: var(--accent-amber);">⚠️ No Account</span>
+                                <button class="action-btn-sm" onclick="strategiesManager.openRemapClientsModal(${inst.id}, '${userNameEsc}')" 
+                                        style="font-size: 0.7rem; padding: 2px 6px; background: var(--accent-blue); color: white; border-radius: 4px;">
+                                    + Map Account
+                                </button>
+                            </div>
+                        </td>
+                        <td>
+                            <strong>${isAdmin ? inst.name_admin : inst.name_user}</strong>
+                            ${isAdmin ? `<div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">${inst.template_key}</div>` : ''}
+                        </td>
+                        <td>
+                            <span class="status-pill status-${isRunning ? 'running' : 'stopped'}">
+                                <span class="status-dot"></span> ${inst.status}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="status-pill status-${inst.last_trade_status === 'OPEN' ? 'running' : 'stopped'}">
+                                ${inst.last_trade_status}
+                            </span>
+                        </td>
+                        <td style="font-family: var(--font-mono); font-size: 0.8rem;">${inst.start_time}</td>
+                        <td style="font-family: var(--font-mono); font-size: 0.8rem;">${inst.end_time}</td>
+                        <td>
+                            <span style="font-family: var(--font-mono); color: var(--text-muted);">₹0.00 (Unmapped)</span>
+                        </td>
+                        <td style="text-align: right;">
+                            <div class="table-actions" style="justify-content: flex-end; gap: 0.35rem;">
+                                <button class="action-btn-icon btn-action-remap" onclick="strategiesManager.openRemapClientsModal(${inst.id}, '${userNameEsc}')" title="Map Accounts">👥</button>
+                                <button class="action-btn-icon btn-action-delete" onclick="strategiesManager.deleteStrategy(${inst.id}, '${userNameEsc}')" title="Delete Strategy" style="color: var(--accent-red);">🗑️</button>
+                            </div>
+                        </td>
+                    </tr>
+                `);
+                continue;
+            }
+
+            for (const client of inst.mapped_clients) {
+                const brokerCls = `broker-${(client.broker || "xts").toLowerCase()}`;
+                const clientPnl = client.pnl || { unrealized: 0.0, realized: 0.0, total: 0.0 };
+                const isPos = clientPnl.total >= 0;
+                const sign = isPos ? "+" : "";
+                const pnlCls = isPos ? "pnl-positive" : "pnl-negative";
+                const clientNameEsc = client.name.replace(/'/g, "\\'");
+
+                rows.push(`
+                    <tr id="strat-indiv-${inst.id}-${client.client_id}">
+                        <td>
+                            <div style="display: flex; flex-direction: column; gap: 2px;">
+                                <div style="display: flex; align-items: center; gap: 6px;">
+                                    <span class="broker-tag ${brokerCls}">${client.broker}</span>
+                                    <strong style="font-size: 0.85rem;">${client.name}</strong>
+                                    <span class="mode-tag ${client.paper_mode ? 'mode-tag-paper' : 'mode-tag-live'}" style="font-size: 0.65rem; padding: 1px 4px; border-radius: 4px;">
+                                        ${client.paper_mode ? 'PAPER' : 'LIVE'}
+                                    </span>
+                                </div>
+                                <span style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted);">${client.client_id}</span>
+                            </div>
+                        </td>
+                        <td>
+                            <strong>${isAdmin ? inst.name_admin : inst.name_user}</strong>
+                            ${isAdmin ? `<div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">${inst.template_key}</div>` : ''}
+                        </td>
+                        <td>
+                            <span class="status-pill status-${isRunning ? 'running' : 'stopped'}">
+                                <span class="status-dot"></span> ${inst.status}
+                            </span>
+                        </td>
+                        <td>
+                            <span class="status-pill status-${inst.last_trade_status === 'OPEN' ? 'running' : 'stopped'}">
+                                ${inst.last_trade_status}
+                            </span>
+                        </td>
+                        <td style="font-family: var(--font-mono); font-size: 0.8rem;">${inst.start_time}</td>
+                        <td style="font-family: var(--font-mono); font-size: 0.8rem;">${inst.end_time}</td>
+                        <td>
+                            <div>
+                                <span class="card-pnl-title">U: </span><span class="${clientPnl.unrealized >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-family: var(--font-mono); font-weight: 600;">${clientPnl.unrealized >= 0 ? '+' : ''}₹${clientPnl.unrealized.toFixed(2)}</span> |
+                                <span class="card-pnl-title">R: </span><span class="${clientPnl.realized >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-family: var(--font-mono); font-weight: 600;">${clientPnl.realized >= 0 ? '+' : ''}₹${clientPnl.realized.toFixed(2)}</span> |
+                                <strong class="${pnlCls}" style="font-family: var(--font-mono);">${sign}₹${clientPnl.total.toFixed(2)}</strong>
+                            </div>
+                            <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
+                                Individual Account PnL
+                            </div>
+                        </td>
+                        <td style="text-align: right;">
+                            <div class="table-actions" style="justify-content: flex-end; gap: 0.35rem;">
+                                <button class="action-btn-icon ${isRunning ? 'btn-action-stop' : 'btn-action-start'}" onclick="strategiesManager.toggleStartStop(${inst.id}, ${isRunning})" title="${isRunning ? 'Stop Strategy' : 'Start Strategy'}">
+                                    ${isRunning ? '⏹' : '▶'}
+                                </button>
+                                <button class="action-btn-icon btn-action-squareoff" onclick="strategiesManager.squareOffAccountStrategy('${client.client_id}', ${inst.id})" title="Emergency Square Off positions for ${clientNameEsc} on this strategy">
+                                    ⚡
+                                </button>
+                                <button class="action-btn-icon btn-action-unmap" onclick="strategiesManager.unmapClient(${inst.id}, '${client.client_id}', '${clientNameEsc}')" title="Unmap ${clientNameEsc} from this strategy" style="color: var(--accent-amber);">
+                                    🔗❌
+                                </button>
+                                <button class="action-btn-icon btn-action-chart" onclick="strategiesManager.openChart(${inst.id}, '${userNameEsc}')" title="Performance Chart">
+                                    📈
+                                </button>
+                                <button class="action-btn-icon btn-action-log" onclick="strategiesManager.openLogs(${inst.id}, '${userNameEsc}')" title="Chronological Decision Audit Log">
+                                    📜
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `);
+            }
+        }
+
+        this.instancesTableBody.innerHTML = rows.join("");
+    }
+
+    // =========================================================================
+    // MODE 3: GROUP BY CLIENT (Client Header Cards with Strategies Underneath)
+    // =========================================================================
+    renderByClient(instances) {
+        if (this.tableCard) this.tableCard.style.display = "none";
+        if (this.byClientContainer) this.byClientContainer.style.display = "flex";
+        if (!this.byClientContainer) return;
+
+        const isAdmin = window.app ? window.app.currentRole === "ADMIN" : true;
+        const accounts = this.latestAccounts || [];
+
+        if (!accounts || accounts.length === 0) {
+            this.byClientContainer.innerHTML = `
+                <div style="padding: 2.5rem; text-align: center; background: var(--bg-card); border-radius: 8px; border: 1px dashed var(--border-color); color: var(--text-muted);">
+                    <div style="font-size: 1.5rem; margin-bottom: 0.5rem;">👥</div>
+                    <div>No client accounts found.</div>
+                    <div style="font-size: 0.8rem; margin-top: 0.25rem;">Click <strong>+ Add Client Account</strong> above to map real trading accounts.</div>
+                </div>
+            `;
+            return;
+        }
+
+        this.byClientContainer.innerHTML = accounts.map(acc => {
+            const brokerCls = `broker-${(acc.broker || "xts").toLowerCase()}`;
+            const clientNameEsc = acc.client_name.replace(/'/g, "\\'");
+
+            // Find all strategies mapped to this account
+            const mappedStrats = instances.filter(inst => (inst.client_ids || []).includes(acc.client_id));
+
+            let clientTotalU = 0;
+            let clientTotalR = 0;
+
+            const stratsRows = mappedStrats.map(inst => {
+                const clientEntry = (inst.mapped_clients || []).find(c => c.client_id === acc.client_id);
+                const pnl = clientEntry?.pnl || { unrealized: 0, realized: 0, total: 0 };
+                clientTotalU += pnl.unrealized;
+                clientTotalR += pnl.realized;
+
+                const isPos = pnl.total >= 0;
+                const sign = isPos ? "+" : "";
+                const pnlCls = isPos ? "pnl-positive" : "pnl-negative";
+                const isRunning = inst.status === "RUNNING";
+                const userNameEsc = inst.name_user.replace(/'/g, "\\'");
+
+                return `
+                    <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
+                        <td style="padding: 0.6rem 0.75rem;">
+                            <strong>${isAdmin ? inst.name_admin : inst.name_user}</strong>
+                            ${isAdmin ? `<div style="font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono);">${inst.template_key}</div>` : ''}
+                        </td>
+                        <td style="padding: 0.6rem 0.75rem;">
+                            <span class="status-pill status-${isRunning ? 'running' : 'stopped'}">
+                                <span class="status-dot"></span> ${inst.status}
+                            </span>
+                        </td>
+                        <td style="padding: 0.6rem 0.75rem; font-family: var(--font-mono); font-size: 0.75rem;">
+                            ${inst.start_time} - ${inst.end_time}
+                        </td>
+                        <td style="padding: 0.6rem 0.75rem;">
+                            <div>
+                                <span class="card-pnl-title">U: </span><span class="${pnl.unrealized >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-family: var(--font-mono); font-size: 0.8rem;">${pnl.unrealized >= 0 ? '+' : ''}₹${pnl.unrealized.toFixed(2)}</span> |
+                                <span class="card-pnl-title">R: </span><span class="${pnl.realized >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-family: var(--font-mono); font-size: 0.8rem;">${pnl.realized >= 0 ? '+' : ''}₹${pnl.realized.toFixed(2)}</span> |
+                                <strong class="${pnlCls}" style="font-family: var(--font-mono); font-size: 0.85rem;">${sign}₹${pnl.total.toFixed(2)}</strong>
+                            </div>
+                        </td>
+                        <td style="padding: 0.6rem 0.75rem; text-align: right;">
+                            <div class="table-actions" style="justify-content: flex-end; gap: 0.35rem;">
+                                <button class="action-btn-icon ${isRunning ? 'btn-action-stop' : 'btn-action-start'}" onclick="strategiesManager.toggleStartStop(${inst.id}, ${isRunning})" title="${isRunning ? 'Stop Strategy' : 'Start Strategy'}">
+                                    ${isRunning ? '⏹' : '▶'}
+                                </button>
+                                <button class="action-btn-icon btn-action-squareoff" onclick="strategiesManager.squareOffAccountStrategy('${acc.client_id}', ${inst.id})" title="Emergency Square Off positions for this strategy">
+                                    ⚡
+                                </button>
+                                <button class="action-btn-icon btn-action-unmap" onclick="strategiesManager.unmapClient(${inst.id}, '${acc.client_id}', '${clientNameEsc}')" title="Unmap strategy from this account" style="color: var(--accent-amber);">
+                                    🔗❌
+                                </button>
+                                <button class="action-btn-icon btn-action-chart" onclick="strategiesManager.openChart(${inst.id}, '${userNameEsc}')" title="Performance Chart">
+                                    📈
+                                </button>
+                                <button class="action-btn-icon btn-action-log" onclick="strategiesManager.openLogs(${inst.id}, '${userNameEsc}')" title="Chronological Decision Audit Log">
+                                    📜
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join("");
+
+            const clientTotalT = clientTotalU + clientTotalR;
+            const clientTotalPos = clientTotalT >= 0;
+            const clientTotalSign = clientTotalPos ? "+" : "";
+            const clientTotalCls = clientTotalPos ? "pnl-positive" : "pnl-negative";
+
+            return `
+                <div class="client-group-card" style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; box-shadow: var(--shadow-sm);">
+                    <!-- Client Header Bar -->
+                    <div style="background: var(--bg-secondary); padding: 0.75rem 1rem; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;">
+                        <div style="display: flex; align-items: center; gap: 0.65rem;">
+                            <span class="broker-tag ${brokerCls}">${acc.broker}</span>
+                            <h3 style="font-size: 0.95rem; margin: 0;">${acc.client_name}</h3>
+                            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted);">${acc.client_id}</span>
+                            <span class="mode-tag ${acc.paper_mode ? 'mode-tag-paper' : 'mode-tag-live'}" style="font-size: 0.68rem; padding: 2px 6px; border-radius: 4px;">
+                                ${acc.paper_mode ? '📄 PAPER' : '🟢 LIVE'}
+                            </span>
+                        </div>
+
+                        <div style="display: flex; align-items: center; gap: 1rem;">
+                            <!-- Client Total PnL across active strategies -->
+                            <div style="font-size: 0.8rem; background: var(--bg-tertiary); padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border-color);">
+                                <span class="card-pnl-title">Account Total: </span>
+                                <span class="${clientTotalU >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-family: var(--font-mono); font-weight: 600;">U: ${clientTotalU >= 0 ? '+' : ''}₹${clientTotalU.toFixed(2)}</span> |
+                                <span class="${clientTotalR >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-family: var(--font-mono); font-weight: 600;">R: ${clientTotalR >= 0 ? '+' : ''}₹${clientTotalR.toFixed(2)}</span> |
+                                <strong class="${clientTotalCls}" style="font-family: var(--font-mono); font-weight: 700;">T: ${clientTotalSign}₹${clientTotalT.toFixed(2)}</strong>
+                            </div>
+
+                            <button class="action-btn-sm" onclick="clientCardsManager.squareOff('${acc.client_id}')" 
+                                    style="background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 3px 8px; font-size: 0.75rem;">
+                                ⚡ Square Off Account
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Client Strategies Sub-Table -->
+                    <div class="table-responsive">
+                        <table class="data-table" style="margin: 0;">
+                            <thead>
+                                <tr style="background: rgba(0,0,0,0.15); font-size: 0.75rem;">
+                                    <th>Strategy Name</th>
+                                    <th>Status</th>
+                                    <th>Timings</th>
+                                    <th>Account PnL on this Strategy</th>
+                                    <th style="text-align: right;">Action Menu</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${mappedStrats.length ? stratsRows : `
+                                    <tr>
+                                        <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 1.25rem;">
+                                            No active strategies mapped to this account.
+                                        </td>
+                                    </tr>
+                                `}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }).join("");
+    }
+
+    // =========================================================================
+    // CLIENT RE-MAPPING & UNMAPPING HANDLERS
+    // =========================================================================
+    openRemapClientsModal(strategyId, strategyName) {
+        this.currentRemapStrategyId = strategyId;
+        const subTitle = document.getElementById("remap-strategy-subtitle");
+        if (subTitle) subTitle.innerText = `Strategy: ${strategyName}`;
+
+        const inst = this.latestInstances.find(i => i.id === strategyId);
+        const currentCids = inst ? (inst.client_ids || []) : [];
+        const accounts = this.latestAccounts || [];
+
+        const listContainer = document.getElementById("remap-clients-list");
+        if (!listContainer) return;
+
+        if (!accounts || accounts.length === 0) {
+            listContainer.innerHTML = `
+                <div style="color: var(--accent-amber); padding: 1rem; text-align: center;">
+                    No client accounts registered. Add client accounts first.
+                </div>
+            `;
+        } else {
+            listContainer.innerHTML = accounts.map(acc => {
+                const isChecked = currentCids.includes(acc.client_id);
+                const brokerCls = `broker-${(acc.broker || "xts").toLowerCase()}`;
+                return `
+                    <label style="display: flex; align-items: center; justify-content: space-between; padding: 0.65rem 0.85rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;">
+                        <div style="display: flex; align-items: center; gap: 0.65rem;">
+                            <input type="checkbox" class="remap-checkbox" value="${acc.client_id}" ${isChecked ? 'checked' : ''} style="width: 16px; height: 16px; cursor: pointer;">
+                            <span class="broker-tag ${brokerCls}">${acc.broker}</span>
+                            <strong>${acc.client_name}</strong>
+                            <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted);">(${acc.client_id})</span>
+                        </div>
+                        <span class="mode-tag ${acc.paper_mode ? 'mode-tag-paper' : 'mode-tag-live'}" style="font-size: 0.68rem; padding: 2px 6px; border-radius: 4px;">
+                            ${acc.paper_mode ? 'PAPER' : 'LIVE'}
+                        </span>
+                    </label>
+                `;
+            }).join("");
+        }
+
+        const modal = document.getElementById("modal-remap-clients");
+        if (modal) modal.classList.add("active");
+    }
+
+    async submitRemapClients() {
+        if (!this.currentRemapStrategyId) return;
+        const checkboxes = document.querySelectorAll(".remap-checkbox:checked");
+        const selectedCids = Array.from(checkboxes).map(cb => cb.value);
+
+        try {
+            const res = await fetch(`/api/strategies/${this.currentRemapStrategyId}/clients`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ client_ids: selectedCids })
+            });
+            const data = await res.json();
+            if (data.success) {
+                document.getElementById("modal-remap-clients")?.classList.remove("active");
+                await this.loadInstances();
+                if (window.clientCardsManager) {
+                    window.clientCardsManager.loadAccounts();
+                }
+            } else {
+                alert("Failed to update mapped clients: " + (data.detail || data.error || "Unknown error"));
+            }
+        } catch (e) {
+            alert("Error updating client mapping: " + e);
+        }
+    }
+
+    async unmapClient(strategyId, clientId, clientName) {
+        if (!confirm(`Unmap account "${clientName}" (${clientId}) from Strategy #${strategyId}?`)) return;
+
+        try {
+            const res = await fetch(`/api/strategies/${strategyId}/clients/${clientId}/unmap`, {
+                method: "POST"
+            });
+            const data = await res.json();
+            if (data.success) {
+                await this.loadInstances();
+                if (window.clientCardsManager) {
+                    window.clientCardsManager.loadAccounts();
+                }
+            } else {
+                alert("Failed to unmap client: " + (data.detail || data.error || "Unknown error"));
+            }
+        } catch (e) {
+            alert("Error unmapping client: " + e);
+        }
+    }
+
+    async squareOffAccountStrategy(clientId, strategyId) {
+        if (!confirm(`Emergency square off positions for client "${clientId}" on Strategy #${strategyId}?`)) return;
+
+        try {
+            const res = await fetch(`/api/accounts/${clientId}/strategies/${strategyId}/square-off`, {
+                method: "POST"
+            });
+            const data = await res.json();
+            alert(`Square off executed: ${data.squared_positions || 0} positions closed.`);
+            await this.loadInstances();
+            if (window.clientCardsManager) {
+                window.clientCardsManager.loadAccounts();
+            }
+        } catch (e) {
+            alert("Square off failed: " + e);
+        }
+    }
+
+    async deleteStrategy(id, name) {
+        if (!confirm(`Are you sure you want to delete strategy "${name}"?`)) return;
+        try {
+            const res = await fetch(`/api/strategies/${id}`, { method: "DELETE" });
+            const data = await res.json();
+            if (data.success) {
+                await this.loadInstances();
+                if (window.clientCardsManager) {
+                    window.clientCardsManager.loadAccounts();
+                }
+            } else {
+                alert("Failed to delete strategy: " + (data.error || "Unknown error"));
+            }
+        } catch (e) {
+            alert("Delete failed: " + e);
+        }
     }
 
     async toggleStartStop(id, isCurrentlyRunning) {
@@ -226,10 +762,10 @@ class StrategiesManager {
                             ${data.legs_info.map(l => `
                                 <span class="leg-pill">
                                     <span class="leg-name">${l.leg}</span>
-                                    <span>Entry: ₹${l.entry}</span>
-                                    <span>Exit: ${l.exit ? '₹' + l.exit : 'OPEN'}</span>
-                                    <span>LTP: ₹${l.ltp}</span>
-                                    <span class="${l.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-weight: 700;">₹${l.pnl}</span>
+                                    <span>Entry: ₹${Number(l.entry || 0).toFixed(2)}</span>
+                                    <span>Exit: ${l.exit ? '₹' + Number(l.exit).toFixed(2) : 'OPEN'}</span>
+                                    <span>LTP: ₹${Number(l.ltp || 0).toFixed(2)}</span>
+                                    <span class="${l.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-weight: 700;">₹${Number(l.pnl || 0).toFixed(2)}</span>
                                 </span>
                             `).join("")}
                         </div>
@@ -251,7 +787,7 @@ class StrategiesManager {
                                 <td><span style="font-family: var(--font-mono); font-size: 0.75rem;">${t.leg_id || 'MAIN'}</span></td>
                                 <td style="font-weight: 700; color: ${t.side === 'BUY' ? 'var(--accent-green)' : 'var(--accent-red)'}">${t.side}</td>
                                 <td>${t.quantity}</td>
-                                <td>₹${t.price.toFixed(2)}</td>
+                                <td>₹${Number(t.price || 0).toFixed(2)}</td>
                             </tr>
                         `).join("") : '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No executed trades yet</td></tr>'}
                     </tbody>

@@ -33,4 +33,4 @@ async def on_startup():
     print("=" * 65)
 
 if __name__ == "__main__":
-    uvicorn.run("backend.run_web:app", host=API_HOST, port=API_PORT, reload=False, log_level="info")
+    uvicorn.run("backend.run_web:app", host=API_HOST, port=API_PORT, reload=True, log_level="info")

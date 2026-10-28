@@ -903,14 +903,14 @@ table.data-table tbody td {
     background: rgba(0, 0, 0, 0.65);
     backdrop-filter: blur(4px);
     z-index: 2000;
-    display: none;
+    display: none !important;
     align-items: center;
     justify-content: center;
     padding: 1rem;
 }
 
 .modal-overlay.active {
-    display: flex;
+    display: flex !important;
 }
 
 .modal-box {
@@ -1013,3 +1013,96 @@ table.data-table tbody td {
     font-size: 0.7rem;
     color: var(--text-muted);
 }
+
+/* ===================================================================
+   3-WAY STRATEGY VIEW MODE SWITCHER & CLIENT GROUPING
+   =================================================================== */
+.view-mode-selector {
+    display: inline-flex;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 3px;
+}
+
+.view-mode-btn {
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    padding: 0.35rem 0.75rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.view-mode-btn:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.view-mode-btn.active {
+    background: var(--accent-blue);
+    color: white;
+    box-shadow: 0 2px 6px rgba(59, 130, 246, 0.4);
+}
+
+/* Mode Tags */
+.mode-tag {
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.03em;
+    display: inline-flex;
+    align-items: center;
+}
+
+.mode-tag-paper {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.mode-tag-live {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+/* Delete Account Button in Card Header */
+.icon-btn-delete-acc:hover {
+    background: rgba(239, 68, 68, 0.25) !important;
+    border-color: #ef4444 !important;
+    transform: scale(1.05);
+}
+
+/* Unmap and Remap Action Buttons */
+.action-btn-icon.btn-action-unmap:hover {
+    background: rgba(245, 158, 11, 0.25);
+    border-color: var(--accent-amber);
+    color: var(--accent-amber);
+}
+
+.action-btn-icon.btn-action-remap:hover {
+    background: rgba(59, 130, 246, 0.25);
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+}
+
+/* Group by Client Section Container */
+.by-client-container {
+    width: 100%;
+}
+
+.client-group-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.client-group-card:hover {
+    box-shadow: var(--shadow-md);
+}
+

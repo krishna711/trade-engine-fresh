@@ -88,8 +88,12 @@ dup_payload = {
         "quantity": 15
     }
 }
-dup_res = test_endpoint('http://127.0.0.1:8000/api/strategies/1/duplicate', method='POST', data=dup_payload)
+first_id = instances[0]['id'] if instances else 7
+dup_res = test_endpoint(f'http://127.0.0.1:8000/api/strategies/{first_id}/duplicate', method='POST', data=dup_payload)
 print(f"  Strategy Duplication Result: Cloned Instance ID: {dup_res.get('cloned_strategy_id')}")
+if dup_res.get('cloned_strategy_id'):
+    del_res = test_endpoint(f"http://127.0.0.1:8000/api/strategies/{dup_res['cloned_strategy_id']}", method='DELETE')
+    print(f"  Cloned test strategy #{dup_res['cloned_strategy_id']} cleaned up -> Success: {del_res.get('success')}")
 
 # 9. Logs & Prompt Error Highlight Test
 print("\n--- TESTING LOGS & PROMPT ERROR HIGHLIGHT ---")
