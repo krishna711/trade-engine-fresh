@@ -1,7 +1,8 @@
 # Fresh Trade Engine: Production Deployment & Live Trading Guide
 > **Repository**: [trade-engine-fresh](https://github.com/krishna711/trade-engine-fresh.git)  
-> **Target Environment**: Linux VPS / Cloud VM (Ubuntu 22.04 LTS / 24.04 LTS) or Dedicated Trading Server  
-> **Purpose**: Complete step-by-step instructions for deploying Fresh Trade Engine to a live server, configuring production service daemons, enabling secure public access with SSL/Nginx, and safely executing live broker orders.
+> **Target Environment**: Linux VPS / Cloud VM (Ubuntu 22.04 LTS / 24.04 LTS or Oracle Linux 8/9 / OCI) or Dedicated Trading Server  
+> **Purpose**: Complete step-by-step instructions for deploying Fresh Trade Engine to a live server, configuring production service daemons, enabling secure public access with SSL/Nginx, and safely executing live broker orders.  
+> 💡 *Using CloudPanel on Ubuntu? See the specialized **[CloudPanel Deployment Guide (DEPLOYMENT_CLOUDPANEL.md)](./DEPLOYMENT_CLOUDPANEL.md)**.*
 
 ---
 
@@ -117,6 +118,7 @@ sudo dnf install -y python3 python3-pip git curl nginx certbot python3-certbot-n
 sudo useradd -m -s /bin/bash trader
 sudo passwd trader
 # (Enter a secure password for the trader user)
+P: Rtd@2810
 
 # Add trader to wheel group (sudo equivalent on Oracle Linux / RHEL)
 sudo usermod -aG wheel trader
@@ -242,7 +244,7 @@ Systemd ensures that your trading engine:
 
 Create the unified systemd unit:
 ```bash
-sudo nano /etc/systemd/system/trade-engine.service
+sudo nano /etc/systemd/system/trade-engine-fresh.service
 ```
 
 Paste the following configuration:
@@ -271,14 +273,14 @@ WantedBy=multi-user.target
 Enable and start the service:
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable trade-engine
-sudo systemctl start trade-engine
-sudo systemctl status trade-engine
+sudo systemctl enable trade-engine-fresh
+sudo systemctl start trade-engine-fresh
+sudo systemctl status trade-engine-fresh
 ```
 
 To tail live service logs:
 ```bash
-journalctl -u trade-engine -f -n 100
+journalctl -u trade-engine-fresh -f -n 100
 ```
 
 ---

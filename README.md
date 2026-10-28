@@ -13,7 +13,8 @@ A high-performance, fault-proof algorithmic trading engine with a component-base
 ## 📖 Essential Documentation
 - 🤖 **[AGENTS.md](./AGENTS.md)**: **Master AI Agent & Developer Handbook** — Comprehensive architectural reference, database schemas, local IPC specifications, multi-broker routing, isolated strategy process container mechanics, and implementation status roadmap.
 - 🏗️ **[ARCHITECTURE.md](./ARCHITECTURE.md)**: Architectural diagrams, component breakdowns, and operational workflows.
-- 🚀 **[DEPLOYMENT.md](./DEPLOYMENT.md)**: **Production Deployment & Live Trading Guide** — Step-by-step instructions for Linux VPS/dedicated servers, Systemd service daemons, NTP time sync, Nginx reverse proxy with SSL, and safe live order execution.
+- 🚀 **[DEPLOYMENT.md](./DEPLOYMENT.md)**: **Standard Linux Deployment Guide** — Bare-metal / Clean VPS instructions for Ubuntu 22.04/24.04 & Oracle Linux (OCI) with Systemd, Nginx, Chrony, and Certbot.
+- ☁️ **[DEPLOYMENT_CLOUDPANEL.md](./DEPLOYMENT_CLOUDPANEL.md)**: **CloudPanel Deployment Guide (Ubuntu)** — Step-by-step setup using CloudPanel's GUI Reverse Proxy, 1-Click Let's Encrypt SSL, WebSocket proxying (`/ws/live`), and Basic Auth.
 
 ---
 
