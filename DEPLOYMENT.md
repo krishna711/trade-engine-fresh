@@ -59,11 +59,11 @@ Fresh Trade Engine operates locally on a single machine with zero network latenc
 
 | Specification | Minimum | Recommended Production |
 | :--- | :--- | :--- |
-| **OS** | Ubuntu 22.04 LTS / 24.04 LTS | Ubuntu 24.04 LTS (x86_64) |
+| **OS** | Ubuntu 22.04 / 24.04 LTS or Oracle Linux 8 / 9 | Ubuntu 24.04 LTS / Oracle Linux 9 (x86_64) |
 | **vCPU** | 2 Cores | 4 Cores (Dedicated CPU) |
 | **RAM** | 4 GB | 8 GB |
 | **Storage** | 30 GB SSD | 50 GB NVMe SSD |
-| **Server Location** | India (Mumbai / Bangalore) | AWS `ap-south-1` (Mumbai) or DigitalOcean (BLR1) |
+| **Server Location** | India (Mumbai / Bangalore) | Oracle Cloud (OCI Mumbai `ap-mumbai-1` / Hyderabad `ap-hyderabad-1`), AWS `ap-south-1` (Mumbai), or DigitalOcean (BLR1) |
 | **Network Latency** | < 30ms to NSE/BSE colocation | < 10ms to broker trading gateways |
 
 ---
@@ -72,19 +72,56 @@ Fresh Trade Engine operates locally on a single machine with zero network latenc
 
 Connect to your server via SSH:
 ```bash
+# Standard VPS / Dedicated Server (Ubuntu/Debian):
 ssh root@YOUR_SERVER_IP
+
+# Oracle Cloud Infrastructure (OCI) default admin user:
+ssh opc@YOUR_SERVER_IP
+# (or if using SSH key on OCI: ssh -i ~/.ssh/id_rsa opc@YOUR_SERVER_IP)
 ```
 
-### 1. Update Packages & Install System Tools:
+---
+
+### Option A: Ubuntu (22.04 LTS / 24.04 LTS)
+
+#### 1. Update Packages & Install System Tools:
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y python3 python3-pip python3-venv git curl ufw nginx certbot python3-certbot-nginx tmux sqlite3 chrony build-essential
 ```
 
-### 2. Create a Dedicated Non-Root User:
+#### 2. Create a Dedicated Non-Root User:
 ```bash
 sudo adduser --gecos "" trader
 sudo usermod -aG sudo trader
+su - trader
+```
+
+---
+
+### Option B: Oracle Linux (8 / 9) / Oracle Cloud Infrastructure (OCI)
+
+#### 1. Update Packages & Install System Tools:
+```bash
+sudo dnf update -y
+
+# Enable EPEL (Extra Packages for Enterprise Linux) for certbot and nginx tools
+sudo dnf install -y oracle-epel-release-el$(rpm -E %{rhel}) || sudo dnf install -y epel-release
+
+# Install Python 3, build tools, Nginx, SQLite, Chrony, Tmux, and Certbot
+sudo dnf install -y python3 python3-pip git curl nginx certbot python3-certbot-nginx tmux sqlite chrony gcc make python3-devel tar
+```
+
+#### 2. Create a Dedicated Non-Root User:
+```bash
+sudo useradd -m -s /bin/bash trader
+sudo passwd trader
+# (Enter a secure password for the trader user)
+
+# Add trader to wheel group (sudo equivalent on Oracle Linux / RHEL)
+sudo usermod -aG wheel trader
+
+# Switch to the trader user
 su - trader
 ```
 
@@ -96,7 +133,11 @@ Stock and derivative exchanges enforce strict timestamp matching on order reques
 
 ### 1. Configure Chrony for Indian NTP Pool:
 ```bash
+# Ubuntu:
 sudo nano /etc/chrony/chrony.conf
+
+# Oracle Linux:
+sudo nano /etc/chrony.conf
 ```
 Add Indian pool servers at the top:
 ```conf
@@ -108,8 +149,15 @@ server 2.in.pool.ntp.org iburst
 
 ### 2. Restart and Verify Time Sync:
 ```bash
+# Ubuntu:
 sudo systemctl restart chrony
-sudo systemctl enable chrony
+sudo systemctl enable --now chrony
+
+# Oracle Linux:
+sudo systemctl restart chronyd
+sudo systemctl enable --now chronyd
+
+# Check sync status (both OS):
 chronyc tracking
 ```
 Ensure `Leap status` is **Normal** and `System time` offset is sub-millisecond.
@@ -290,7 +338,11 @@ Never expose port 8000 directly to the internet. Use Nginx with SSL and HTTP Bas
 
 ### 1. Configure Nginx Virtual Host:
 ```bash
+# Ubuntu:
 sudo nano /etc/nginx/sites-available/trade-engine
+
+# Oracle Linux:
+sudo nano /etc/nginx/conf.d/trade-engine.conf
 ```
 
 Paste the configuration (replace `trade.yourdomain.com` with your domain or server IP):
@@ -329,16 +381,30 @@ server {
 
 ### 2. Create Password for Terminal Access:
 ```bash
+# Ubuntu:
 sudo apt install -y apache2-utils
+
+# Oracle Linux:
+sudo dnf install -y httpd-tools
+
+# Create htpasswd admin file (both OS):
 sudo htpasswd -c /etc/nginx/.htpasswd admin
 # (Enter a strong password when prompted)
 ```
 
 ### 3. Enable Nginx Site & Test:
 ```bash
+# Ubuntu:
 sudo ln -s /etc/nginx/sites-available/trade-engine /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t
+sudo systemctl reload nginx
+
+# Oracle Linux:
+# (SELinux permission to allow Nginx to reverse-proxy to localhost 8000):
+sudo setsebool -P httpd_can_network_connect 1 2>/dev/null || true
+sudo nginx -t
+sudo systemctl enable --now nginx
 sudo systemctl reload nginx
 ```
 
@@ -350,10 +416,11 @@ Follow prompts to enable automatic HTTPS redirect.
 
 ---
 
-## 9. Step 7: Security Hardening & Firewall (UFW)
+## 9. Step 7: Security Hardening & Firewall
 
 Lock down all ports except SSH (22), HTTP (80), and HTTPS (443):
 
+### Option A: Ubuntu (UFW Firewall)
 ```bash
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
@@ -363,6 +430,27 @@ sudo ufw allow 443/tcp
 sudo ufw enable
 sudo ufw status verbose
 ```
+
+### Option B: Oracle Linux (Firewalld & Oracle Cloud OCI)
+```bash
+# 1. Configure OS-level firewalld:
+sudo systemctl enable --now firewalld
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --permanent --add-service=https
+sudo firewall-cmd --permanent --add-port=22/tcp
+sudo firewall-cmd --reload
+sudo firewall-cmd --list-all
+```
+
+> [!IMPORTANT]
+> **Oracle Cloud Infrastructure (OCI) VCN Security List Setup**:  
+> In the Oracle Cloud Web Console, ensure your VM's Virtual Cloud Network (VCN) allows ingress traffic:  
+> 1. Go to **Networking** &rarr; **Virtual Cloud Networks** &rarr; Click your VCN &rarr; **Security Lists** &rarr; **Default Security List**.  
+> 2. Click **Add Ingress Rules**:  
+>    - **Source CIDR**: `0.0.0.0/0`  
+>    - **IP Protocol**: `TCP`  
+>    - **Destination Port Range**: `80, 443`  
+> 3. Save the rule. Without this OCI console rule, external web traffic will be blocked at the OCI hypervisor gateway.
 
 Verify that internal engine ports (`8000`, `8765`) are **NOT** open to the public. They are only accessible internally via `127.0.0.1`.
 
