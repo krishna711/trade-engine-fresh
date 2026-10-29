@@ -48,83 +48,13 @@ except Exception as _init_err:
 def seed_initial_data():
     db = SessionLocal()
     try:
-        # 1. Seed Accounts in User's Priority Order (XTS > Kotak Neo > Shoonya > Zerodha > Dhan)
+        # 1. System Init Log Marker (No dummy accounts seeded; user adds real accounts)
         accounts_marker = db.query(SystemLog).filter(
             SystemLog.category == "SYSTEM_INIT",
             SystemLog.message == "ACCOUNTS_INITIALIZED"
         ).first()
 
         if not accounts_marker:
-            if db.query(Account).count() == 0:
-                accounts = [
-                    Account(
-                        broker="XTS",
-                        client_id="XT88219",
-                        client_name="IIFL Prop Desk (XTS)",
-                        paper_mode=True,
-                        is_active=True,
-                        is_logged_in=True,
-                        margin_available=500000.0,
-                        margin_used=0.0,
-                        total_balance=500000.0
-                    ),
-                    Account(
-                        broker="KOTAKNEO",
-                        client_id="KT99231",
-                        client_name="Kotak Neo Hedger",
-                        paper_mode=True,
-                        is_active=True,
-                        is_logged_in=True,
-                        margin_available=500000.0,
-                        margin_used=0.0,
-                        total_balance=500000.0
-                    ),
-                    Account(
-                        broker="SHOONYA",
-                        client_id="SH10023",
-                        client_name="Alpha Prime (Shoonya)",
-                        paper_mode=True,
-                        is_active=True,
-                        is_logged_in=True,
-                        margin_available=500000.0,
-                        margin_used=0.0,
-                        total_balance=500000.0
-                    ),
-                    Account(
-                        broker="ZERODHA",
-                        client_id="ZR44102",
-                        client_name="Kite Momentum (Zerodha)",
-                        paper_mode=True,
-                        is_active=True,
-                        is_logged_in=True,
-                        margin_available=500000.0,
-                        margin_used=0.0,
-                        total_balance=500000.0
-                    ),
-                    Account(
-                        broker="DHAN",
-                        client_id="DH55102",
-                        client_name="Dhan Fast Scalper",
-                        paper_mode=True,
-                        is_active=True,
-                        is_logged_in=True,
-                        margin_available=500000.0,
-                        margin_used=0.0,
-                        total_balance=500000.0
-                    ),
-                    Account(
-                        broker="FYERS",
-                        client_id="FY11048",
-                        client_name="Fyers Commodity Desk",
-                        paper_mode=True,
-                        is_active=True,
-                        is_logged_in=True,
-                        margin_available=500000.0,
-                        margin_used=0.0,
-                        total_balance=500000.0
-                    )
-                ]
-                db.add_all(accounts)
             db.add(SystemLog(
                 category="SYSTEM_INIT",
                 level="INFO",
@@ -133,7 +63,7 @@ def seed_initial_data():
             ))
             db.commit()
 
-        # 2. Seed Registered Strategy Templates (Admin catalog)
+        # 2. Seed Registered Strategy Templates (Admin catalog - definitions only, no running instances)
         if db.query(StrategyTemplate).count() == 0 or not db.query(StrategyTemplate).filter(StrategyTemplate.key == "strat_time_atm_seller_v1").first():
             templates = [
                 StrategyTemplate(
@@ -211,42 +141,8 @@ def seed_initial_data():
                     db.add(tpl)
             db.commit()
 
-        # 3. Seed Strategy Instances (Clean State: 0 PnL, no dummy legs)
-        if db.query(StrategyInstance).count() == 0 or not db.query(StrategyInstance).filter(StrategyInstance.template_key == "strat_time_atm_seller_v1").first():
-            instances = [
-                StrategyInstance(
-                    template_key="strat_time_atm_seller_v1",
-                    instance_name_admin="MCX CrudeOilM ATM Seller [XTS + Kotak + Shoonya + Zerodha + Dhan]",
-                    instance_name_user="MCX CrudeOilM ATM Seller",
-                    client_ids=["XT88219", "KT99231", "SH10023", "ZR44102", "DH55102"],
-                    status="RUNNING",
-                    config={
-                        "symbol": "MCX:CRUDEOILM",
-                        "strike_step": 50,
-                        "entry_time": "15:45:00",
-                        "exit_time": "23:18:00",
-                        "legs": ["CE", "PE"],
-                        "lots": 1,
-                        "lot_size": 10,
-                        "stop_loss_per_lot": 750.0,
-                        "allow_entry_in_window": True,
-                        "product": "MIS"
-                    },
-                    start_time="15:45:00",
-                    end_time="23:18:00",
-                    last_trade_status="IDLE",
-                    last_trade_at=None,
-                    unrealized_pnl=0.0,
-                    realized_pnl=0.0,
-                    total_pnl=0.0,
-                    legs_info=[]
-                )
-            ]
-            for inst in instances:
-                if not db.query(StrategyInstance).filter(StrategyInstance.instance_name_admin == inst.instance_name_admin).first():
-                    db.add(inst)
-            db.commit()
-
+        # 3. Strategy Instances: Clean state by default (no dummy instances seeded).
+        # Users configure and deploy instances explicitly.
 
         # 4. Seed Universal Symbol Mappings for all 6 segments
         if db.query(SymbolMapping).count() == 0:

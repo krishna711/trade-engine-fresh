@@ -791,11 +791,20 @@ async def run_feed_segment_test():
     return {"status": "COMPLETED", "results": results}
 
 @app.post("/api/status/diagnostics/run-order-test")
-async def run_order_segment_test():
+async def run_order_segment_test(db: Session = Depends(get_db)):
     """
     Status Page Test Case:
     1 Order Test with real-time order status update for each of the 6 segments.
     """
+    first_acc = db.query(Account).filter(Account.is_active == True).first()
+    if not first_acc:
+        return {
+            "status": "SKIPPED",
+            "message": "No active client accounts found. Please configure a client account before running order tests.",
+            "results": []
+        }
+
+    client_id = first_acc.client_id
     segment_symbols = {
         "NSE": "NSE:RELIANCE",
         "NFO": "NFO:NIFTY26OCT25000CE",
@@ -806,9 +815,6 @@ async def run_order_segment_test():
     }
 
     results = []
-    # Test on primary client
-    client_id = "SH10023"
-
     for segment, symbol in segment_symbols.items():
         t0 = datetime.datetime.utcnow()
         res = await order_manager.place_order(
@@ -836,12 +842,21 @@ async def run_order_segment_test():
     return {"status": "COMPLETED", "results": results}
 
 @app.post("/api/status/diagnostics/run-multi-broker-test")
-async def run_multi_broker_order_test():
+async def run_multi_broker_order_test(db: Session = Depends(get_db)):
     """
-    Tests parallel order dispatch across mapped brokers:
-    IIFL XTS, Kotak Neo, Shoonya, Zerodha, and Dhan.
+    Tests parallel order dispatch across active mapped brokers
     """
-    mapped_clients = ["XT88219", "KT99231", "SH10023", "ZR44102", "DH55102"]
+    active_accs = db.query(Account).filter(Account.is_active == True).all()
+    mapped_clients = [a.client_id for a in active_accs]
+
+    if not mapped_clients:
+        return {
+            "status": "SKIPPED",
+            "message": "No active client accounts found to test. Please add at least one client account.",
+            "brokers_tested": 0,
+            "results": []
+        }
+
     symbol = "MCX:CRUDEOILM"
     qty = 10
     
