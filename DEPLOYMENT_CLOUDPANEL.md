@@ -236,13 +236,27 @@ Confirm `Leap status: Normal` and offset is sub-millisecond.
 
 Run Fresh Trade Engine as a persistent system daemon that automatically starts on server boot, auto-restarts on unexpected crashes, and logs directly to journalctl.
 
-### 1. Create the Systemd Service File:
+### 1. Identify Your CloudPanel Site User:
+In CloudPanel, each site is assigned a dedicated system user (for example: `bentenbooks-v3` or the username chosen during site creation).
+
+To check the exact user owning your directory:
 ```bash
-sudo nano /etc/systemd/system/trade-engine.service
+ls -ld /home/*/trade-engine-fresh
+# Example output: drwxr-xr-x 10 bentenbooks-v3 clp ... -> User is bentenbooks-v3
 ```
 
-### 2. Paste the Following Configuration:
-*(Replace `/home/trader/trade-engine-fresh` and `trader` if your user or path is different)*:
+> [!WARNING]
+> **Fixing `status=217/USER` Error**:  
+> If `systemctl status` reports `code=exited, status=217/USER`, it means the `User=` or `Group=` specified in the service file **does not exist** on your Ubuntu system (e.g., leaving `User=trader`).  
+> Set `User=` to your actual CloudPanel user (e.g., `bentenbooks-v3`), and **omit the `Group=` line** so systemd automatically resolves the user's primary group.
+
+### 2. Create / Edit the Systemd Service File:
+```bash
+sudo nano /etc/systemd/system/trade-engine-fresh.service
+```
+
+### 3. Paste the Configuration:
+*(Replace `bentenbooks-v3` with your actual site user if different)*:
 
 ```ini
 [Unit]
@@ -251,12 +265,13 @@ After=network.target chrony.service
 
 [Service]
 Type=simple
-User=trader
-Group=trader
-WorkingDirectory=/home/trader/trade-engine-fresh
-Environment="PATH=/home/trader/trade-engine-fresh/venv/bin:/usr/local/bin:/usr/bin"
-EnvironmentFile=/home/trader/trade-engine-fresh/.env
-ExecStart=/home/trader/trade-engine-fresh/venv/bin/python backend/run.py
+# Your CloudPanel site user (e.g. bentenbooks-v3)
+User=bentenbooks-v3
+# (Omitting Group= lets systemd use the user's default group automatically)
+WorkingDirectory=/home/bentenbooks-v3/trade-engine-fresh
+Environment="PATH=/home/bentenbooks-v3/trade-engine-fresh/venv/bin:/usr/local/bin:/usr/bin"
+EnvironmentFile=/home/bentenbooks-v3/trade-engine-fresh/.env
+ExecStart=/home/bentenbooks-v3/trade-engine-fresh/venv/bin/python backend/run.py
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -267,17 +282,18 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 ```
 
-### 3. Enable & Start the Service:
+### 4. Reload Systemd & Start the Service:
+Whenever you modify a `.service` file, always reload systemd:
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable trade-engine
-sudo systemctl start trade-engine
-sudo systemctl status trade-engine
+sudo systemctl enable trade-engine-fresh
+sudo systemctl restart trade-engine-fresh
+sudo systemctl status trade-engine-fresh
 ```
 
-### 4. Monitor Live Engine Logs:
+### 5. Monitor Live Engine Logs:
 ```bash
-journalctl -u trade-engine -f -n 100
+journalctl -u trade-engine-fresh -f -n 100
 ```
 
 ---
@@ -372,3 +388,4 @@ Once deployed, access your live terminal at `https://trade.yourdomain.com`:
 - 🚀 **[DEPLOYMENT.md](./DEPLOYMENT.md)**: Standard Bare-Metal Linux deployment guide (Ubuntu & Oracle Linux without CloudPanel).
 - 🤖 **[AGENTS.md](./AGENTS.md)**: Master AI Agent & Developer Handbook (IPC protocols, schemas, strategy containers).
 - 🏗️ **[ARCHITECTURE.md](./ARCHITECTURE.md)**: High-level architectural diagrams & component flows.
+

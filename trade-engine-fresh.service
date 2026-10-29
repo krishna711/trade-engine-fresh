@@ -1,0 +1,21 @@
+[Unit]
+Description=Fresh Trade Engine - Unified Production Microservices
+After=network.target chrony.service
+
+[Service]
+Type=simple
+# Set this to your CloudPanel site user (e.g. bentenbooks-v3 or ubuntu)
+User=bentenbooks-v3
+# (Group is optional - omitting Group lets systemd use the user's primary group automatically)
+WorkingDirectory=/home/bentenbooks-v3/trade-engine-fresh
+Environment="PATH=/home/bentenbooks-v3/trade-engine-fresh/venv/bin:/usr/local/bin:/usr/bin"
+EnvironmentFile=/home/bentenbooks-v3/trade-engine-fresh/.env
+ExecStart=/home/bentenbooks-v3/trade-engine-fresh/venv/bin/python backend/run.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
