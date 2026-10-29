@@ -11,6 +11,10 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from backend.config import API_HOST, API_PORT
 from backend.database.connection import init_db
+
+# Initialize database schema & seeds immediately before importing microservices
+init_db()
+
 from backend.feed_manager.manager import feed_manager
 from backend.order_manager.manager import order_manager
 from backend.strategy_manager.manager import strategy_supervisor

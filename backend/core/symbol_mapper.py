@@ -39,6 +39,15 @@ class UniversalSymbolMapper:
         try:
             mappings = db.query(SymbolMapping).all()
             self._cache = {m.canonical_symbol: m for m in mappings}
+        except Exception:
+            # Self-heal: table might not exist yet if database is being initialized
+            try:
+                from backend.database.connection import init_db
+                init_db()
+                mappings = db.query(SymbolMapping).all()
+                self._cache = {m.canonical_symbol: m for m in mappings}
+            except Exception:
+                self._cache = {}
         finally:
             db.close()
 

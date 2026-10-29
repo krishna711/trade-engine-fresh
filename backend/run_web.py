@@ -11,6 +11,8 @@ sys.path.insert(0, str(ROOT_DIR))
 import asyncio
 from backend.config import API_HOST, API_PORT
 from backend.database.connection import init_db
+init_db()
+
 from backend.api.app import app
 from backend.core.events import event_bus
 from backend.feed_manager.manager import feed_manager

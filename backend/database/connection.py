@@ -39,6 +39,12 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     seed_initial_data()
 
+# Auto-initialize database schema and seeds on import so tables always exist
+try:
+    init_db()
+except Exception as _init_err:
+    pass
+
 def seed_initial_data():
     db = SessionLocal()
     try:

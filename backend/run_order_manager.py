@@ -8,6 +8,8 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR))
 
 from backend.database.connection import init_db
+init_db()
+
 from backend.order_manager.manager import order_manager
 from backend.core.events import event_bus
 
