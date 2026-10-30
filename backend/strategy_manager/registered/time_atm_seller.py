@@ -18,8 +18,8 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
 
     def on_init(self):
         self.symbol = self.config.get("symbol", "MCX:CRUDEOILM")
-        self.entry_time = self.config.get("entry_time", "15:45:00")
-        self.exit_time = self.config.get("exit_time", "23:18:00")
+        self.entry_time = str(self.config.get("entry_time") or self.config.get("start_time") or "15:45:00")
+        self.exit_time = str(self.config.get("exit_time") or self.config.get("end_time") or "23:18:00")
         self.legs = self.config.get("legs", ["CE", "PE"])
         self.lots = int(self.config.get("lots", 1))
         self.stop_loss_per_lot = float(self.config.get("stop_loss_per_lot", 750.0))
@@ -40,6 +40,9 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         # Subscribed symbols set
         self.subscribed_option_symbols: List[str] = []
 
+        # Keep track of last known underlying LTP for timer-based entries
+        self.last_underlying_ltp = 9850.0 if "CRUDEOIL" in self.symbol else 22500.0
+
         self.log_decision(
             "INIT",
             f"TimeBased ATM Seller Initialized for {self.symbol} | "
@@ -54,9 +57,15 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         if "symbol" in new_config:
             self.symbol = new_config["symbol"]
         if "entry_time" in new_config:
-            self.entry_time = new_config["entry_time"]
+            self.entry_time = str(new_config["entry_time"])
+        elif "start_time" in new_config:
+            self.entry_time = str(new_config["start_time"])
+
         if "exit_time" in new_config:
-            self.exit_time = new_config["exit_time"]
+            self.exit_time = str(new_config["exit_time"])
+        elif "end_time" in new_config:
+            self.exit_time = str(new_config["end_time"])
+
         if "lots" in new_config:
             self.lots = int(new_config["lots"])
         if "stop_loss_per_lot" in new_config:
@@ -119,14 +128,23 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         return {leg: f"{prefix}:{root}{strike}{leg}" for leg in self.legs}
 
     def on_candle(self, candle: Dict[str, Any], history: List[Dict[str, Any]]):
-        self.log_decision("Candle Fetch Success", f"Underlying {self.symbol} bar close: {candle.get('close')}")
-        self._check_entry_and_exit(candle.get("close", 100.0))
+        close_p = float(candle.get("close") or self.last_underlying_ltp)
+        self.last_underlying_ltp = close_p
+        self.log_decision("Candle Fetch Success", f"Underlying {self.symbol} bar close: {close_p}")
+        if self.trade_state == "IDLE":
+            self._check_entry_and_exit(close_p)
+        elif self.trade_state in ["IN_TRADE", "ENTRY_SENT"] and self.current_trade:
+            self._check_exit_conditions(self.current_trade.get("total_pnl", 0.0))
 
     def on_tick(self, tick: Dict[str, Any]):
         sym = tick.get("symbol")
         ltp = tick.get("ltp")
         if not ltp:
             return
+
+        # Track underlying price
+        if sym == self.symbol or self.symbol.split(":")[-1] in sym:
+            self.last_underlying_ltp = float(ltp)
 
         # If tick is for underlying index/future and we are IDLE, evaluate entry
         if self.trade_state == "IDLE" and (sym == self.symbol or self.symbol.split(":")[-1] in sym):
@@ -147,6 +165,14 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             self.current_trade["total_pnl"] = round(total_pnl, 2)
 
             # Check SL and Exit Time
+            self._check_exit_conditions(total_pnl)
+
+    def on_timer(self):
+        """Called every second by worker container process for heartbeat and second-precision exit timing"""
+        if self.trade_state == "IDLE":
+            self._check_entry_and_exit(self.last_underlying_ltp)
+        elif self.trade_state in ["IN_TRADE", "ENTRY_SENT"] and self.current_trade:
+            total_pnl = self.current_trade.get("total_pnl", 0.0)
             self._check_exit_conditions(total_pnl)
 
     def _check_entry_and_exit(self, underlying_ltp: float):
@@ -273,7 +299,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
                 self.log_decision("TRADE COMPLETED", f"Strategy cycle completed. Realized PnL: INR {self.current_trade.get('total_pnl', 0.0):.2f}")
 
     def _check_exit_conditions(self, total_pnl: float):
-        if self.trade_state != "IN_TRADE" or not self.current_trade:
+        if self.trade_state not in ["IN_TRADE", "ENTRY_SENT"] or not self.current_trade:
             return
 
         curr_time = self._get_current_ist_time()
@@ -284,34 +310,41 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             self.log_decision(
                 "TRACKING SL/TARGET",
                 f"STOP LOSS HIT! Total PnL INR {total_pnl:.2f} <= -INR {self.max_loss:.2f} (SL limit {self.stop_loss_per_lot}/lot). "
-                f"Triggering immediate square-off across all brokers!"
+                f"Triggering immediate square-off across all brokers!",
+                level="WARNING"
             )
             self._square_off_all_legs(reason="STOP_LOSS")
             return
 
-        # 2. Check Exit Time: 23:18
+        # 2. Check Exit Time
         if curr_time >= exit_t:
             self.log_decision(
                 "TRACKING SL/TARGET",
                 f"EXIT TIME {self.exit_time} REACHED! Current PnL: INR {total_pnl:.2f}. "
-                f"Triggering scheduled square-off across all brokers!"
+                f"Triggering scheduled square-off across all brokers!",
+                level="SUCCESS"
             )
             self._square_off_all_legs(reason="EXIT_TIME")
             return
 
     def _square_off_all_legs(self, reason: str):
+        if not self.current_trade:
+            return
         self.trade_state = "EXITING"
-        for leg in self.current_trade["legs"]:
-            qty_to_buy = abs(leg["qty"])
-            self.emit_order(
-                symbol=leg["symbol"],
-                side="BUY",
-                quantity=qty_to_buy,
-                order_type="MARKET",
-                product=self.product,
-                leg_id=f"EXIT_{leg['leg']}"
-            )
-            self.log_decision(
-                "ORDER SENT TO BROKER",
-                f"Dispatched BUY {leg['symbol']} ({qty_to_buy} qty) for {reason} square-off."
-            )
+        for leg in self.current_trade.get("legs", []):
+            qty_to_buy = abs(leg.get("qty", 0))
+            if qty_to_buy > 0 and leg.get("status") not in ["CLOSED", "EXIT_SENT"]:
+                self.emit_order(
+                    symbol=leg["symbol"],
+                    side="BUY",
+                    quantity=qty_to_buy,
+                    order_type="MARKET",
+                    product=self.product,
+                    leg_id=f"EXIT_{leg.get('leg')}"
+                )
+                leg["status"] = "EXIT_SENT"
+                self.log_decision(
+                    "ORDER SENT TO BROKER",
+                    f"Dispatched BUY {leg['symbol']} ({qty_to_buy} qty) for {reason} square-off.",
+                    level="SUCCESS"
+                )

@@ -295,6 +295,8 @@ class StrategySupervisor:
                                 quantity=ord_data["quantity"],
                                 order_type=ord_data.get("order_type", "MARKET"),
                                 price=ord_data.get("price", 0.0),
+                                trigger_price=ord_data.get("trigger_price", 0.0),
+                                product=ord_data.get("product", "MIS"),
                                 strategy_instance_id=inst_id,
                                 leg_id=ord_data.get("leg_id")
                             )

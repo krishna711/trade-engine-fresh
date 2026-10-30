@@ -1139,6 +1139,15 @@ class StrategiesManager {
             return;
         }
 
+        if (startTime) {
+            parsedConfig.start_time = startTime;
+            parsedConfig.entry_time = startTime;
+        }
+        if (endTime) {
+            parsedConfig.end_time = endTime;
+            parsedConfig.exit_time = endTime;
+        }
+
         const submitBtn = document.getElementById("btn-submit-edit-strategy");
         if (submitBtn) {
             submitBtn.disabled = true;

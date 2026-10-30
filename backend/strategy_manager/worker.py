@@ -33,6 +33,7 @@ def strategy_process_entrypoint(
         })
 
         last_candle_time = time.time()
+        last_timer_call = time.time()
 
         while True:
             # Check for commands or ticks from supervisor
@@ -107,6 +108,16 @@ def strategy_process_entrypoint(
                     "strategy_id": strategy_id,
                     "symbols": subs
                 })
+
+            # Periodic timer check (every 1 second) for time-based entries & exits
+            now_ts = time.time()
+            if now_ts - last_timer_call >= 1.0:
+                last_timer_call = now_ts
+                try:
+                    if hasattr(instance, "on_timer"):
+                        instance.on_timer()
+                except Exception:
+                    pass
 
             # Heartbeat check
             time.sleep(0.01)

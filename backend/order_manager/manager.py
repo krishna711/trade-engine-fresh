@@ -88,12 +88,14 @@ class OrderManager:
             order_dict = {
                 "order_id": engine_order_id,
                 "symbol": symbol,
+                "segment": segment,
                 "side": side.upper(),
                 "quantity": quantity,
                 "order_type": order_type.upper(),
                 "price": price,
                 "trigger_price": trigger_price,
                 "product": product,
+                "is_paper": bool(account.paper_mode),
                 "ltp": price or (mapping.tick_size if mapping else 100.0)
             }
 
@@ -135,6 +137,8 @@ class OrderManager:
         quantity: int,
         order_type: str = "MARKET",
         price: float = 0.0,
+        trigger_price: float = 0.0,
+        product: str = "MIS",
         strategy_instance_id: Optional[int] = None,
         leg_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
@@ -150,6 +154,8 @@ class OrderManager:
                 quantity=quantity,
                 order_type=order_type,
                 price=price,
+                trigger_price=trigger_price,
+                product=product,
                 strategy_instance_id=strategy_instance_id,
                 leg_id=leg_id
             )

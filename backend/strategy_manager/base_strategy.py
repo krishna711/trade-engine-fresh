@@ -96,6 +96,14 @@ class BaseStrategy(ABC):
             self.decision_logs.pop(0)
         return entry
 
+    def on_timer(self):
+        """
+        Called every 1 second by the worker process container.
+        Allows time-based strategies to evaluate scheduled entries, exits,
+        and trailing stops even if market ticks are temporarily paused.
+        """
+        pass
+
     def on_config_updated(self, new_config: Dict[str, Any]):
         """
         Called when strategy parameters are dynamically modified at runtime.

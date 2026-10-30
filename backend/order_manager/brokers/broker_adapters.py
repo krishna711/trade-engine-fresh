@@ -150,7 +150,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             canonical_symbol = order_dict["symbol"]
             broker_token = symbol_mapper.get_broker_token(canonical_symbol, "XTS")
             broker_symbol = symbol_mapper.get_broker_symbol(canonical_symbol, "XTS")
-            order_url = f"{self.interactive_url}/orders" if self.interactive_url.endswith("/interactive") else f"{self.interactive_url}/interactive/orders"
+            order_url = self._get_url("orders")
 
             segment_map = {
                 "NSE": "NSECM",
@@ -160,29 +160,37 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 "MCX": "MCXFO",
                 "MCXFO": "MCXFO"
             }
-            exchange_seg = segment_map.get(order_dict.get("segment", "NSE"), "NSECM")
+            detected_seg = order_dict.get("segment")
+            if not detected_seg and ":" in canonical_symbol:
+                detected_seg = canonical_symbol.split(":")[0]
+            exchange_seg = segment_map.get(detected_seg or "NSE", "NSECM")
+
+            order_unique_id = str(order_dict.get("order_id", f"ORD_{random.randint(1000, 9999)}"))[-20:]
 
             payload = {
                 "exchangeSegment": exchange_seg,
                 "exchangeInstrumentID": int(broker_token) if str(broker_token).isdigit() else 26000,
                 "productType": order_dict.get("product", "MIS"),
                 "orderType": order_dict.get("order_type", "MARKET"),
-                "orderSide": order_dict["side"],
+                "orderSide": order_dict["side"].upper(),
                 "timeInForce": "DAY",
                 "disclosedQuantity": 0,
-                "orderQuantity": order_dict["quantity"],
+                "orderQuantity": int(order_dict["quantity"]),
                 "limitPrice": float(order_dict.get("price", 0.0)),
-                "stopPrice": 0,
-                "orderUniqueIdentifier": order_dict.get("order_id", f"ORD_{random.randint(1000, 9999)}")
+                "stopPrice": float(order_dict.get("trigger_price", 0.0)),
+                "orderUniqueIdentifier": order_unique_id
             }
+
+            print(f"[XTS Order] Dispatching live order for {self.client_id} to {order_url} | Symbol: {canonical_symbol} ({broker_symbol}, Token: {broker_token}) | Segment: {exchange_seg} | Side: {order_dict['side']} | Qty: {order_dict['quantity']}")
 
             resp = requests.post(
                 order_url,
                 json=payload,
                 headers={"Authorization": token, "Content-Type": "application/json"},
-                timeout=8
+                timeout=10
             )
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            print(f"[XTS Order] Response ({resp.status_code}): {resp.text[:300]}")
 
             if resp.status_code == 200 and data.get("type") == "success":
                 result = data.get("result", {})

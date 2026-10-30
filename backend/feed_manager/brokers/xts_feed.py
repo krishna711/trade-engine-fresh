@@ -39,8 +39,8 @@ BASE_PRICES = {
     "BSE:SENSEX": 72120.0,
     "NFO:NIFTY26OCT25000CE": 185.0,
     "BSEFO:SENSEX26OCT82000CE": 240.0,
-    "MCX:CRUDEOIL": 8673.0,
-    "MCX:CRUDEOILM": 5850.0,
+    "MCX:CRUDEOIL": 9850.0,
+    "MCX:CRUDEOILM": 9850.0,
     "MCX:NATURALGAS": 292.2,
     "MCX:GOLD": 149362.0,
     "MCX:SILVER": 226233.0,
@@ -110,6 +110,8 @@ class XTSFeedBroker(BaseFeedBroker):
                         self.is_live_connected = True
                         self.emit_status(True, f"XTS Binary Feed Live! User: {self.user_id} (Expires: {result.get('application_expiry_date', 'Active')})")
                         print(f"[XTS] Live Auth Success! UserID: {self.user_id}, Token: {self.token[:12]}...")
+                        # Ensure master instruments index is loaded into symbol mapper
+                        symbol_mapper.load_xts_master_file()
                         # Fetch initial real exchange quotes snapshot
                         await self._fetch_initial_snapshot_quotes()
                         # Start live Socket.IO connection via synchronous client in a background daemon thread
@@ -324,7 +326,7 @@ class XTSFeedBroker(BaseFeedBroker):
             quotes_url = f"{self.api_url}/instruments/quotes"
             symbols_to_fetch = [
                 "NSE:NIFTY", "NSE:BANKNIFTY", "BSE:SENSEX",
-                "MCX:CRUDEOIL", "MCX:NATURALGAS", "MCX:GOLD", "MCX:SILVER"
+                "MCX:CRUDEOIL", "MCX:CRUDEOILM", "MCX:NATURALGAS", "MCX:GOLD", "MCX:SILVER"
             ]
 
             instruments_list = []

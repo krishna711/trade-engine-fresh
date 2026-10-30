@@ -789,31 +789,33 @@ async def update_strategy_instance(
         inst.instance_name_admin = payload["name_admin"]
     if "name_user" in payload and payload["name_user"]:
         inst.instance_name_user = payload["name_user"]
+    new_config = payload.get("config") or {}
     if "start_time" in payload and payload["start_time"]:
         inst.start_time = payload["start_time"]
+        new_config["start_time"] = payload["start_time"]
+        new_config["entry_time"] = payload["start_time"]
     if "end_time" in payload and payload["end_time"]:
         inst.end_time = payload["end_time"]
-    if "client_ids" in payload and payload["client_ids"] is not None:
-        inst.client_ids = list(payload["client_ids"])
+        new_config["end_time"] = payload["end_time"]
+        new_config["exit_time"] = payload["end_time"]
 
-    new_config = payload.get("config")
     if new_config and isinstance(new_config, dict):
         merged_cfg = dict(inst.config or {})
         merged_cfg.update(new_config)
         inst.config = merged_cfg
 
         if "entry_time" in new_config:
-            inst.start_time = new_config["entry_time"]
+            inst.start_time = str(new_config["entry_time"])
         if "exit_time" in new_config:
-            inst.end_time = new_config["exit_time"]
+            inst.end_time = str(new_config["exit_time"])
 
     db.commit()
     db.refresh(inst)
 
     # If currently running, hot-push updates to the live worker process container
     hot_updated = False
-    if inst.status == "RUNNING" and new_config:
-        hot_updated = await strategy_supervisor.update_strategy_config(id, new_config)
+    if inst.status == "RUNNING":
+        hot_updated = await strategy_supervisor.update_strategy_config(id, inst.config or {})
 
     return {
         "success": True,

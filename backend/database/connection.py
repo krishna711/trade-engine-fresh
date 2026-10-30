@@ -249,36 +249,36 @@ def seed_initial_data():
                 # MCX (Commodity Futures) - With Expiry Auto-Roll
                 SymbolMapping(
                     canonical_symbol="MCX:CRUDEOIL",
-                    display_name="CRUDE OIL 19OCT FUT",
+                    display_name="CRUDE OIL 19NOV FUT",
                     segment="MCX",
                     exchange="MCX",
-                    xts_token="569900",
-                    shoonya_token="569900",
-                    fyers_token="MCX:CRUDEOIL26OCTFUT",
+                    xts_token="573422",
+                    shoonya_token="573422",
+                    fyers_token="MCX:CRUDEOIL26NOV2026FUT",
                     zerodha_token="23145",
                     dhan_token="3200",
                     kotak_token="CRUDEOILFUT",
                     lot_size=100,
                     tick_size=1.0,
                     is_commodity_future=True,
-                    expiry_date=mcx_current_expiry,
+                    expiry_date=datetime.datetime(2026, 11, 19, 23, 30),
                     underlying="CRUDEOIL"
                 ),
                 SymbolMapping(
                     canonical_symbol="MCX:CRUDEOILM",
-                    display_name="CRUDE OIL MINI 19OCT FUT",
+                    display_name="CRUDE OIL MINI 19NOV FUT",
                     segment="MCX",
                     exchange="MCX",
-                    xts_token="571200",
-                    shoonya_token="571200",
-                    fyers_token="MCX:CRUDEOILM26OCTFUT",
+                    xts_token="573423",
+                    shoonya_token="573423",
+                    fyers_token="MCX:CRUDEOILM26NOV2026FUT",
                     zerodha_token="23200",
                     dhan_token="3210",
                     kotak_token="CRUDEOILMFUT",
                     lot_size=10,
                     tick_size=1.0,
                     is_commodity_future=True,
-                    expiry_date=mcx_current_expiry,
+                    expiry_date=datetime.datetime(2026, 11, 19, 23, 30),
                     underlying="CRUDEOILM"
                 ),
                 SymbolMapping(
@@ -399,27 +399,40 @@ def seed_initial_data():
         # Purge any legacy dummy strategy instances
         db.query(StrategyInstance).filter(StrategyInstance.template_key != "strat_time_atm_seller_v1").delete(synchronize_session=False)
 
-        # Ensure MCX:CRUDEOILM mapping exists
-        if not db.query(SymbolMapping).filter(SymbolMapping.canonical_symbol == "MCX:CRUDEOILM").first():
-            today = datetime.datetime.utcnow()
-            mcx_current_expiry = datetime.datetime(today.year, today.month, 19, 23, 30)
+        # Ensure MCX:CRUDEOIL and MCX:CRUDEOILM mappings are set to current November contracts
+        crudeoilm_map = db.query(SymbolMapping).filter(SymbolMapping.canonical_symbol == "MCX:CRUDEOILM").first()
+        if crudeoilm_map:
+            crudeoilm_map.xts_token = "573423"
+            crudeoilm_map.shoonya_token = "573423"
+            crudeoilm_map.display_name = "CRUDE OIL MINI 19NOV FUT"
+            crudeoilm_map.expiry_date = datetime.datetime(2026, 11, 19, 23, 30)
+            crudeoilm_map.lot_size = 10
+            crudeoilm_map.tick_size = 1.0
+        else:
             db.add(SymbolMapping(
                 canonical_symbol="MCX:CRUDEOILM",
-                display_name="CRUDE OIL MINI 19OCT FUT",
+                display_name="CRUDE OIL MINI 19NOV FUT",
                 segment="MCX",
                 exchange="MCX",
-                xts_token="571200",
-                shoonya_token="571200",
-                fyers_token="MCX:CRUDEOILM26OCTFUT",
+                xts_token="573423",
+                shoonya_token="573423",
+                fyers_token="MCX:CRUDEOILM26NOV2026FUT",
                 zerodha_token="23200",
                 dhan_token="3210",
                 kotak_token="CRUDEOILMFUT",
                 lot_size=10,
                 tick_size=1.0,
                 is_commodity_future=True,
-                expiry_date=mcx_current_expiry,
+                expiry_date=datetime.datetime(2026, 11, 19, 23, 30),
                 underlying="CRUDEOILM"
             ))
+
+        crudeoil_map = db.query(SymbolMapping).filter(SymbolMapping.canonical_symbol == "MCX:CRUDEOIL").first()
+        if crudeoil_map:
+            crudeoil_map.xts_token = "573422"
+            crudeoil_map.shoonya_token = "573422"
+            crudeoil_map.display_name = "CRUDE OIL 19NOV FUT"
+            crudeoil_map.expiry_date = datetime.datetime(2026, 11, 19, 23, 30)
 
         # Sync configured lot sizes into SymbolMapping table for automatic regulatory updates
         for sym_key, lot in DEFAULT_LOT_SIZES.items():
