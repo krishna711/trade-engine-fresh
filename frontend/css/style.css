@@ -840,9 +840,9 @@ table.data-table tbody td {
 .side-drawer {
     position: fixed;
     top: 0;
-    right: -550px;
-    width: 550px;
-    max-width: 90vw;
+    right: -850px;
+    width: 820px;
+    max-width: 95vw;
     height: 100vh;
     background: var(--bg-secondary);
     border-left: 1px solid var(--border-color);

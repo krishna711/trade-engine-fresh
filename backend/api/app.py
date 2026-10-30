@@ -477,6 +477,7 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
     live_holdings = None
     live_positions = None
     live_orders = None
+    live_trades = None
 
     if acc and acc.broker == "XTS" and has_token_today:
         try:
@@ -504,13 +505,18 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
 
             # 3. Fetch live positions from broker
             p_res = await adapter.get_positions()
-            if isinstance(p_res, list) and len(p_res) > 0:
+            if isinstance(p_res, list):
                 live_positions = p_res
 
             # 4. Fetch live orders from broker
             o_res = await adapter.get_orders()
-            if isinstance(o_res, list) and len(o_res) > 0:
+            if isinstance(o_res, list):
                 live_orders = o_res
+
+            # 5. Fetch live trades from broker
+            t_res = await adapter.get_trades()
+            if isinstance(t_res, list):
+                live_trades = t_res
         except Exception as e:
             print(f"[Drawer Details] Error querying live broker data for {client_id}: {e}")
 
@@ -536,7 +542,7 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
         ]
 
     # Positions response
-    if live_positions:
+    if live_positions is not None:
         positions_data = live_positions
     else:
         positions_data = [
@@ -552,7 +558,7 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
         ]
 
     # Orders response
-    if live_orders:
+    if live_orders is not None:
         orders_data = live_orders
     else:
         orders_data = [
@@ -564,27 +570,51 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
                 "quantity": o.quantity,
                 "price": o.price,
                 "status": o.status,
-                "created_at": o.created_at.strftime("%H:%M:%S")
+                "created_at": o.created_at.strftime("%H:%M:%S") if hasattr(o.created_at, "strftime") else str(o.created_at)
             } for o in orders
+        ]
+
+    # Trades response
+    if live_trades is not None:
+        trades_data = live_trades
+    else:
+        trades_data = [
+            {
+                "trade_id": t.trade_id,
+                "symbol": t.symbol,
+                "side": t.side,
+                "quantity": t.quantity,
+                "price": t.price,
+                "timestamp": t.timestamp.strftime("%H:%M:%S") if hasattr(t.timestamp, "strftime") else str(t.timestamp)
+            } for t in trades
         ]
 
     debug_info = {}
     if acc and acc.broker == "XTS" and 'adapter' in locals():
         debug_info = {
             "holdings": getattr(adapter, "last_holdings_debug", {}),
-            "margins": getattr(adapter, "last_margins_debug", {})
+            "margins": getattr(adapter, "last_margins_debug", {}),
+            "positions": getattr(adapter, "last_positions_debug", {}),
+            "orders": getattr(adapter, "last_orders_debug", {}),
+            "trades": getattr(adapter, "last_trades_debug", {})
         }
         try:
-            h_debug = debug_info.get("holdings", {})
-            att = h_debug.get("attempts", [])
-            last_att = att[-1] if att else {}
-            log_msg = f"XTS Holdings Query for {client_id}: Status={last_att.get('status_code', 'N/A')} Found={len(live_holdings or [])}"
-            db.add(SystemLog(
-                category="BROKER_API",
-                level="SUCCESS" if live_holdings else "INFO",
-                message=log_msg,
-                details=h_debug
-            ))
+            for cat_name, cnt, d_info in [
+                ("Holdings", len(live_holdings or []), debug_info.get("holdings", {})),
+                ("Positions", len(live_positions or []), debug_info.get("positions", {})),
+                ("Orders", len(live_orders or []), debug_info.get("orders", {})),
+                ("Trades", len(live_trades or []), debug_info.get("trades", {}))
+            ]:
+                att = d_info.get("attempts", [])
+                last_att = att[-1] if att else {}
+                code = last_att.get("status_code", "N/A")
+                is_ok = d_info.get("success", False)
+                db.add(SystemLog(
+                    category="BROKER_API",
+                    level="SUCCESS" if is_ok else "INFO",
+                    message=f"XTS {cat_name} Query for {client_id}: Status={code} Found={cnt}",
+                    details=d_info
+                ))
             db.commit()
         except Exception as log_err:
             pass
@@ -603,16 +633,7 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
         },
         "margins": margins_data,
         "orders": orders_data,
-        "trades": [
-            {
-                "trade_id": t.trade_id,
-                "symbol": t.symbol,
-                "side": t.side,
-                "quantity": t.quantity,
-                "price": t.price,
-                "timestamp": t.timestamp.strftime("%H:%M:%S")
-            } for t in trades
-        ],
+        "trades": trades_data,
         "positions": positions_data,
         "holdings": holdings_data,
         "debug_info": debug_info

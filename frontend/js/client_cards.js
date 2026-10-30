@@ -498,62 +498,169 @@ class ClientCardsManager {
                     </div>
                     <table class="data-table">
                         <thead>
-                            <tr><th>Symbol</th><th>Net Qty</th><th>Buy Avg</th><th>LTP</th><th>PnL</th></tr>
+                            <tr><th>Symbol</th><th>Seg</th><th>Prod</th><th>Net Qty</th><th>Buy Avg</th><th>Sell Avg</th><th>LTP</th><th>PnL</th></tr>
                         </thead>
                         <tbody>
-                            ${data.positions.length ? data.positions.map(p => `
+                            ${data.positions.length ? data.positions.map(p => {
+                                const isPos = (p.pnl || 0) >= 0;
+                                const sign = isPos ? "+" : "";
+                                const cls = isPos ? "pnl-positive" : "pnl-negative";
+                                return `
+                                    <tr>
+                                        <td><strong>${p.symbol}</strong></td>
+                                        <td><span style="font-size: 0.7rem; opacity: 0.8;">${p.segment || 'NSE'}</span></td>
+                                        <td><span style="font-size: 0.68rem; padding: 1px 5px; background: var(--bg-tertiary); border-radius: 4px;">${p.product || 'MIS'}</span></td>
+                                        <td style="font-family: var(--font-mono); font-weight: 600;">${p.net_qty}</td>
+                                        <td style="font-family: var(--font-mono);">₹${Number(p.buy_avg || 0).toFixed(2)}</td>
+                                        <td style="font-family: var(--font-mono);">₹${Number(p.sell_avg || 0).toFixed(2)}</td>
+                                        <td style="font-family: var(--font-mono);">₹${Number(p.ltp || 0).toFixed(2)}</td>
+                                        <td class="${cls}" style="font-family: var(--font-mono); font-weight: 700;">
+                                            ${sign}₹${Number(p.pnl || 0).toFixed(2)}
+                                        </td>
+                                    </tr>
+                                `;
+                            }).join("") : `
                                 <tr>
-                                    <td><strong>${p.symbol}</strong></td>
-                                    <td style="font-family: var(--font-mono);">${p.net_qty}</td>
-                                    <td style="font-family: var(--font-mono);">${p.buy_avg.toFixed(2)}</td>
-                                    <td style="font-family: var(--font-mono);">${p.ltp.toFixed(2)}</td>
-                                    <td class="${p.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-family: var(--font-mono); font-weight: 700;">
-                                        ${p.pnl >= 0 ? '+' : ''}₹${p.pnl.toFixed(2)}
+                                    <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 2.5rem 1rem;">
+                                        <div>No open positions</div>
+                                        <button class="action-btn-sm" onclick="clientCardsManager.syncBrokerDataNow('${data.client_id}')" style="margin-top: 0.75rem; background: var(--bg-tertiary); color: var(--accent-blue); border: 1px solid var(--accent-blue); padding: 0.4rem 0.8rem; cursor: pointer; border-radius: 4px;">
+                                            🔄 Retry Sync with Broker
+                                        </button>
                                     </td>
                                 </tr>
-                            `).join("") : '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">No open positions</td></tr>'}
+                            `}
                         </tbody>
                     </table>
+
+                    <!-- Live Positions Diagnostics Inspector -->
+                    <div style="margin-top: 1rem; border-top: 1px dashed var(--border-color); padding-top: 0.75rem;">
+                        <details style="font-size: 0.75rem; color: var(--text-muted);" ${(data.positions && data.positions.length) ? '' : 'open'}>
+                            <summary style="cursor: pointer; font-weight: 600; color: var(--accent-blue); padding: 4px 0; user-select: none;">
+                                🔍 Broker API Response Log & Diagnostics (${data.debug_info?.positions?.attempts?.length || 0} endpoint calls attempted)
+                            </summary>
+                            <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 6px;">
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">
+                                    Target: <code style="color: var(--accent-cyan);">${data.credentials?.interactive_url || 'https://ttblaze.iifl.com/interactive'}</code> &bull; ClientID: <code>${data.client_id}</code> &bull; Token Active: <code>${data.credentials?.is_valid_today ? 'YES' : 'NO'}</code>
+                                </div>
+                                <pre style="background: var(--bg-secondary); padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); font-family: var(--font-mono); font-size: 0.72rem; overflow-x: auto; max-height: 250px; color: var(--text-primary); white-space: pre-wrap;">${JSON.stringify(data.debug_info?.positions || 'No debug data captured yet. Click Sync Broker above.', null, 2)}</pre>
+                            </div>
+                        </details>
+                    </div>
                 `;
             } else if (this.activeDrawerTab === "orders") {
+                const isLive = data.credentials && data.credentials.is_valid_today && !data.paper_mode;
                 bodyEl.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; padding: 0 0.25rem;">
+                        <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">ORDER BOOK (${data.orders.length})</span>
+                        ${isLive 
+                            ? `<span style="font-size: 0.7rem; padding: 2px 8px; border-radius: 12px; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700;">🟢 Live from ${data.broker}</span>`
+                            : `<span style="font-size: 0.7rem; color: var(--text-muted);">${data.paper_mode ? '📄 Paper Orders' : 'Engine Orders'}</span>`}
+                    </div>
                     <table class="data-table">
                         <thead>
-                            <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Status</th></tr>
+                            <tr><th>Time</th><th>Order ID</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Status</th></tr>
                         </thead>
                         <tbody>
-                            ${data.orders.length ? data.orders.map(o => `
+                            ${data.orders.length ? data.orders.map(o => {
+                                const isBuy = (o.side || '').toUpperCase() === 'BUY';
+                                const sideColor = isBuy ? 'var(--accent-green)' : 'var(--accent-red)';
+                                const statusUpper = (o.status || '').toUpperCase();
+                                const statusCls = statusUpper === 'FILLED' ? 'status-running' : statusUpper === 'REJECTED' ? 'status-error' : 'status-stopped';
+                                return `
+                                    <tr>
+                                        <td>${o.created_at || '-'}</td>
+                                        <td style="font-family: var(--font-mono); font-size: 0.72rem; opacity: 0.85;">${o.broker_order_id || o.order_id || '-'}</td>
+                                        <td><strong>${o.symbol}</strong></td>
+                                        <td style="font-weight: 700; color: ${sideColor};">${o.side}</td>
+                                        <td style="font-family: var(--font-mono);">${o.quantity}</td>
+                                        <td style="font-family: var(--font-mono);">₹${Number(o.price || 0).toFixed(2)}</td>
+                                        <td><span class="status-pill ${statusCls}">${o.status}</span></td>
+                                    </tr>
+                                `;
+                            }).join("") : `
                                 <tr>
-                                    <td>${o.created_at}</td>
-                                    <td>${o.symbol}</td>
-                                    <td style="font-weight: 700; color: ${o.side === 'BUY' ? 'var(--accent-green)' : 'var(--accent-red)'}">${o.side}</td>
-                                    <td>${o.quantity}</td>
-                                    <td>${o.price}</td>
-                                    <td><span class="status-pill status-${o.status === 'FILLED' ? 'running' : 'stopped'}">${o.status}</span></td>
+                                    <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 2.5rem 1rem;">
+                                        <div>No orders found</div>
+                                        <button class="action-btn-sm" onclick="clientCardsManager.syncBrokerDataNow('${data.client_id}')" style="margin-top: 0.75rem; background: var(--bg-tertiary); color: var(--accent-blue); border: 1px solid var(--accent-blue); padding: 0.4rem 0.8rem; cursor: pointer; border-radius: 4px;">
+                                            🔄 Retry Sync with Broker
+                                        </button>
+                                    </td>
                                 </tr>
-                            `).join("") : '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">No orders found</td></tr>'}
+                            `}
                         </tbody>
                     </table>
+
+                    <!-- Live Orders Diagnostics Inspector -->
+                    <div style="margin-top: 1rem; border-top: 1px dashed var(--border-color); padding-top: 0.75rem;">
+                        <details style="font-size: 0.75rem; color: var(--text-muted);" ${(data.orders && data.orders.length) ? '' : 'open'}>
+                            <summary style="cursor: pointer; font-weight: 600; color: var(--accent-blue); padding: 4px 0; user-select: none;">
+                                🔍 Broker API Response Log & Diagnostics (${data.debug_info?.orders?.attempts?.length || 0} endpoint calls attempted)
+                            </summary>
+                            <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 6px;">
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">
+                                    Target: <code style="color: var(--accent-cyan);">${data.credentials?.interactive_url || 'https://ttblaze.iifl.com/interactive'}</code> &bull; ClientID: <code>${data.client_id}</code> &bull; Token Active: <code>${data.credentials?.is_valid_today ? 'YES' : 'NO'}</code>
+                                </div>
+                                <pre style="background: var(--bg-secondary); padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); font-family: var(--font-mono); font-size: 0.72rem; overflow-x: auto; max-height: 250px; color: var(--text-primary); white-space: pre-wrap;">${JSON.stringify(data.debug_info?.orders || 'No debug data captured yet. Click Sync Broker above.', null, 2)}</pre>
+                            </div>
+                        </details>
+                    </div>
                 `;
             } else if (this.activeDrawerTab === "trades") {
+                const isLive = data.credentials && data.credentials.is_valid_today && !data.paper_mode;
                 bodyEl.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; padding: 0 0.25rem;">
+                        <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">TRADE BOOK (${data.trades.length})</span>
+                        ${isLive 
+                            ? `<span style="font-size: 0.7rem; padding: 2px 8px; border-radius: 12px; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700;">🟢 Live from ${data.broker}</span>`
+                            : `<span style="font-size: 0.7rem; color: var(--text-muted);">${data.paper_mode ? '📄 Paper Trades' : 'Engine Trades'}</span>`}
+                    </div>
                     <table class="data-table">
                         <thead>
-                            <tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th></tr>
+                            <tr><th>Time</th><th>Trade ID</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th></tr>
                         </thead>
                         <tbody>
-                            ${data.trades.length ? data.trades.map(t => `
+                            ${data.trades.length ? data.trades.map(t => {
+                                const isBuy = (t.side || '').toUpperCase() === 'BUY';
+                                const sideColor = isBuy ? 'var(--accent-green)' : 'var(--accent-red)';
+                                return `
+                                    <tr>
+                                        <td>${t.timestamp || '-'}</td>
+                                        <td style="font-family: var(--font-mono); font-size: 0.72rem; opacity: 0.85;">${t.trade_id || '-'}</td>
+                                        <td><strong>${t.symbol}</strong></td>
+                                        <td style="font-weight: 700; color: ${sideColor};">${t.side}</td>
+                                        <td style="font-family: var(--font-mono);">${t.quantity}</td>
+                                        <td style="font-family: var(--font-mono);">₹${Number(t.price || 0).toFixed(2)}</td>
+                                    </tr>
+                                `;
+                            }).join("") : `
                                 <tr>
-                                    <td>${t.timestamp}</td>
-                                    <td>${t.symbol}</td>
-                                    <td style="font-weight: 700; color: ${t.side === 'BUY' ? 'var(--accent-green)' : 'var(--accent-red)'}">${t.side}</td>
-                                    <td>${t.quantity}</td>
-                                    <td>₹${t.price.toFixed(2)}</td>
+                                    <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2.5rem 1rem;">
+                                        <div>No executed trades</div>
+                                        <button class="action-btn-sm" onclick="clientCardsManager.syncBrokerDataNow('${data.client_id}')" style="margin-top: 0.75rem; background: var(--bg-tertiary); color: var(--accent-blue); border: 1px solid var(--accent-blue); padding: 0.4rem 0.8rem; cursor: pointer; border-radius: 4px;">
+                                            🔄 Retry Sync with Broker
+                                        </button>
+                                    </td>
                                 </tr>
-                            `).join("") : '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">No executed trades</td></tr>'}
+                            `}
                         </tbody>
                     </table>
+
+                    <!-- Live Trades Diagnostics Inspector -->
+                    <div style="margin-top: 1rem; border-top: 1px dashed var(--border-color); padding-top: 0.75rem;">
+                        <details style="font-size: 0.75rem; color: var(--text-muted);" ${(data.trades && data.trades.length) ? '' : 'open'}>
+                            <summary style="cursor: pointer; font-weight: 600; color: var(--accent-blue); padding: 4px 0; user-select: none;">
+                                🔍 Broker API Response Log & Diagnostics (${data.debug_info?.trades?.attempts?.length || 0} endpoint calls attempted)
+                            </summary>
+                            <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 6px;">
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">
+                                    Target: <code style="color: var(--accent-cyan);">${data.credentials?.interactive_url || 'https://ttblaze.iifl.com/interactive'}</code> &bull; ClientID: <code>${data.client_id}</code> &bull; Token Active: <code>${data.credentials?.is_valid_today ? 'YES' : 'NO'}</code>
+                                </div>
+                                <pre style="background: var(--bg-secondary); padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); font-family: var(--font-mono); font-size: 0.72rem; overflow-x: auto; max-height: 250px; color: var(--text-primary); white-space: pre-wrap;">${JSON.stringify(data.debug_info?.trades || 'No debug data captured yet. Click Sync Broker above.', null, 2)}</pre>
+                            </div>
+                        </details>
+                    </div>
                 `;
+            }
             } else if (this.activeDrawerTab === "holdings") {
                 const isLive = data.credentials && data.credentials.is_valid_today;
                 const totalInvested = (data.holdings || []).reduce((sum, h) => sum + (h.invested_value || (h.buy_price * h.qty) || 0), 0);

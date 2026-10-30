@@ -80,6 +80,9 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
         self.user_id = creds.get("user_id", "") or client_id
         self.last_holdings_debug = {}
         self.last_margins_debug = {}
+        self.last_positions_debug = {}
+        self.last_orders_debug = {}
+        self.last_trades_debug = {}
 
     def _get_url(self, path: str) -> str:
         clean_path = path.lstrip("/")
@@ -225,6 +228,11 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
         """
         token = self.get_valid_token()
         if not token:
+            self.last_margins_debug = {
+                "client_id": self.client_id,
+                "error": "No valid token for today",
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
             return {
                 "success": False,
                 "error": "No valid token for today",
@@ -239,17 +247,43 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             headers = {"Authorization": token, "Content-Type": "application/json"}
 
             resp = None
+            attempts = []
             if self.client_id:
                 try:
                     resp = requests.get(url, params={"clientID": self.client_id}, headers=headers, timeout=8)
-                except Exception:
+                    attempts.append({
+                        "url": url,
+                        "params": {"clientID": self.client_id},
+                        "status_code": resp.status_code,
+                        "response_json": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                    })
+                except Exception as ex1:
+                    attempts.append({"url": url, "params": {"clientID": self.client_id}, "error": str(ex1)})
                     resp = None
 
             if resp is None or resp.status_code != 200:
-                resp = requests.get(url, params={}, headers=headers, timeout=8)
+                try:
+                    resp = requests.get(url, params={}, headers=headers, timeout=8)
+                    attempts.append({
+                        "url": url,
+                        "params": {},
+                        "status_code": resp.status_code,
+                        "response_json": resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                    })
+                except Exception as ex2:
+                    attempts.append({"url": url, "params": {}, "error": str(ex2)})
 
-            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            if resp.status_code == 200 and data.get("type") == "success":
+            data = resp.json() if resp and resp.headers.get("content-type", "").startswith("application/json") else {}
+            
+            self.last_margins_debug = {
+                "client_id": self.client_id,
+                "token_prefix": token[:15] + "..." if token else "",
+                "attempts": attempts,
+                "success": bool(resp and resp.status_code == 200 and data.get("type") == "success"),
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
+
+            if resp and resp.status_code == 200 and data.get("type") == "success":
                 result = data.get("result", {})
                 bal_list = result.get("BalanceList") or result.get("balanceList") or result
                 items = bal_list if isinstance(bal_list, list) else [bal_list] if isinstance(bal_list, dict) else []
@@ -284,7 +318,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                     "raw": result
                 }
             else:
-                err_msg = data.get("description") or data.get("message") or resp.text
+                err_msg = data.get("description") or data.get("message") or (resp.text if resp else "No response")
                 return {
                     "success": False,
                     "error": f"XTS Balance Error: {err_msg}",
@@ -545,48 +579,153 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
         """
         token = self.get_valid_token()
         if not token:
+            self.last_positions_debug = {
+                "client_id": self.client_id,
+                "error": "No valid token for today",
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
             return []
 
         try:
             import requests
-            url = self._get_url("portfolio/positions")
             headers = {"Authorization": token, "Content-Type": "application/json"}
-            params = {"dayOrNet": "NetWise"}
+            attempts = []
+            success_data = None
+
+            base_urls = [
+                self._get_url("portfolio/positions"),
+                self._get_url("portfolio/position")
+            ]
+
+            param_sets = []
             if self.client_id:
-                params["clientID"] = self.client_id
+                param_sets.append({"dayOrNet": "NetWise", "clientID": self.client_id})
+            param_sets.append({"dayOrNet": "NetWise"})
+            if self.client_id:
+                param_sets.append({"dayOrNet": "DayWise", "clientID": self.client_id})
+            param_sets.append({"dayOrNet": "DayWise"})
 
-            resp = requests.get(url, params=params, headers=headers, timeout=8)
-            if resp.status_code != 200:
-                resp = requests.get(url, params={"dayOrNet": "NetWise"}, headers=headers, timeout=8)
+            for url in base_urls:
+                for params in param_sets:
+                    attempt_info = {
+                        "url": url,
+                        "params": params,
+                        "status_code": None,
+                        "response_json": None
+                    }
+                    try:
+                        resp = requests.get(url, params=params, headers=headers, timeout=8)
+                        attempt_info["status_code"] = resp.status_code
+                        data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                        attempt_info["response_json"] = data
+                        attempts.append(attempt_info)
 
-            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            if resp.status_code == 200 and data.get("type") == "success":
-                result = data.get("result", {})
-                pos_raw = []
-                if isinstance(result, list):
-                    pos_raw = result
-                elif isinstance(result, dict):
-                    pos_raw = result.get("positionList") or result.get("positions") or result.get("PositionList") or []
+                        if resp.status_code == 200 and data.get("type") == "success" and "result" in data:
+                            success_data = data
+                            break
+                    except Exception as req_err:
+                        attempt_info["error"] = str(req_err)
+                        attempts.append(attempt_info)
+                        continue
+                if success_data:
+                    break
 
-                positions = []
-                for p in pos_raw:
-                    sym = p.get("tradingSymbol") or p.get("instrumentName") or p.get("symbol") or "UNKNOWN"
-                    net_qty = int(p.get("netQuantity") or p.get("NetQuantity") or 0)
-                    buy_avg = float(p.get("buyAveragePrice") or p.get("netPrice") or 0.0)
-                    sell_avg = float(p.get("sellAveragePrice") or 0.0)
-                    ltp = float(p.get("lastTradedPrice") or p.get("netPrice") or 0.0)
-                    pnl = float(p.get("pnl") or p.get("unrealizedPnl") or 0.0)
-                    positions.append({
-                        "symbol": sym,
-                        "segment": p.get("exchangeSegment", "NSE"),
-                        "net_qty": net_qty,
-                        "buy_avg": round(buy_avg, 2),
-                        "sell_avg": round(sell_avg, 2),
-                        "ltp": round(ltp, 2),
-                        "pnl": round(pnl, 2)
-                    })
-                return positions
-            return []
+            self.last_positions_debug = {
+                "client_id": self.client_id,
+                "token_prefix": token[:15] + "..." if token else "",
+                "attempts": attempts,
+                "success": bool(success_data),
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
+
+            if not success_data:
+                print(f"[XTS Order Broker] Positions fetch failed or empty for {self.client_id}. Attempts: {len(attempts)}", flush=True)
+                return []
+
+            result = success_data.get("result", {})
+            pos_raw = []
+            if isinstance(result, list):
+                pos_raw = result
+            elif isinstance(result, dict):
+                pos_raw = (
+                    result.get("positionList") or 
+                    result.get("netPositions") or 
+                    result.get("positions") or 
+                    result.get("PositionList") or 
+                    []
+                )
+                if not pos_raw and any(k in result for k in ["TradingSymbol", "tradingSymbol", "NetPosition", "netQuantity"]):
+                    pos_raw = [result]
+
+            positions = []
+            for p in pos_raw:
+                if not isinstance(p, dict):
+                    continue
+
+                sym = (
+                    p.get("TradingSymbol") or 
+                    p.get("tradingSymbol") or 
+                    p.get("InstrumentName") or 
+                    p.get("symbol") or 
+                    p.get("Symbol") or 
+                    "UNKNOWN"
+                )
+                net_qty = int(
+                    p.get("NetPosition") or 
+                    p.get("netQuantity") or 
+                    p.get("NetQty") or 
+                    p.get("Quantity") or 
+                    p.get("openPosition") or 
+                    0
+                )
+                buy_avg = float(
+                    p.get("BuyAveragePrice") or 
+                    p.get("buyAveragePrice") or 
+                    p.get("NetPrice") or 
+                    p.get("netPrice") or 
+                    p.get("BuyAvgPrice") or 
+                    0.0
+                )
+                sell_avg = float(
+                    p.get("SellAveragePrice") or 
+                    p.get("sellAveragePrice") or 
+                    p.get("SellAvgPrice") or 
+                    0.0
+                )
+                ltp = float(
+                    p.get("LastTradedPrice") or 
+                    p.get("lastTradedPrice") or 
+                    p.get("LTP") or 
+                    p.get("netPrice") or 
+                    0.0
+                )
+                pnl = float(
+                    p.get("MTM") or 
+                    p.get("mtm") or 
+                    p.get("UnrealizedMTM") or 
+                    p.get("RealizedMTM") or 
+                    p.get("pnl") or 
+                    p.get("unrealizedPnl") or 
+                    p.get("NetPnL") or 
+                    0.0
+                )
+                product = str(p.get("ProductType") or p.get("productType") or "MIS")
+                segment = str(p.get("ExchangeSegment") or p.get("exchangeSegment") or "NSE")
+
+                positions.append({
+                    "symbol": sym,
+                    "segment": segment,
+                    "product": product,
+                    "net_qty": net_qty,
+                    "buy_avg": round(buy_avg, 2),
+                    "sell_avg": round(sell_avg, 2),
+                    "ltp": round(ltp, 2),
+                    "pnl": round(pnl, 2)
+                })
+
+            print(f"[XTS Order Broker] Parsed {len(positions)} positions for {self.client_id}", flush=True)
+            return positions
+
         except Exception as e:
             print(f"[XTS Order Broker] Positions network error: {e}")
             return []
@@ -598,32 +737,207 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
         """
         token = self.get_valid_token()
         if not token:
+            self.last_orders_debug = {
+                "client_id": self.client_id,
+                "error": "No valid token for today",
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
             return []
 
         try:
             import requests
-            url = self._get_url("orders")
             headers = {"Authorization": token, "Content-Type": "application/json"}
-            resp = requests.get(url, headers=headers, timeout=8)
-            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            if resp.status_code == 200 and data.get("type") == "success":
-                result = data.get("result", [])
-                order_list = result if isinstance(result, list) else []
-                orders = []
-                for o in order_list:
-                    orders.append({
-                        "order_id": str(o.get("AppOrderID") or o.get("orderID") or ""),
-                        "broker_order_id": str(o.get("OrderID") or o.get("orderID") or ""),
-                        "symbol": o.get("TradingSymbol") or o.get("tradingSymbol") or "UNKNOWN",
-                        "side": o.get("OrderSide") or o.get("orderSide") or "BUY",
-                        "quantity": int(o.get("OrderQuantity") or o.get("orderQuantity") or 0),
-                        "price": float(o.get("OrderPrice") or o.get("orderPrice") or 0.0),
-                        "status": o.get("OrderStatus") or o.get("orderStatus") or "SUBMITTED",
-                        "created_at": o.get("OrderGeneratedDateTime", "")[:8] if o.get("OrderGeneratedDateTime") else ""
-                    })
-                return orders
-            return []
+            attempts = []
+            success_data = None
+
+            base_urls = [
+                self._get_url("orders"),
+                self._get_url("orders/order")
+            ]
+
+            param_sets = []
+            if self.client_id:
+                param_sets.append({"clientID": self.client_id})
+            param_sets.append({})
+
+            for url in base_urls:
+                for params in param_sets:
+                    attempt_info = {
+                        "url": url,
+                        "params": params,
+                        "status_code": None,
+                        "response_json": None
+                    }
+                    try:
+                        resp = requests.get(url, params=params, headers=headers, timeout=8)
+                        attempt_info["status_code"] = resp.status_code
+                        data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                        attempt_info["response_json"] = data
+                        attempts.append(attempt_info)
+
+                        if resp.status_code == 200 and data.get("type") == "success" and "result" in data:
+                            success_data = data
+                            break
+                    except Exception as req_err:
+                        attempt_info["error"] = str(req_err)
+                        attempts.append(attempt_info)
+                        continue
+                if success_data:
+                    break
+
+            self.last_orders_debug = {
+                "client_id": self.client_id,
+                "token_prefix": token[:15] + "..." if token else "",
+                "attempts": attempts,
+                "success": bool(success_data),
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
+
+            if not success_data:
+                print(f"[XTS Order Broker] Orders fetch failed or empty for {self.client_id}. Attempts: {len(attempts)}", flush=True)
+                return []
+
+            result = success_data.get("result", [])
+            order_list = []
+            if isinstance(result, list):
+                order_list = result
+            elif isinstance(result, dict):
+                order_list = result.get("orderList") or result.get("orders") or [result]
+
+            orders = []
+            for o in order_list:
+                if not isinstance(o, dict):
+                    continue
+
+                raw_time = o.get("OrderGeneratedDateTime") or o.get("OrderExecutionTime") or o.get("orderTime") or ""
+                created_at = str(raw_time)
+                if " " in created_at:
+                    created_at = created_at.split(" ")[-1]
+                elif "T" in created_at:
+                    created_at = created_at.split("T")[-1][:8]
+
+                orders.append({
+                    "order_id": str(o.get("AppOrderID") or o.get("orderID") or o.get("appOrderID") or ""),
+                    "broker_order_id": str(o.get("ExchangeOrderID") or o.get("OrderID") or o.get("orderID") or o.get("exchangeOrderID") or ""),
+                    "symbol": o.get("TradingSymbol") or o.get("tradingSymbol") or o.get("Symbol") or "UNKNOWN",
+                    "side": str(o.get("OrderSide") or o.get("orderSide") or o.get("TransactionType") or "BUY").upper(),
+                    "quantity": int(o.get("OrderQuantity") or o.get("orderQuantity") or o.get("quantity") or 0),
+                    "price": float(o.get("OrderPrice") or o.get("orderPrice") or o.get("price") or 0.0),
+                    "status": str(o.get("OrderStatus") or o.get("orderStatus") or o.get("status") or "SUBMITTED").upper(),
+                    "created_at": created_at,
+                    "product": o.get("ProductType") or o.get("productType") or "",
+                    "rejection_reason": o.get("CancelRejectReason") or o.get("cancelRejectReason") or ""
+                })
+
+            print(f"[XTS Order Broker] Parsed {len(orders)} orders for {self.client_id}", flush=True)
+            return orders
+
         except Exception as e:
+            print(f"[XTS Order Broker] Orders network error: {e}")
+            return []
+
+    async def get_trades(self) -> List[Dict[str, Any]]:
+        """
+        Fetches live executed trade book from XTS Interactive API:
+        GET /interactive/orders/trades
+        """
+        token = self.get_valid_token()
+        if not token:
+            self.last_trades_debug = {
+                "client_id": self.client_id,
+                "error": "No valid token for today",
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
+            return []
+
+        try:
+            import requests
+            headers = {"Authorization": token, "Content-Type": "application/json"}
+            attempts = []
+            success_data = None
+
+            base_urls = [
+                self._get_url("orders/trades"),
+                self._get_url("orders/trade"),
+                self._get_url("trade/trades"),
+            ]
+
+            param_sets = []
+            if self.client_id:
+                param_sets.append({"clientID": self.client_id})
+            param_sets.append({})
+
+            for url in base_urls:
+                for params in param_sets:
+                    attempt_info = {
+                        "url": url,
+                        "params": params,
+                        "status_code": None,
+                        "response_json": None
+                    }
+                    try:
+                        resp = requests.get(url, params=params, headers=headers, timeout=8)
+                        attempt_info["status_code"] = resp.status_code
+                        data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                        attempt_info["response_json"] = data
+                        attempts.append(attempt_info)
+
+                        if resp.status_code == 200 and data.get("type") == "success" and "result" in data:
+                            success_data = data
+                            break
+                    except Exception as req_err:
+                        attempt_info["error"] = str(req_err)
+                        attempts.append(attempt_info)
+                        continue
+                if success_data:
+                    break
+
+            self.last_trades_debug = {
+                "client_id": self.client_id,
+                "token_prefix": token[:15] + "..." if token else "",
+                "attempts": attempts,
+                "success": bool(success_data),
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
+
+            if not success_data:
+                print(f"[XTS Order Broker] Trades fetch failed or empty for {self.client_id}. Attempts: {len(attempts)}", flush=True)
+                return []
+
+            result = success_data.get("result", [])
+            trade_list = []
+            if isinstance(result, list):
+                trade_list = result
+            elif isinstance(result, dict):
+                trade_list = result.get("tradeList") or result.get("trades") or [result]
+
+            trades = []
+            for t in trade_list:
+                if not isinstance(t, dict):
+                    continue
+
+                raw_time = t.get("TradeExecutionTime") or t.get("tradeExecutionTime") or t.get("OrderGeneratedDateTime") or t.get("timestamp") or ""
+                ts = str(raw_time)
+                if " " in ts:
+                    ts = ts.split(" ")[-1]
+                elif "T" in ts:
+                    ts = ts.split("T")[-1][:8]
+
+                trades.append({
+                    "trade_id": str(t.get("ExchangeTradeID") or t.get("exchangeTradeID") or t.get("TradeID") or t.get("tradeID") or t.get("AppOrderID") or ""),
+                    "order_id": str(t.get("AppOrderID") or t.get("appOrderID") or ""),
+                    "symbol": t.get("TradingSymbol") or t.get("tradingSymbol") or t.get("Symbol") or "UNKNOWN",
+                    "side": str(t.get("OrderSide") or t.get("orderSide") or t.get("TransactionType") or "BUY").upper(),
+                    "quantity": int(t.get("TradedQuantity") or t.get("tradedQuantity") or t.get("OrderQuantity") or t.get("quantity") or 0),
+                    "price": float(t.get("TradedPrice") or t.get("tradedPrice") or t.get("OrderPrice") or t.get("price") or 0.0),
+                    "timestamp": ts
+                })
+
+            print(f"[XTS Order Broker] Parsed {len(trades)} trades for {self.client_id}", flush=True)
+            return trades
+
+        except Exception as e:
+            print(f"[XTS Order Broker] Trades network error: {e}")
             return []
 
 class ShoonyaOrderBroker(GenericBrokerOrderAdapter):
