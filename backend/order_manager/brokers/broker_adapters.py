@@ -371,58 +371,62 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
 
             result = success_data.get("result", {})
             holdings_raw = []
+            seen_ids = set()
 
-            # 1. Official XTS v2 Structure: result.RMSHoldingList -> list of {"Holdings": {ISIN: {...}}}
-            if "RMSHoldingList" in result or "rmsHoldingList" in result:
-                rms_list = result.get("RMSHoldingList") or result.get("rmsHoldingList") or []
-                for item in rms_list:
-                    if isinstance(item, dict):
-                        if "Holdings" in item and isinstance(item["Holdings"], dict):
-                            for k, v in item["Holdings"].items():
-                                if isinstance(v, dict):
-                                    if not v.get("ISIN") and k:
-                                        v["ISIN"] = k
-                                    holdings_raw.append(v)
-                        elif "holdings" in item and isinstance(item["holdings"], dict):
-                            for k, v in item["holdings"].items():
-                                if isinstance(v, dict):
-                                    if not v.get("ISIN") and k:
-                                        v["ISIN"] = k
-                                    holdings_raw.append(v)
-                        else:
-                            holdings_raw.append(item)
-
-            # 2. Alternative XTS structures: holdingsList or holdings or HoldingList
-            elif "holdingsList" in result or "holdings" in result or "HoldingList" in result:
-                hl = result.get("holdingsList") or result.get("holdings") or result.get("HoldingList") or []
-                if isinstance(hl, list):
-                    for item in hl:
-                        if isinstance(item, dict) and "Holdings" in item and isinstance(item["Holdings"], dict):
-                            for k, v in item["Holdings"].items():
-                                if isinstance(v, dict):
-                                    holdings_raw.append(v)
-                        else:
-                            holdings_raw.append(item)
-                elif isinstance(hl, dict):
-                    for k, v in hl.items():
+            def extract_from_dict(d):
+                if not isinstance(d, dict):
+                    return
+                # Check for nested Holdings map (e.g. RMSHoldings.Holdings or CollateralHoldings.ISIN.Holdings)
+                if "Holdings" in d and isinstance(d["Holdings"], dict):
+                    for k, v in d["Holdings"].items():
                         if isinstance(v, dict):
-                            holdings_raw.append(v)
-
-            # 3. Direct list in result
-            elif isinstance(result, list):
-                for item in result:
-                    if isinstance(item, dict) and "Holdings" in item and isinstance(item["Holdings"], dict):
-                        for k, v in item["Holdings"].items():
-                            if isinstance(v, dict):
+                            if not v.get("ISIN") and k:
+                                v["ISIN"] = k
+                            uid = str(v.get("RMSHoldingId") or v.get("ISIN") or v.get("Symbol") or k)
+                            if uid not in seen_ids:
+                                seen_ids.add(uid)
                                 holdings_raw.append(v)
-                    else:
-                        holdings_raw.append(item)
+                elif "holdings" in d and isinstance(d["holdings"], dict):
+                    for k, v in d["holdings"].items():
+                        if isinstance(v, dict):
+                            if not v.get("ISIN") and k:
+                                v["ISIN"] = k
+                            uid = str(v.get("RMSHoldingId") or v.get("ISIN") or v.get("Symbol") or k)
+                            if uid not in seen_ids:
+                                seen_ids.add(uid)
+                                holdings_raw.append(v)
+                elif any(k in d for k in ["HoldingQuantity", "holdingQuantity", "BuyAvgPrice", "Symbol", "TradingSymbol"]):
+                    uid = str(d.get("RMSHoldingId") or d.get("ISIN") or d.get("Symbol") or len(seen_ids))
+                    if uid not in seen_ids:
+                        seen_ids.add(uid)
+                        holdings_raw.append(d)
+                else:
+                    for k, v in d.items():
+                        if isinstance(v, dict):
+                            extract_from_dict(v)
+                        elif isinstance(v, list):
+                            for item in v:
+                                if isinstance(item, dict):
+                                    extract_from_dict(item)
 
-            # 4. Direct dictionary keyed by ISIN
+            if isinstance(result, list):
+                for item in result:
+                    if isinstance(item, dict):
+                        extract_from_dict(item)
             elif isinstance(result, dict):
-                for k, v in result.items():
-                    if isinstance(v, dict) and any(f in v for f in ["HoldingQuantity", "holdingQuantity", "ISIN", "TradingSymbol"]):
-                        holdings_raw.append(v)
+                # 1. Primary IIFL / XTS structure: RMSHoldings & CollateralHoldings
+                if "RMSHoldings" in result:
+                    extract_from_dict(result["RMSHoldings"])
+                if "CollateralHoldings" in result:
+                    extract_from_dict(result["CollateralHoldings"])
+                # 2. XTS v2 documentation structure: RMSHoldingList
+                if "RMSHoldingList" in result:
+                    extract_from_dict(result["RMSHoldingList"])
+                if "holdingsList" in result:
+                    extract_from_dict(result["holdingsList"])
+                # 3. Fallback to full result traversal
+                if not holdings_raw:
+                    extract_from_dict(result)
 
             holdings = []
             for h in holdings_raw:
@@ -430,7 +434,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                     continue
 
                 isin = str(h.get("ISIN") or h.get("isin") or "").strip()
-                trading_sym = str(h.get("TradingSymbol") or h.get("tradingSymbol") or h.get("CompanyName") or h.get("companyName") or h.get("InstrumentName") or "").strip()
+                trading_sym = str(h.get("Symbol") or h.get("symbol") or h.get("TradingSymbol") or h.get("tradingSymbol") or h.get("CompanyName") or h.get("companyName") or h.get("InstrumentName") or "").strip()
 
                 if trading_sym and isin and isin not in trading_sym:
                     sym = f"{trading_sym} {isin}"
@@ -439,13 +443,14 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 elif isin:
                     sym = isin
                 else:
-                    sym = str(h.get("symbol") or "UNKNOWN")
+                    sym = "UNKNOWN"
 
                 qty = int(
-                    h.get("TotalHoldingQuantity") or 
                     h.get("HoldingQuantity") or 
+                    h.get("TotalHoldingQuantity") or 
                     h.get("holdingQuantity") or 
                     h.get("totalQuantity") or 
+                    h.get("CollateralQuantity") or 
                     h.get("quantity") or 
                     h.get("Quantity") or 
                     h.get("HoldingsQuantity") or 
@@ -454,8 +459,8 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 )
 
                 avg_price = float(
-                    h.get("BuyAveragePrice") or 
                     h.get("BuyAvgPrice") or 
+                    h.get("BuyAveragePrice") or 
                     h.get("buyAveragePrice") or 
                     h.get("buyAvgPrice") or 
                     h.get("averagePrice") or 
@@ -482,6 +487,19 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
 
                 if ltp <= 0 and mkt_val > 0 and qty > 0:
                     ltp = round(mkt_val / qty, 2)
+
+                if ltp <= 0:
+                    clean_sym = trading_sym.replace("-EQ", "").strip()
+                    canonical = f"NSE:{clean_sym}" if clean_sym else ""
+                    if canonical:
+                        try:
+                            from backend.feed_manager.manager import feed_manager
+                            tick = feed_manager.get_latest_tick(canonical)
+                            if tick and tick.get("ltp"):
+                                ltp = float(tick["ltp"])
+                        except Exception:
+                            pass
+
                 if ltp <= 0:
                     ltp = avg_price
 
@@ -513,7 +531,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                     "product": h.get("productType") or h.get("ProductType") or "CNC"
                 })
 
-            print(f"[XTS Order Broker] Successfully parsed {len(holdings)} holdings for {self.client_id}")
+            print(f"[XTS Order Broker] Successfully parsed {len(holdings)} holdings for {self.client_id}: {[h['symbol'] for h in holdings]}", flush=True)
             return holdings
 
         except Exception as e:
