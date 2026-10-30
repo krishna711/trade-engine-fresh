@@ -647,6 +647,56 @@ async def sync_account_with_broker(client_id: str, db: Session = Depends(get_db)
 
 
 # ----------------- STRATEGIES (DASHBOARD & ADMIN CATALOG) -----------------
+@app.post("/api/strategies/deploy")
+async def deploy_strategy(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """Deploys a new strategy instance from a registered template and maps client accounts"""
+    template_key = payload.get("template_key")
+    if not template_key:
+        raise HTTPException(status_code=400, detail="template_key is required")
+
+    template = db.query(StrategyTemplate).filter(StrategyTemplate.key == template_key).first()
+    if not template:
+        raise HTTPException(status_code=404, detail=f"Strategy template '{template_key}' not found")
+
+    client_ids = payload.get("client_ids", [])
+    config = payload.get("config") or template.default_config or {}
+    name_admin = payload.get("name_admin") or f"{template.name_admin} [{', '.join(client_ids) if client_ids else 'UNMAPPED'}]"
+    name_user = payload.get("name_user") or template.name_user
+    start_time = str(config.get("entry_time") or config.get("start_time") or "09:15:00")
+    end_time = str(config.get("exit_time") or config.get("end_time") or "15:20:00")
+    auto_start = bool(payload.get("auto_start", False))
+
+    instance = StrategyInstance(
+        template_key=template_key,
+        instance_name_admin=name_admin,
+        instance_name_user=name_user,
+        client_ids=list(client_ids),
+        status="STOPPED",
+        config=config,
+        start_time=start_time,
+        end_time=end_time,
+        legs_info=[]
+    )
+    db.add(instance)
+    db.commit()
+    db.refresh(instance)
+
+    if auto_start and client_ids:
+        try:
+            await strategy_supervisor.start_strategy(instance.id)
+            db.refresh(instance)
+        except Exception as start_err:
+            print(f"[Deploy Strategy] Error auto-starting strategy {instance.id}: {start_err}")
+
+    return {
+        "success": True,
+        "strategy_id": instance.id,
+        "name_admin": instance.instance_name_admin,
+        "name_user": instance.instance_name_user,
+        "client_ids": instance.client_ids,
+        "status": instance.status
+    }
+
 @app.get("/api/strategies/templates")
 def list_strategy_templates(db: Session = Depends(get_db)):
     """Admin Only page: Registered strategies ready to map to clients"""

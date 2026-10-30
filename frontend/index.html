@@ -698,6 +698,78 @@
         </div>
     </div>
 
+    <!-- ===================================================================
+         MODAL 8: DEPLOY STRATEGY INSTANCE WIZARD
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-deploy-strategy">
+        <div class="modal-box" style="width: 620px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <div>
+                    <h3>Deploy Strategy Instance</h3>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">Configure and map strategy algorithm to client accounts</span>
+                </div>
+                <button class="icon-btn modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 1rem;">
+                
+                <!-- Strategy Template Selector -->
+                <div>
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Select Strategy Template *</label>
+                    <select id="deploy-template-select" onchange="strategiesManager.onDeployTemplateChange(this.value)" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-weight: 600;">
+                        <!-- Injected dynamically -->
+                    </select>
+                </div>
+
+                <!-- Admin & User Names -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Instance Name (Admin Visible) *</label>
+                        <input type="text" id="deploy-name-admin" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-size: 0.82rem;">
+                    </div>
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Display Name (User Visible) *</label>
+                        <input type="text" id="deploy-name-user" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-size: 0.82rem;">
+                    </div>
+                </div>
+
+                <!-- Client Accounts Selection (Parallel Order Execution) -->
+                <div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Map to Client Accounts (Parallel Execution) *</label>
+                        <span style="font-size: 0.7rem; color: var(--accent-blue);">Orders execute simultaneously</span>
+                    </div>
+                    <div id="deploy-clients-list" style="background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; padding: 0.65rem; max-height: 140px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.4rem;">
+                        <!-- Injected dynamically -->
+                    </div>
+                </div>
+
+                <!-- Strategy Parameters Config JSON -->
+                <div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Strategy Parameters & Configuration (JSON)</label>
+                        <span style="font-size: 0.7rem; color: var(--text-muted);">Adjust strikes, timings, stop loss, lots</span>
+                    </div>
+                    <textarea id="deploy-config-json" rows="6" style="width: 100%; padding: 0.5rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.78rem; border-radius: 6px; resize: vertical;"></textarea>
+                </div>
+
+                <!-- Auto-start checkbox -->
+                <div style="display: flex; align-items: center; gap: 0.5rem; background: var(--bg-tertiary); padding: 0.65rem 0.85rem; border-radius: 6px; border: 1px solid var(--border-color);">
+                    <input type="checkbox" id="deploy-auto-start" checked style="cursor: pointer; width: 16px; height: 16px;">
+                    <label for="deploy-auto-start" style="font-size: 0.8rem; cursor: pointer; user-select: none;">
+                        <strong>Start Strategy Immediately</strong> (Spawns worker container process and monitors market feed)
+                    </label>
+                </div>
+
+            </div>
+            <div class="modal-footer">
+                <button class="action-btn-sm modal-close-btn" type="button">Cancel</button>
+                <button class="action-btn-sm" id="btn-submit-deploy-strategy" type="button" onclick="strategiesManager.submitDeployStrategy()" style="background: var(--accent-blue, #2563eb); color: white; font-weight: 700; padding: 0.5rem 1.25rem;">
+                    🚀 Deploy Strategy Instance
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts with Cache Busting -->
     <script src="js/ticker.js?v=3.0"></script>
     <script src="js/client_cards.js?v=3.0"></script>

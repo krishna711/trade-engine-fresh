@@ -67,7 +67,7 @@ class StrategiesManager {
 
         const btnDeploy = document.getElementById("btn-deploy-new-strategy");
         if (btnDeploy) btnDeploy.onclick = () => {
-            if (window.app) window.app.switchView("strategies");
+            this.openDeployModal();
         };
     }
 
@@ -907,8 +907,159 @@ class StrategiesManager {
     }
 
     deployTemplate(key, adminName, userName) {
-        alert(`Deploy Wizard: Strategy '${key}' is ready to map to clients from Dashboard.`);
-        if (window.app) window.app.switchView("dashboard");
+        this.openDeployModal(key);
+    }
+
+    async openDeployModal(preselectKey = null) {
+        try {
+            const [resTpl, resAcc] = await Promise.all([
+                fetch("/api/strategies/templates"),
+                fetch("/api/accounts")
+            ]);
+            this.templatesList = await resTpl.json();
+            const accounts = await resAcc.json();
+
+            // Populate template select dropdown
+            const selectEl = document.getElementById("deploy-template-select");
+            if (selectEl) {
+                selectEl.innerHTML = this.templatesList.map(t => `
+                    <option value="${t.key}" ${t.key === preselectKey ? 'selected' : ''}>
+                        ${t.name_admin} (${t.name_user}) [${t.key}]
+                    </option>
+                `).join("");
+            }
+
+            const targetKey = preselectKey || (this.templatesList[0] ? this.templatesList[0].key : "");
+            if (selectEl && targetKey) {
+                selectEl.value = targetKey;
+            }
+            this.onDeployTemplateChange(targetKey);
+
+            // Populate clients list
+            const clientsListEl = document.getElementById("deploy-clients-list");
+            if (clientsListEl) {
+                if (accounts.length === 0) {
+                    clientsListEl.innerHTML = `
+                        <div style="font-size: 0.75rem; color: var(--accent-amber); padding: 0.5rem;">
+                            ⚠️ No client accounts found. Please add a client account first.
+                        </div>
+                    `;
+                } else {
+                    clientsListEl.innerHTML = accounts.map(a => {
+                        const isChecked = true; // Pre-check accounts so user can deploy in 1 click
+                        const brokerCls = `broker-${(a.broker || 'xts').toLowerCase()}`;
+                        return `
+                            <label style="display: flex; align-items: center; justify-content: space-between; padding: 6px 8px; background: var(--bg-secondary); border-radius: 6px; cursor: pointer; user-select: none; border: 1px solid var(--border-color);">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <input type="checkbox" name="deploy_clients" value="${a.client_id}" ${isChecked ? 'checked' : ''} style="cursor: pointer; width: 15px; height: 15px;">
+                                    <span class="broker-tag ${brokerCls}" style="font-size: 0.65rem;">${a.broker}</span>
+                                    <strong style="font-size: 0.82rem;">${a.client_name}</strong>
+                                    <code style="font-size: 0.72rem; color: var(--text-muted);">${a.client_id}</code>
+                                </div>
+                                <span style="font-size: 0.7rem; color: ${a.paper_mode ? 'var(--text-muted)' : 'var(--accent-green)'}; font-weight: 600;">
+                                    ${a.paper_mode ? '📄 PAPER' : '🟢 LIVE'}
+                                </span>
+                            </label>
+                        `;
+                    }).join("");
+                }
+            }
+
+            const modal = document.getElementById("modal-deploy-strategy");
+            if (modal) {
+                modal.classList.add("active");
+                modal.style.display = "";
+            }
+        } catch (e) {
+            alert("Error loading deployment wizard: " + e);
+        }
+    }
+
+    onDeployTemplateChange(key) {
+        if (!this.templatesList) return;
+        const tpl = this.templatesList.find(t => t.key === key);
+        if (!tpl) return;
+
+        const nameAdminEl = document.getElementById("deploy-name-admin");
+        const nameUserEl = document.getElementById("deploy-name-user");
+        const configJsonEl = document.getElementById("deploy-config-json");
+
+        if (nameAdminEl) nameAdminEl.value = tpl.name_admin;
+        if (nameUserEl) nameUserEl.value = tpl.name_user;
+        if (configJsonEl) configJsonEl.value = JSON.stringify(tpl.default_config || {}, null, 2);
+    }
+
+    async submitDeployStrategy() {
+        const selectEl = document.getElementById("deploy-template-select");
+        const templateKey = selectEl ? selectEl.value : "";
+        if (!templateKey) {
+            alert("Please select a strategy template.");
+            return;
+        }
+
+        const nameAdmin = document.getElementById("deploy-name-admin")?.value?.trim() || "";
+        const nameUser = document.getElementById("deploy-name-user")?.value?.trim() || "";
+        const configJsonStr = document.getElementById("deploy-config-json")?.value?.trim() || "{}";
+        const autoStart = document.getElementById("deploy-auto-start")?.checked || false;
+
+        let parsedConfig = {};
+        try {
+            parsedConfig = JSON.parse(configJsonStr);
+        } catch (e) {
+            alert("Invalid Strategy Configuration JSON. Please check syntax:\n" + e);
+            return;
+        }
+
+        const checkedBoxes = document.querySelectorAll("input[name='deploy_clients']:checked");
+        const clientIds = Array.from(checkedBoxes).map(cb => cb.value);
+
+        if (clientIds.length === 0) {
+            if (!confirm("No client accounts selected. Deploy strategy without any mapped account?")) {
+                return;
+            }
+        }
+
+        const submitBtn = document.getElementById("btn-submit-deploy-strategy");
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerText = "⏳ Deploying...";
+        }
+
+        try {
+            const res = await fetch("/api/strategies/deploy", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    template_key: templateKey,
+                    name_admin: nameAdmin,
+                    name_user: nameUser,
+                    client_ids: clientIds,
+                    config: parsedConfig,
+                    auto_start: autoStart
+                })
+            });
+
+            const data = await res.json();
+            if (data.success) {
+                const modal = document.getElementById("modal-deploy-strategy");
+                if (modal) modal.classList.remove("active");
+
+                if (window.app) window.app.switchView("dashboard");
+                await this.loadInstances();
+                if (window.clientCardsManager) await window.clientCardsManager.loadAccounts();
+
+                alert(`🎉 Strategy successfully deployed!\n\nStrategy: ${nameUser}\nMapped to Account: ${clientIds.join(", ") || "None"}\nStatus: ${data.status}`);
+            } else {
+                alert("Failed to deploy strategy: " + (data.detail || data.error));
+            }
+        } catch (e) {
+            alert("Network error deploying strategy: " + e);
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerText = "🚀 Deploy Strategy Instance";
+            }
+        }
     }
 }
 
