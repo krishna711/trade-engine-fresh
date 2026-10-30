@@ -443,13 +443,39 @@ class ClientCardsManager {
                 if (feedbackEl) {
                     feedbackEl.innerHTML = `<span style="color: var(--accent-green); font-weight: 600;">✓ Token saved successfully for today (${todayStr})! Valid for broker API calls.</span>`;
                 }
-                await this.loadDrawerDetails(clientId);
-                await this.loadAccounts();
+                await this.syncBrokerDataNow(clientId);
             } else {
                 alert("Failed to update token: " + (data.detail || data.error));
             }
         } catch (e) {
             alert("Error updating token: " + e);
+        }
+    }
+
+    async syncBrokerDataNow(clientId) {
+        const syncBtn = document.getElementById("btn-drawer-sync");
+        if (syncBtn) {
+            syncBtn.disabled = true;
+            syncBtn.innerText = "⏳ Syncing...";
+        }
+        try {
+            await fetch(`/api/accounts/${clientId}/sync`, { method: "POST" });
+            await this.loadDrawerDetails(clientId);
+            await this.loadAccounts();
+            if (syncBtn) {
+                syncBtn.innerText = "✓ Synced";
+                setTimeout(() => {
+                    syncBtn.disabled = false;
+                    syncBtn.innerText = "🔄 Sync Broker";
+                }, 1500);
+            }
+        } catch (e) {
+            console.error("Error syncing broker data:", e);
+            await this.loadDrawerDetails(clientId);
+            if (syncBtn) {
+                syncBtn.disabled = false;
+                syncBtn.innerText = "🔄 Sync Broker";
+            }
         }
     }
 
@@ -462,7 +488,14 @@ class ClientCardsManager {
             const data = await res.json();
 
             if (this.activeDrawerTab === "positions") {
+                const isLive = data.credentials && data.credentials.is_valid_today && !data.paper_mode;
                 bodyEl.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; padding: 0 0.25rem;">
+                        <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">OPEN POSITIONS (${data.positions.length})</span>
+                        ${isLive 
+                            ? `<span style="font-size: 0.7rem; padding: 2px 8px; border-radius: 12px; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700;">🟢 Live from ${data.broker}</span>`
+                            : `<span style="font-size: 0.7rem; color: var(--text-muted);">${data.paper_mode ? '📄 Paper Positions' : 'Engine Positions'}</span>`}
+                    </div>
                     <table class="data-table">
                         <thead>
                             <tr><th>Symbol</th><th>Net Qty</th><th>Buy Avg</th><th>LTP</th><th>PnL</th></tr>
@@ -478,7 +511,7 @@ class ClientCardsManager {
                                         ${p.pnl >= 0 ? '+' : ''}₹${p.pnl.toFixed(2)}
                                     </td>
                                 </tr>
-                            `).join("") : '<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No open positions</td></tr>'}
+                            `).join("") : '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">No open positions</td></tr>'}
                         </tbody>
                     </table>
                 `;
@@ -498,7 +531,7 @@ class ClientCardsManager {
                                     <td>${o.price}</td>
                                     <td><span class="status-pill status-${o.status === 'FILLED' ? 'running' : 'stopped'}">${o.status}</span></td>
                                 </tr>
-                            `).join("") : '<tr><td colspan="6" style="text-align: center; color: var(--text-muted);">No orders found</td></tr>'}
+                            `).join("") : '<tr><td colspan="6" style="text-align: center; color: var(--text-muted); padding: 2rem;">No orders found</td></tr>'}
                         </tbody>
                     </table>
                 `;
@@ -517,32 +550,53 @@ class ClientCardsManager {
                                     <td>${t.quantity}</td>
                                     <td>₹${t.price.toFixed(2)}</td>
                                 </tr>
-                            `).join("") : '<tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No executed trades</td></tr>'}
+                            `).join("") : '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2rem;">No executed trades</td></tr>'}
                         </tbody>
                     </table>
                 `;
             } else if (this.activeDrawerTab === "holdings") {
+                const isLive = data.credentials && data.credentials.is_valid_today;
                 bodyEl.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; padding: 0 0.25rem;">
+                        <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">PORTFOLIO HOLDINGS (${data.holdings.length})</span>
+                        ${isLive 
+                            ? `<span style="font-size: 0.7rem; padding: 2px 8px; border-radius: 12px; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700;">🟢 Live from ${data.broker}</span>`
+                            : `<span style="font-size: 0.7rem; color: var(--accent-amber);">⚠️ Active token required to fetch live holdings</span>`}
+                    </div>
                     <table class="data-table">
                         <thead>
                             <tr><th>Instrument</th><th>Qty</th><th>Avg Price</th><th>LTP</th><th>PnL</th></tr>
                         </thead>
                         <tbody>
-                            ${data.holdings.map(h => `
-                                <tr>
-                                    <td><strong>${h.symbol}</strong></td>
-                                    <td>${h.qty}</td>
-                                    <td>₹${h.buy_price.toFixed(2)}</td>
-                                    <td>₹${h.ltp.toFixed(2)}</td>
-                                    <td class="pnl-positive" style="font-weight: 700;">+₹${h.pnl.toFixed(2)}</td>
-                                </tr>
-                            `).join("")}
+                            ${data.holdings.length ? data.holdings.map(h => {
+                                const isPos = (h.pnl || 0) >= 0;
+                                const sign = isPos ? "+" : "";
+                                const cls = isPos ? "pnl-positive" : "pnl-negative";
+                                return `
+                                    <tr>
+                                        <td><strong>${h.symbol}</strong></td>
+                                        <td style="font-family: var(--font-mono);">${h.qty}</td>
+                                        <td style="font-family: var(--font-mono);">₹${Number(h.buy_price || 0).toFixed(2)}</td>
+                                        <td style="font-family: var(--font-mono);">₹${Number(h.ltp || 0).toFixed(2)}</td>
+                                        <td class="${cls}" style="font-family: var(--font-mono); font-weight: 700;">
+                                            ${sign}₹${Number(h.pnl || 0).toFixed(2)}
+                                        </td>
+                                    </tr>
+                                `;
+                            }).join("") : '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2.5rem 1rem;">No equity holdings found in this account.</td></tr>'}
                         </tbody>
                     </table>
                 `;
             } else if (this.activeDrawerTab === "margins") {
+                const isLive = data.credentials && data.credentials.is_valid_today;
                 bodyEl.innerHTML = `
                     <div style="display: flex; flex-direction: column; gap: 1rem; padding: 0.5rem;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">MARGINS & LIMITS</span>
+                            ${isLive 
+                                ? `<span style="font-size: 0.7rem; padding: 2px 8px; border-radius: 12px; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700;">🟢 Live from ${data.broker}</span>`
+                                : `<span style="font-size: 0.7rem; color: var(--accent-amber);">⚪ Stored Margin (Generate Token to Sync Live)</span>`}
+                        </div>
                         <div class="card-pnl-grid" style="grid-template-columns: 1fr 1fr;">
                             <div class="card-pnl-item">
                                 <span class="card-pnl-title">Margin Available</span>
@@ -558,6 +612,11 @@ class ClientCardsManager {
                             <div style="font-family: var(--font-mono); font-size: 1.25rem; font-weight: 800; color: var(--text-primary); margin-top: 4px;">
                                 ₹${data.margins.total.toLocaleString('en-IN', {minimumFractionDigits: 2})}
                             </div>
+                        </div>
+                        <div>
+                            <button class="action-btn-sm" onclick="clientCardsManager.syncBrokerDataNow('${data.client_id}')" style="background: var(--bg-tertiary); color: var(--accent-blue); border: 1px solid var(--accent-blue); width: 100%; padding: 0.6rem; font-weight: 600; cursor: pointer; border-radius: 6px;">
+                                🔄 Refresh Real-Time Margins & Holdings from ${data.broker}
+                            </button>
                         </div>
                     </div>
                 `;

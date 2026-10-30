@@ -38,3 +38,15 @@ class BaseOrderBroker(ABC):
     async def get_margins(self) -> Dict[str, Any]:
         """Fetches available and used margin"""
         pass
+
+    async def get_holdings(self) -> List[Dict[str, Any]]:
+        """Fetches long-term equity holdings from broker"""
+        return []
+
+    async def get_orders(self) -> List[Dict[str, Any]]:
+        """Fetches live orderbook from broker"""
+        return []
+
+    async def get_trades(self) -> List[Dict[str, Any]]:
+        """Fetches executed trades from broker"""
+        return []

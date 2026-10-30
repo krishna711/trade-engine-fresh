@@ -358,7 +358,10 @@
                 <h3 id="drawer-client-name">Account Details</h3>
                 <span id="drawer-client-id" style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);"></span>
             </div>
-            <button class="icon-btn" id="drawer-close-btn">&times;</button>
+            <div style="display: flex; gap: 0.5rem; align-items: center;">
+                <button class="action-btn-sm" id="btn-drawer-sync" style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); font-size: 0.75rem; padding: 4px 10px; cursor: pointer; border-radius: 4px;" title="Refresh live holdings, margins, and positions from broker" onclick="if(clientCardsManager.currentClientId) clientCardsManager.syncBrokerDataNow(clientCardsManager.currentClientId)">🔄 Sync Broker</button>
+                <button class="icon-btn" id="drawer-close-btn">&times;</button>
+            </div>
         </div>
 
         <div class="drawer-tabs">

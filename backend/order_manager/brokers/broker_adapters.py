@@ -78,6 +78,16 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
         self.token_date = creds.get("token_date", "")
         self.interactive_url = creds.get("interactive_url", "https://ttblaze.iifl.com/interactive").rstrip("/")
 
+    def _get_url(self, path: str) -> str:
+        clean_path = path.lstrip("/")
+        base = self.interactive_url.rstrip("/")
+        if base.endswith("/interactive"):
+            return f"{base}/{clean_path}"
+        elif "/interactive" in base:
+            return f"{base}/{clean_path}"
+        else:
+            return f"{base}/interactive/{clean_path}"
+
     def is_token_valid_for_today(self) -> bool:
         today_str = datetime.date.today().isoformat()
         return bool(self.token) and (self.token_date == today_str)
@@ -204,6 +214,270 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 "rejection_reason": f"XTS Network Exception: {str(e)}",
                 "timestamp": datetime.datetime.utcnow().isoformat()
             }
+
+    async def get_margins(self) -> Dict[str, Any]:
+        """
+        Fetches live RMS limits / balance from XTS Interactive API:
+        GET /interactive/user/balance
+        """
+        token = self.get_valid_token()
+        if not token:
+            return {
+                "success": False,
+                "error": "No valid token for today",
+                "margin_available": 0.0,
+                "margin_used": 0.0,
+                "total_balance": 0.0
+            }
+
+        try:
+            import requests
+            url = self._get_url("user/balance")
+            headers = {"Authorization": token, "Content-Type": "application/json"}
+
+            resp = None
+            if self.client_id:
+                try:
+                    resp = requests.get(url, params={"clientID": self.client_id}, headers=headers, timeout=8)
+                except Exception:
+                    resp = None
+
+            if resp is None or resp.status_code != 200:
+                resp = requests.get(url, params={}, headers=headers, timeout=8)
+
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            if resp.status_code == 200 and data.get("type") == "success":
+                result = data.get("result", {})
+                bal_list = result.get("BalanceList") or result.get("balanceList") or result
+                items = bal_list if isinstance(bal_list, list) else [bal_list] if isinstance(bal_list, dict) else []
+
+                margin_available = 0.0
+                margin_used = 0.0
+                total_balance = 0.0
+
+                for item in items:
+                    limit_obj = item.get("limitObject") if isinstance(item, dict) and "limitObject" in item else item
+                    if not isinstance(limit_obj, dict):
+                        continue
+
+                    rms = limit_obj.get("RMSSubLimits") or {}
+                    margin_avail_obj = limit_obj.get("marginAvailable") or {}
+
+                    c_avail = float(rms.get("cashAvailable") or margin_avail_obj.get("CashMarginAvailable") or limit_obj.get("cashAvailable") or 0.0)
+                    collat = float(rms.get("collateral") or limit_obj.get("collateral") or 0.0)
+                    m_used = float(rms.get("marginUtilized") or limit_obj.get("marginUtilized") or limit_obj.get("usedMargin") or 0.0)
+                    net_avail = float(rms.get("netMarginAvailable") or limit_obj.get("netMarginAvailable") or limit_obj.get("availableMargin") or (c_avail + collat - m_used))
+
+                    margin_available = max(margin_available, net_avail)
+                    margin_used = max(margin_used, m_used)
+                    tot = (c_avail + collat) if (c_avail + collat) > 0 else (net_avail + m_used)
+                    total_balance = max(total_balance, tot)
+
+                return {
+                    "success": True,
+                    "margin_available": round(margin_available, 2),
+                    "margin_used": round(margin_used, 2),
+                    "total_balance": round(total_balance, 2),
+                    "raw": result
+                }
+            else:
+                err_msg = data.get("description") or data.get("message") or resp.text
+                return {
+                    "success": False,
+                    "error": f"XTS Balance Error: {err_msg}",
+                    "margin_available": 0.0,
+                    "margin_used": 0.0,
+                    "total_balance": 0.0
+                }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"XTS Network Error: {str(e)}",
+                "margin_available": 0.0,
+                "margin_used": 0.0,
+                "total_balance": 0.0
+            }
+
+    async def get_holdings(self) -> List[Dict[str, Any]]:
+        """
+        Fetches live equity holdings from XTS Interactive API:
+        GET /interactive/portfolio/holdings
+        """
+        token = self.get_valid_token()
+        if not token:
+            return []
+
+        try:
+            import requests
+            url = self._get_url("portfolio/holdings")
+            headers = {"Authorization": token, "Content-Type": "application/json"}
+
+            resp = None
+            if self.client_id:
+                try:
+                    resp = requests.get(url, params={"clientID": self.client_id}, headers=headers, timeout=8)
+                except Exception:
+                    resp = None
+
+            if resp is None or resp.status_code != 200:
+                resp = requests.get(url, params={}, headers=headers, timeout=8)
+
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            if resp.status_code == 200 and data.get("type") == "success":
+                result = data.get("result", {})
+                holdings_raw = []
+                if isinstance(result, list):
+                    holdings_raw = result
+                elif isinstance(result, dict):
+                    holdings_raw = result.get("holdingsList") or result.get("holdings") or result.get("HoldingList") or []
+                    if not holdings_raw and "result" in result and isinstance(result["result"], list):
+                        holdings_raw = result["result"]
+
+                holdings = []
+                for h in holdings_raw:
+                    sym = (
+                        h.get("tradingSymbol") or 
+                        h.get("instrumentName") or 
+                        h.get("symbol") or 
+                        h.get("TradingSymbol") or 
+                        h.get("InstrumentName") or 
+                        "UNKNOWN"
+                    )
+                    qty = int(
+                        h.get("totalQuantity") or 
+                        h.get("holdingQuantity") or 
+                        h.get("quantity") or 
+                        h.get("currentQuantity") or 
+                        h.get("HoldingsQuantity") or 
+                        0
+                    )
+                    avg_price = float(
+                        h.get("averagePrice") or 
+                        h.get("buyAveragePrice") or 
+                        h.get("buyPrice") or 
+                        h.get("AvgPrice") or 
+                        0.0
+                    )
+                    ltp = float(
+                        h.get("closePrice") or 
+                        h.get("lastTradedPrice") or 
+                        h.get("LTP") or 
+                        h.get("ltp") or 
+                        avg_price
+                    )
+
+                    if h.get("pnl") is not None:
+                        pnl = float(h.get("pnl"))
+                    elif h.get("unrealizedPnl") is not None:
+                        pnl = float(h.get("unrealizedPnl"))
+                    elif h.get("totalPnl") is not None:
+                        pnl = float(h.get("totalPnl"))
+                    else:
+                        pnl = round((ltp - avg_price) * qty, 2)
+
+                    holdings.append({
+                        "symbol": sym,
+                        "qty": qty,
+                        "buy_price": round(avg_price, 2),
+                        "ltp": round(ltp, 2),
+                        "pnl": round(pnl, 2),
+                        "product": h.get("productType") or h.get("ProductType") or "CNC"
+                    })
+                return holdings
+            else:
+                print(f"[XTS Order Broker] Holdings fetch response: {data}")
+                return []
+        except Exception as e:
+            print(f"[XTS Order Broker] Holdings network error: {e}")
+            return []
+
+    async def get_positions(self) -> List[Dict[str, Any]]:
+        """
+        Fetches live open positions from XTS Interactive API:
+        GET /interactive/portfolio/positions?dayOrNet=NetWise
+        """
+        token = self.get_valid_token()
+        if not token:
+            return []
+
+        try:
+            import requests
+            url = self._get_url("portfolio/positions")
+            headers = {"Authorization": token, "Content-Type": "application/json"}
+            params = {"dayOrNet": "NetWise"}
+            if self.client_id:
+                params["clientID"] = self.client_id
+
+            resp = requests.get(url, params=params, headers=headers, timeout=8)
+            if resp.status_code != 200:
+                resp = requests.get(url, params={"dayOrNet": "NetWise"}, headers=headers, timeout=8)
+
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            if resp.status_code == 200 and data.get("type") == "success":
+                result = data.get("result", {})
+                pos_raw = []
+                if isinstance(result, list):
+                    pos_raw = result
+                elif isinstance(result, dict):
+                    pos_raw = result.get("positionList") or result.get("positions") or result.get("PositionList") or []
+
+                positions = []
+                for p in pos_raw:
+                    sym = p.get("tradingSymbol") or p.get("instrumentName") or p.get("symbol") or "UNKNOWN"
+                    net_qty = int(p.get("netQuantity") or p.get("NetQuantity") or 0)
+                    buy_avg = float(p.get("buyAveragePrice") or p.get("netPrice") or 0.0)
+                    sell_avg = float(p.get("sellAveragePrice") or 0.0)
+                    ltp = float(p.get("lastTradedPrice") or p.get("netPrice") or 0.0)
+                    pnl = float(p.get("pnl") or p.get("unrealizedPnl") or 0.0)
+                    positions.append({
+                        "symbol": sym,
+                        "segment": p.get("exchangeSegment", "NSE"),
+                        "net_qty": net_qty,
+                        "buy_avg": round(buy_avg, 2),
+                        "sell_avg": round(sell_avg, 2),
+                        "ltp": round(ltp, 2),
+                        "pnl": round(pnl, 2)
+                    })
+                return positions
+            return []
+        except Exception as e:
+            print(f"[XTS Order Broker] Positions network error: {e}")
+            return []
+
+    async def get_orders(self) -> List[Dict[str, Any]]:
+        """
+        Fetches live orderbook from XTS Interactive API:
+        GET /interactive/orders
+        """
+        token = self.get_valid_token()
+        if not token:
+            return []
+
+        try:
+            import requests
+            url = self._get_url("orders")
+            headers = {"Authorization": token, "Content-Type": "application/json"}
+            resp = requests.get(url, headers=headers, timeout=8)
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            if resp.status_code == 200 and data.get("type") == "success":
+                result = data.get("result", [])
+                order_list = result if isinstance(result, list) else []
+                orders = []
+                for o in order_list:
+                    orders.append({
+                        "order_id": str(o.get("AppOrderID") or o.get("orderID") or ""),
+                        "broker_order_id": str(o.get("OrderID") or o.get("orderID") or ""),
+                        "symbol": o.get("TradingSymbol") or o.get("tradingSymbol") or "UNKNOWN",
+                        "side": o.get("OrderSide") or o.get("orderSide") or "BUY",
+                        "quantity": int(o.get("OrderQuantity") or o.get("orderQuantity") or 0),
+                        "price": float(o.get("OrderPrice") or o.get("orderPrice") or 0.0),
+                        "status": o.get("OrderStatus") or o.get("orderStatus") or "SUBMITTED",
+                        "created_at": o.get("OrderGeneratedDateTime", "")[:8] if o.get("OrderGeneratedDateTime") else ""
+                    })
+                return orders
+            return []
+        except Exception as e:
+            return []
 
 class ShoonyaOrderBroker(GenericBrokerOrderAdapter):
     def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None):

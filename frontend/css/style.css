@@ -371,12 +371,13 @@ main.main-content {
 }
 
 /* ===================================================================
-   CLIENT CARDS (Full Width Responsive Grid)
+   CLIENT CARDS (Responsive Card Grid with Controlled Max Width)
    =================================================================== */
 .client-cards-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(265px, 1fr));
-    gap: 0.85rem;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 380px));
+    gap: 1rem;
+    align-items: start;
 }
 
 .client-card {
@@ -392,6 +393,9 @@ main.main-content {
     transition: transform 0.2s ease, border-color 0.2s ease;
     position: relative;
     overflow: hidden;
+    max-width: 420px;
+    width: 100%;
+    box-sizing: border-box;
 }
 
 .client-card:hover {

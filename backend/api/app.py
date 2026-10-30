@@ -235,7 +235,7 @@ def toggle_account_login(client_id: str, db: Session = Depends(get_db)):
     return {"success": True, "client_id": client_id, "is_logged_in": acc.is_logged_in}
 
 @app.post("/api/accounts/xts/generate-token")
-def generate_xts_token_endpoint(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+async def generate_xts_token_endpoint(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
     """
     Generate today's XTS session token via Symphony XTS API:
     - Accepts api_key, api_secret, and optional client_id or interactive_url.
@@ -303,6 +303,19 @@ def generate_xts_token_endpoint(payload: Dict[str, Any] = Body(...), db: Session
                 acc.credentials_json = creds
                 acc.is_logged_in = True
                 acc.last_login_at = datetime.datetime.utcnow()
+
+                # Immediately sync real live margin from XTS
+                try:
+                    from backend.order_manager.brokers.broker_adapters import create_broker_order_adapter
+                    adapter = create_broker_order_adapter("XTS", acc.client_id, creds)
+                    m_res = await adapter.get_margins()
+                    if m_res.get("success"):
+                        acc.margin_available = m_res["margin_available"]
+                        acc.margin_used = m_res["margin_used"]
+                        acc.total_balance = m_res["total_balance"]
+                except Exception as m_err:
+                    print(f"[Generate Token] Balance query notice: {m_err}")
+
                 db.commit()
 
             # Record system log
@@ -448,17 +461,112 @@ async def square_off_account_strategy_positions(client_id: str, strategy_id: int
     return res
 
 @app.get("/api/accounts/{client_id}/details")
-def get_account_drawer_details(client_id: str, db: Session = Depends(get_db)):
+async def get_account_drawer_details(client_id: str, db: Session = Depends(get_db)):
+    acc = db.query(Account).filter(Account.client_id == client_id).first()
     orders = db.query(Order).filter(Order.client_id == client_id).order_by(Order.id.desc()).limit(50).all()
     trades = db.query(Trade).filter(Trade.client_id == client_id).order_by(Trade.id.desc()).limit(50).all()
     positions = db.query(Position).filter(Position.client_id == client_id).all()
-    acc = db.query(Account).filter(Account.client_id == client_id).first()
 
     creds = acc.credentials_json or {} if acc else {}
     today_str = datetime.date.today().isoformat()
     token = creds.get("token", "")
     token_date = creds.get("token_date", "")
     has_token_today = bool(token) and (token_date == today_str)
+
+    live_margin = None
+    live_holdings = None
+    live_positions = None
+    live_orders = None
+
+    if acc and acc.broker == "XTS" and has_token_today:
+        try:
+            from backend.order_manager.brokers.broker_adapters import create_broker_order_adapter
+            adapter = create_broker_order_adapter("XTS", acc.client_id, creds)
+            
+            # 1. Fetch live margins from broker
+            m_res = await adapter.get_margins()
+            if m_res.get("success"):
+                live_margin = {
+                    "available": m_res["margin_available"],
+                    "used": m_res["margin_used"],
+                    "total": m_res["total_balance"]
+                }
+                # Sync into database so dashboard cards also show real margin
+                acc.margin_available = m_res["margin_available"]
+                acc.margin_used = m_res["margin_used"]
+                acc.total_balance = m_res["total_balance"]
+                db.commit()
+
+            # 2. Fetch live equity holdings from broker
+            h_res = await adapter.get_holdings()
+            if isinstance(h_res, list):
+                live_holdings = h_res
+
+            # 3. Fetch live positions from broker
+            p_res = await adapter.get_positions()
+            if isinstance(p_res, list) and len(p_res) > 0:
+                live_positions = p_res
+
+            # 4. Fetch live orders from broker
+            o_res = await adapter.get_orders()
+            if isinstance(o_res, list) and len(o_res) > 0:
+                live_orders = o_res
+        except Exception as e:
+            print(f"[Drawer Details] Error querying live broker data for {client_id}: {e}")
+
+    # Margin response
+    margins_data = live_margin if live_margin else {
+        "available": acc.margin_available if acc else 0,
+        "used": acc.margin_used if acc else 0,
+        "total": acc.total_balance if acc else 0
+    }
+
+    # Holdings response
+    if live_holdings is not None:
+        holdings_data = live_holdings
+    else:
+        holdings_data = [
+            {
+                "symbol": p.symbol,
+                "qty": p.net_quantity,
+                "buy_price": p.buy_avg_price,
+                "ltp": p.ltp,
+                "pnl": round(p.unrealized_pnl + p.realized_pnl, 2)
+            } for p in positions if getattr(p, "product", "") == "CNC" and p.net_quantity > 0
+        ]
+
+    # Positions response
+    if live_positions:
+        positions_data = live_positions
+    else:
+        positions_data = [
+            {
+                "symbol": p.symbol,
+                "segment": p.segment,
+                "net_qty": p.net_quantity,
+                "buy_avg": p.buy_avg_price,
+                "sell_avg": p.sell_avg_price,
+                "ltp": p.ltp,
+                "pnl": round(p.unrealized_pnl + p.realized_pnl, 2)
+            } for p in positions
+        ]
+
+    # Orders response
+    if live_orders:
+        orders_data = live_orders
+    else:
+        orders_data = [
+            {
+                "order_id": o.order_id,
+                "broker_order_id": o.broker_order_id,
+                "symbol": o.symbol,
+                "side": o.side,
+                "quantity": o.quantity,
+                "price": o.price,
+                "status": o.status,
+                "created_at": o.created_at.strftime("%H:%M:%S")
+            } for o in orders
+        ]
 
     return {
         "client_id": client_id,
@@ -472,23 +580,8 @@ def get_account_drawer_details(client_id: str, db: Session = Depends(get_db)):
             "interactive_url": creds.get("interactive_url", "https://ttblaze.iifl.com/interactive"),
             "is_valid_today": has_token_today
         },
-        "margins": {
-            "available": acc.margin_available if acc else 0,
-            "used": acc.margin_used if acc else 0,
-            "total": acc.total_balance if acc else 0
-        },
-        "orders": [
-            {
-                "order_id": o.order_id,
-                "broker_order_id": o.broker_order_id,
-                "symbol": o.symbol,
-                "side": o.side,
-                "quantity": o.quantity,
-                "price": o.price,
-                "status": o.status,
-                "created_at": o.created_at.strftime("%H:%M:%S")
-            } for o in orders
-        ],
+        "margins": margins_data,
+        "orders": orders_data,
         "trades": [
             {
                 "trade_id": t.trade_id,
@@ -499,27 +592,14 @@ def get_account_drawer_details(client_id: str, db: Session = Depends(get_db)):
                 "timestamp": t.timestamp.strftime("%H:%M:%S")
             } for t in trades
         ],
-        "positions": [
-            {
-                "symbol": p.symbol,
-                "segment": p.segment,
-                "net_qty": p.net_quantity,
-                "buy_avg": p.buy_avg_price,
-                "sell_avg": p.sell_avg_price,
-                "ltp": p.ltp,
-                "pnl": round(p.unrealized_pnl + p.realized_pnl, 2)
-            } for p in positions
-        ],
-        "holdings": [
-            {
-                "symbol": p.symbol,
-                "qty": p.net_quantity,
-                "buy_price": p.buy_avg_price,
-                "ltp": p.ltp,
-                "pnl": round(p.unrealized_pnl + p.realized_pnl, 2)
-            } for p in positions if getattr(p, "product", "") == "CNC" and p.net_quantity > 0
-        ]
+        "positions": positions_data,
+        "holdings": holdings_data
     }
+
+@app.post("/api/accounts/{client_id}/sync")
+async def sync_account_with_broker(client_id: str, db: Session = Depends(get_db)):
+    """Explicitly triggers live sync of balance & holdings from broker API"""
+    return await get_account_drawer_details(client_id, db)
 
 
 
