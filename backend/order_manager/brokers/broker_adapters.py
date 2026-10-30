@@ -710,7 +710,16 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                     0.0
                 )
                 product = str(p.get("ProductType") or p.get("productType") or "MIS")
-                segment = str(p.get("ExchangeSegment") or p.get("exchangeSegment") or "NSE")
+                seg_raw = str(p.get("ExchangeSegment") or p.get("exchangeSegment") or "NSE").upper()
+                seg_map = {
+                    "1": "NSE", "NSECM": "NSE",
+                    "2": "NFO", "NSEFO": "NFO",
+                    "3": "NSECD",
+                    "11": "BSE", "BSECM": "BSE",
+                    "12": "BSEFO",
+                    "51": "MCX", "MCXFO": "MCX", "MCXCOM": "MCX"
+                }
+                segment = seg_map.get(seg_raw, seg_raw)
 
                 positions.append({
                     "symbol": sym,
