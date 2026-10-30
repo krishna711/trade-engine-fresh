@@ -623,6 +623,21 @@ class ClientCardsManager {
                             `}
                         </tbody>
                     </table>
+
+                    <!-- Live Debug Diagnostics Inspector -->
+                    <div style="margin-top: 1rem; border-top: 1px dashed var(--border-color); padding-top: 0.75rem;">
+                        <details style="font-size: 0.75rem; color: var(--text-muted);" ${(data.holdings && data.holdings.length) ? '' : 'open'}>
+                            <summary style="cursor: pointer; font-weight: 600; color: var(--accent-blue); padding: 4px 0; user-select: none;">
+                                🔍 Broker API Response Log & Diagnostics (${data.debug_info?.holdings?.attempts?.length || 0} endpoint calls attempted)
+                            </summary>
+                            <div style="margin-top: 6px; display: flex; flex-direction: column; gap: 6px;">
+                                <div style="font-size: 0.7rem; color: var(--text-muted);">
+                                    Target: <code style="color: var(--accent-cyan);">${data.credentials?.interactive_url || 'https://ttblaze.iifl.com/interactive'}</code> &bull; ClientID: <code>${data.client_id}</code> &bull; Token Active: <code>${data.credentials?.is_valid_today ? 'YES' : 'NO'}</code>
+                                </div>
+                                <pre style="background: var(--bg-secondary); padding: 0.75rem; border-radius: 6px; border: 1px solid var(--border-color); font-family: var(--font-mono); font-size: 0.72rem; overflow-x: auto; max-height: 250px; color: var(--text-primary); white-space: pre-wrap;">${JSON.stringify(data.debug_info?.holdings || 'No debug data captured yet. Click Sync Broker above.', null, 2)}</pre>
+                            </div>
+                        </details>
+                    </div>
                 `;
             } else if (this.activeDrawerTab === "margins") {
                 const isLive = data.credentials && data.credentials.is_valid_today;

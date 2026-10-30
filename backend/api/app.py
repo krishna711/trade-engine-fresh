@@ -568,6 +568,27 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
             } for o in orders
         ]
 
+    debug_info = {}
+    if acc and acc.broker == "XTS" and 'adapter' in locals():
+        debug_info = {
+            "holdings": getattr(adapter, "last_holdings_debug", {}),
+            "margins": getattr(adapter, "last_margins_debug", {})
+        }
+        try:
+            h_debug = debug_info.get("holdings", {})
+            att = h_debug.get("attempts", [])
+            last_att = att[-1] if att else {}
+            log_msg = f"XTS Holdings Query for {client_id}: Status={last_att.get('status_code', 'N/A')} Found={len(live_holdings or [])}"
+            db.add(SystemLog(
+                category="BROKER_API",
+                level="SUCCESS" if live_holdings else "INFO",
+                message=log_msg,
+                details=h_debug
+            ))
+            db.commit()
+        except Exception as log_err:
+            pass
+
     return {
         "client_id": client_id,
         "broker": acc.broker if acc else "XTS",
@@ -593,7 +614,8 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
             } for t in trades
         ],
         "positions": positions_data,
-        "holdings": holdings_data
+        "holdings": holdings_data,
+        "debug_info": debug_info
     }
 
 @app.post("/api/accounts/{client_id}/sync")

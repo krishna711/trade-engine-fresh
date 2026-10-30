@@ -78,6 +78,8 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
         self.token_date = creds.get("token_date", "")
         self.interactive_url = creds.get("interactive_url", "https://ttblaze.iifl.com/interactive").rstrip("/")
         self.user_id = creds.get("user_id", "") or client_id
+        self.last_holdings_debug = {}
+        self.last_margins_debug = {}
 
     def _get_url(self, path: str) -> str:
         clean_path = path.lstrip("/")
@@ -329,24 +331,42 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             candidate_params.append({})  # No clientID parameter
 
             success_data = None
-            last_response = None
+            attempts = []
             for url in candidate_urls:
                 for p in candidate_params:
+                    attempt_info = {"url": url, "params": p}
                     try:
                         resp = requests.get(url, params=p, headers=headers, timeout=8)
-                        if resp.status_code == 200:
-                            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-                            last_response = data
-                            if data.get("type") == "success" and "result" in data:
-                                success_data = data
-                                break
-                    except Exception:
+                        attempt_info["status_code"] = resp.status_code
+                        try:
+                            data = resp.json()
+                            attempt_info["response_json"] = data
+                        except Exception:
+                            attempt_info["response_text"] = resp.text[:1000]
+                            data = {}
+
+                        attempts.append(attempt_info)
+
+                        if resp.status_code == 200 and data.get("type") == "success" and "result" in data:
+                            success_data = data
+                            break
+                    except Exception as req_err:
+                        attempt_info["error"] = str(req_err)
+                        attempts.append(attempt_info)
                         continue
                 if success_data:
                     break
 
+            self.last_holdings_debug = {
+                "client_id": self.client_id,
+                "token_prefix": token[:15] + "..." if token else "",
+                "attempts": attempts,
+                "success": bool(success_data),
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
+
             if not success_data:
-                print(f"[XTS Order Broker] Holdings fetch did not receive successful result for {self.client_id}. Last resp: {last_response}")
+                print(f"[XTS Order Broker] Holdings fetch did not receive successful result for {self.client_id}. Attempts: {len(attempts)}", flush=True)
                 return []
 
             result = success_data.get("result", {})
