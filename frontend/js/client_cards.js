@@ -556,6 +556,30 @@ class ClientCardsManager {
                 `;
             } else if (this.activeDrawerTab === "holdings") {
                 const isLive = data.credentials && data.credentials.is_valid_today;
+                const totalInvested = (data.holdings || []).reduce((sum, h) => sum + (h.invested_value || (h.buy_price * h.qty) || 0), 0);
+                const totalCurrent = (data.holdings || []).reduce((sum, h) => sum + (h.market_value || (h.ltp * h.qty) || 0), 0);
+                const totalPnl = (data.holdings || []).reduce((sum, h) => sum + (h.pnl || 0), 0);
+                const isPos = totalPnl >= 0;
+                const pnlSign = isPos ? "+" : "";
+                const pnlCls = isPos ? "pnl-positive" : "pnl-negative";
+
+                const summaryHtml = (data.holdings && data.holdings.length) ? `
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.5rem; background: var(--bg-tertiary); padding: 0.65rem 0.85rem; border-radius: 6px; border: 1px solid var(--border-color); margin-bottom: 0.85rem;">
+                        <div>
+                            <span style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase;">Invested</span>
+                            <div style="font-family: var(--font-mono); font-weight: 700; font-size: 0.95rem; color: var(--text-primary);">₹${totalInvested.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase;">Current Value</span>
+                            <div style="font-family: var(--font-mono); font-weight: 700; font-size: 0.95rem; color: var(--text-primary);">₹${totalCurrent.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                        </div>
+                        <div>
+                            <span style="font-size: 0.68rem; color: var(--text-muted); text-transform: uppercase;">Net P&L</span>
+                            <div class="${pnlCls}" style="font-family: var(--font-mono); font-weight: 700; font-size: 0.95rem;">${pnlSign}₹${totalPnl.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                        </div>
+                    </div>
+                ` : '';
+
                 bodyEl.innerHTML = `
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; padding: 0 0.25rem;">
                         <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">PORTFOLIO HOLDINGS (${data.holdings.length})</span>
@@ -563,6 +587,7 @@ class ClientCardsManager {
                             ? `<span style="font-size: 0.7rem; padding: 2px 8px; border-radius: 12px; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700;">🟢 Live from ${data.broker}</span>`
                             : `<span style="font-size: 0.7rem; color: var(--accent-amber);">⚠️ Active token required to fetch live holdings</span>`}
                     </div>
+                    ${summaryHtml}
                     <table class="data-table">
                         <thead>
                             <tr><th>Instrument</th><th>Qty</th><th>Avg Price</th><th>LTP</th><th>PnL</th></tr>
@@ -574,7 +599,10 @@ class ClientCardsManager {
                                 const cls = isPos ? "pnl-positive" : "pnl-negative";
                                 return `
                                     <tr>
-                                        <td><strong>${h.symbol}</strong></td>
+                                        <td>
+                                            <strong>${h.symbol}</strong>
+                                            ${h.product ? `<span style="font-size: 0.65rem; opacity: 0.7; margin-left: 4px; padding: 1px 4px; background: var(--bg-secondary); border-radius: 3px;">${h.product}</span>` : ''}
+                                        </td>
                                         <td style="font-family: var(--font-mono);">${h.qty}</td>
                                         <td style="font-family: var(--font-mono);">₹${Number(h.buy_price || 0).toFixed(2)}</td>
                                         <td style="font-family: var(--font-mono);">₹${Number(h.ltp || 0).toFixed(2)}</td>
@@ -583,7 +611,16 @@ class ClientCardsManager {
                                         </td>
                                     </tr>
                                 `;
-                            }).join("") : '<tr><td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2.5rem 1rem;">No equity holdings found in this account.</td></tr>'}
+                            }).join("") : `
+                                <tr>
+                                    <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 2.5rem 1rem;">
+                                        <div>No equity holdings returned by broker.</div>
+                                        <button class="action-btn-sm" onclick="clientCardsManager.syncBrokerDataNow('${data.client_id}')" style="margin-top: 0.75rem; background: var(--bg-tertiary); color: var(--accent-blue); border: 1px solid var(--accent-blue); padding: 0.4rem 0.8rem; cursor: pointer; border-radius: 4px;">
+                                            🔄 Retry Sync with Broker
+                                        </button>
+                                    </td>
+                                </tr>
+                            `}
                         </tbody>
                     </table>
                 `;

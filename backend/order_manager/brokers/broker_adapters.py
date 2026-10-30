@@ -77,6 +77,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
         self.token = creds.get("token", "")
         self.token_date = creds.get("token_date", "")
         self.interactive_url = creds.get("interactive_url", "https://ttblaze.iifl.com/interactive").rstrip("/")
+        self.user_id = creds.get("user_id", "") or client_id
 
     def _get_url(self, path: str) -> str:
         clean_path = path.lstrip("/")
@@ -300,8 +301,10 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
 
     async def get_holdings(self) -> List[Dict[str, Any]]:
         """
-        Fetches live equity holdings from XTS Interactive API:
-        GET /interactive/portfolio/holdings
+        Fetches live equity holdings from XTS Interactive API (v2):
+        Official doc: https://symphonyfintech.com/xts-trading-front-end-api-v2/#portfolio-holding
+        Endpoint: GET /interactive/portfolio/holdings or /interactive/portfolio/holding
+        Response payload wraps data in result.RMSHoldingList with Holdings ISIN maps.
         """
         token = self.get_valid_token()
         if not token:
@@ -309,86 +312,192 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
 
         try:
             import requests
-            url = self._get_url("portfolio/holdings")
             headers = {"Authorization": token, "Content-Type": "application/json"}
 
-            resp = None
+            # Candidate endpoints (XTS v2 uses portfolio/holdings or portfolio/holding)
+            candidate_urls = [
+                self._get_url("portfolio/holdings"),
+                self._get_url("portfolio/holding")
+            ]
+
+            # Candidate query parameters
+            candidate_params = []
             if self.client_id:
-                try:
-                    resp = requests.get(url, params={"clientID": self.client_id}, headers=headers, timeout=8)
-                except Exception:
-                    resp = None
+                candidate_params.append({"clientID": self.client_id})
+            if hasattr(self, "user_id") and self.user_id and self.user_id != self.client_id:
+                candidate_params.append({"clientID": self.user_id})
+            candidate_params.append({})  # No clientID parameter
 
-            if resp is None or resp.status_code != 200:
-                resp = requests.get(url, params={}, headers=headers, timeout=8)
+            success_data = None
+            last_response = None
+            for url in candidate_urls:
+                for p in candidate_params:
+                    try:
+                        resp = requests.get(url, params=p, headers=headers, timeout=8)
+                        if resp.status_code == 200:
+                            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                            last_response = data
+                            if data.get("type") == "success" and "result" in data:
+                                success_data = data
+                                break
+                    except Exception:
+                        continue
+                if success_data:
+                    break
 
-            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            if resp.status_code == 200 and data.get("type") == "success":
-                result = data.get("result", {})
-                holdings_raw = []
-                if isinstance(result, list):
-                    holdings_raw = result
-                elif isinstance(result, dict):
-                    holdings_raw = result.get("holdingsList") or result.get("holdings") or result.get("HoldingList") or []
-                    if not holdings_raw and "result" in result and isinstance(result["result"], list):
-                        holdings_raw = result["result"]
-
-                holdings = []
-                for h in holdings_raw:
-                    sym = (
-                        h.get("tradingSymbol") or 
-                        h.get("instrumentName") or 
-                        h.get("symbol") or 
-                        h.get("TradingSymbol") or 
-                        h.get("InstrumentName") or 
-                        "UNKNOWN"
-                    )
-                    qty = int(
-                        h.get("totalQuantity") or 
-                        h.get("holdingQuantity") or 
-                        h.get("quantity") or 
-                        h.get("currentQuantity") or 
-                        h.get("HoldingsQuantity") or 
-                        0
-                    )
-                    avg_price = float(
-                        h.get("averagePrice") or 
-                        h.get("buyAveragePrice") or 
-                        h.get("buyPrice") or 
-                        h.get("AvgPrice") or 
-                        0.0
-                    )
-                    ltp = float(
-                        h.get("closePrice") or 
-                        h.get("lastTradedPrice") or 
-                        h.get("LTP") or 
-                        h.get("ltp") or 
-                        avg_price
-                    )
-
-                    if h.get("pnl") is not None:
-                        pnl = float(h.get("pnl"))
-                    elif h.get("unrealizedPnl") is not None:
-                        pnl = float(h.get("unrealizedPnl"))
-                    elif h.get("totalPnl") is not None:
-                        pnl = float(h.get("totalPnl"))
-                    else:
-                        pnl = round((ltp - avg_price) * qty, 2)
-
-                    holdings.append({
-                        "symbol": sym,
-                        "qty": qty,
-                        "buy_price": round(avg_price, 2),
-                        "ltp": round(ltp, 2),
-                        "pnl": round(pnl, 2),
-                        "product": h.get("productType") or h.get("ProductType") or "CNC"
-                    })
-                return holdings
-            else:
-                print(f"[XTS Order Broker] Holdings fetch response: {data}")
+            if not success_data:
+                print(f"[XTS Order Broker] Holdings fetch did not receive successful result for {self.client_id}. Last resp: {last_response}")
                 return []
+
+            result = success_data.get("result", {})
+            holdings_raw = []
+
+            # 1. Official XTS v2 Structure: result.RMSHoldingList -> list of {"Holdings": {ISIN: {...}}}
+            if "RMSHoldingList" in result or "rmsHoldingList" in result:
+                rms_list = result.get("RMSHoldingList") or result.get("rmsHoldingList") or []
+                for item in rms_list:
+                    if isinstance(item, dict):
+                        if "Holdings" in item and isinstance(item["Holdings"], dict):
+                            for k, v in item["Holdings"].items():
+                                if isinstance(v, dict):
+                                    if not v.get("ISIN") and k:
+                                        v["ISIN"] = k
+                                    holdings_raw.append(v)
+                        elif "holdings" in item and isinstance(item["holdings"], dict):
+                            for k, v in item["holdings"].items():
+                                if isinstance(v, dict):
+                                    if not v.get("ISIN") and k:
+                                        v["ISIN"] = k
+                                    holdings_raw.append(v)
+                        else:
+                            holdings_raw.append(item)
+
+            # 2. Alternative XTS structures: holdingsList or holdings or HoldingList
+            elif "holdingsList" in result or "holdings" in result or "HoldingList" in result:
+                hl = result.get("holdingsList") or result.get("holdings") or result.get("HoldingList") or []
+                if isinstance(hl, list):
+                    for item in hl:
+                        if isinstance(item, dict) and "Holdings" in item and isinstance(item["Holdings"], dict):
+                            for k, v in item["Holdings"].items():
+                                if isinstance(v, dict):
+                                    holdings_raw.append(v)
+                        else:
+                            holdings_raw.append(item)
+                elif isinstance(hl, dict):
+                    for k, v in hl.items():
+                        if isinstance(v, dict):
+                            holdings_raw.append(v)
+
+            # 3. Direct list in result
+            elif isinstance(result, list):
+                for item in result:
+                    if isinstance(item, dict) and "Holdings" in item and isinstance(item["Holdings"], dict):
+                        for k, v in item["Holdings"].items():
+                            if isinstance(v, dict):
+                                holdings_raw.append(v)
+                    else:
+                        holdings_raw.append(item)
+
+            # 4. Direct dictionary keyed by ISIN
+            elif isinstance(result, dict):
+                for k, v in result.items():
+                    if isinstance(v, dict) and any(f in v for f in ["HoldingQuantity", "holdingQuantity", "ISIN", "TradingSymbol"]):
+                        holdings_raw.append(v)
+
+            holdings = []
+            for h in holdings_raw:
+                if not isinstance(h, dict):
+                    continue
+
+                isin = str(h.get("ISIN") or h.get("isin") or "").strip()
+                trading_sym = str(h.get("TradingSymbol") or h.get("tradingSymbol") or h.get("CompanyName") or h.get("companyName") or h.get("InstrumentName") or "").strip()
+
+                if trading_sym and isin and isin not in trading_sym:
+                    sym = f"{trading_sym} {isin}"
+                elif trading_sym:
+                    sym = trading_sym
+                elif isin:
+                    sym = isin
+                else:
+                    sym = str(h.get("symbol") or "UNKNOWN")
+
+                qty = int(
+                    h.get("TotalHoldingQuantity") or 
+                    h.get("HoldingQuantity") or 
+                    h.get("holdingQuantity") or 
+                    h.get("totalQuantity") or 
+                    h.get("quantity") or 
+                    h.get("Quantity") or 
+                    h.get("HoldingsQuantity") or 
+                    h.get("currentQuantity") or 
+                    0
+                )
+
+                avg_price = float(
+                    h.get("BuyAveragePrice") or 
+                    h.get("BuyAvgPrice") or 
+                    h.get("buyAveragePrice") or 
+                    h.get("buyAvgPrice") or 
+                    h.get("averagePrice") or 
+                    h.get("buyPrice") or 
+                    h.get("AvgPrice") or 
+                    0.0
+                )
+
+                inv_val = float(h.get("InvestedValue") or h.get("investedValue") or (avg_price * qty))
+                mkt_val = float(h.get("MarketValue") or h.get("marketValue") or 0.0)
+
+                if avg_price <= 0 and inv_val > 0 and qty > 0:
+                    avg_price = round(inv_val / qty, 2)
+
+                ltp = float(
+                    h.get("LTP") or 
+                    h.get("ltp") or 
+                    h.get("LastTradedPrice") or 
+                    h.get("lastTradedPrice") or 
+                    h.get("ClosePrice") or 
+                    h.get("closePrice") or 
+                    0.0
+                )
+
+                if ltp <= 0 and mkt_val > 0 and qty > 0:
+                    ltp = round(mkt_val / qty, 2)
+                if ltp <= 0:
+                    ltp = avg_price
+
+                if mkt_val <= 0 and ltp > 0 and qty > 0:
+                    mkt_val = round(ltp * qty, 2)
+
+                if h.get("NetPnL") is not None:
+                    pnl = float(h.get("NetPnL"))
+                elif h.get("netPnL") is not None:
+                    pnl = float(h.get("netPnL"))
+                elif h.get("pnl") is not None:
+                    pnl = float(h.get("pnl"))
+                elif h.get("DayPnL") is not None:
+                    pnl = float(h.get("DayPnL"))
+                elif inv_val > 0 and mkt_val > 0:
+                    pnl = round(mkt_val - inv_val, 2)
+                else:
+                    pnl = round((ltp - avg_price) * qty, 2)
+
+                holdings.append({
+                    "symbol": sym,
+                    "isin": isin,
+                    "qty": qty,
+                    "buy_price": round(avg_price, 2),
+                    "ltp": round(ltp, 2),
+                    "invested_value": round(inv_val, 2),
+                    "market_value": round(mkt_val, 2),
+                    "pnl": round(pnl, 2),
+                    "product": h.get("productType") or h.get("ProductType") or "CNC"
+                })
+
+            print(f"[XTS Order Broker] Successfully parsed {len(holdings)} holdings for {self.client_id}")
+            return holdings
+
         except Exception as e:
-            print(f"[XTS Order Broker] Holdings network error: {e}")
+            print(f"[XTS Order Broker] Holdings network exception: {e}")
             return []
 
     async def get_positions(self) -> List[Dict[str, Any]]:
