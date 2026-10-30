@@ -418,6 +418,50 @@ class XTSFeedBroker(BaseFeedBroker):
         except Exception as e:
             print(f"[XTS] Initial snapshot quotes fetch error: {e}")
 
+    async def fetch_single_quote(self, canonical_symbol: str, inst_token: int, segment: str = "MCXFO") -> Optional[Dict[str, Any]]:
+        """Fetches on-demand real-time quote snapshot {ltp, bid, ask, close} for an instrument"""
+        if not self.token:
+            return None
+        try:
+            import requests
+            quotes_url = f"{self.api_url}/instruments/quotes"
+            seg_upper = segment.upper()
+            seg_code = 51 if "MCX" in seg_upper else (2 if "NFO" in seg_upper else (12 if "BSEFO" in seg_upper else 1))
+
+            payload = {
+                "instruments": [{"exchangeSegment": seg_code, "exchangeInstrumentID": int(inst_token)}],
+                "xtsMessageCode": 1502,
+                "publishFormat": "JSON"
+            }
+            headers = {"authorization": self.token, "Content-Type": "application/json"}
+            resp = requests.post(quotes_url, json=payload, headers=headers, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                quotes = data.get("result", {}).get("listQuotes", [])
+                if quotes:
+                    q_obj = json.loads(quotes[0]) if isinstance(quotes[0], str) else quotes[0]
+                    touch = q_obj.get("Touchline", {})
+                    ltp = float(touch.get("LastTradedPrice") or 0.0)
+                    bids = touch.get("BidInfo", {})
+                    asks = touch.get("AskInfo", {})
+                    bid = float(bids.get("Price") or 0.0) if isinstance(bids, dict) else 0.0
+                    ask = float(asks.get("Price") or 0.0) if isinstance(asks, dict) else 0.0
+                    close = float(touch.get("Close") or 0.0)
+
+                    quote_dict = {
+                        "symbol": canonical_symbol,
+                        "ltp": ltp if ltp > 0 else (bid or ask or close),
+                        "bid": bid if bid > 0 else (ltp or close),
+                        "ask": ask if ask > 0 else (ltp or close),
+                        "close": close
+                    }
+                    if quote_dict["ltp"] > 0:
+                        self._current_prices[canonical_symbol] = quote_dict["ltp"]
+                    return quote_dict
+        except Exception as e:
+            print(f"[XTS] Error fetching single quote for {canonical_symbol}: {e}")
+        return None
+
     def _dispatch_xts_subscriptions_sync(self, symbols: List[str]):
         """
         Dispatches instrument subscriptions to XTS API.

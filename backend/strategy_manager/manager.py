@@ -293,12 +293,14 @@ class StrategySupervisor:
                                 symbol=ord_data["symbol"],
                                 side=ord_data["side"],
                                 quantity=ord_data["quantity"],
-                                order_type=ord_data.get("order_type", "MARKET"),
+                                order_type=ord_data.get("order_type", "LIMIT"),
                                 price=ord_data.get("price", 0.0),
                                 trigger_price=ord_data.get("trigger_price", 0.0),
                                 product=ord_data.get("product", "MIS"),
                                 strategy_instance_id=inst_id,
-                                leg_id=ord_data.get("leg_id")
+                                leg_id=ord_data.get("leg_id"),
+                                buffer_pct=float(ord_data.get("buffer_pct", 0.015)),
+                                auto_chase=bool(ord_data.get("auto_chase", True))
                             )
                             # Feed execution report back into child worker process container
                             worker["in_queue"].put({

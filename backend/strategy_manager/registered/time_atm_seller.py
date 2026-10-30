@@ -206,23 +206,28 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         )
 
         legs_data = []
+        buffer_pct = float(self.config.get("limit_buffer_pct", 0.015))
+        auto_chase = bool(self.config.get("auto_chase", True))
+
         for leg, opt_sym in option_symbols.items():
-            # Emit SELL order for this ATM leg
+            # Emit SELL order for this ATM leg (Marketable LIMIT with buffer)
             self.emit_order(
                 symbol=opt_sym,
                 side="SELL",
                 quantity=total_qty,
-                order_type="MARKET",
+                order_type="LIMIT",
                 product=self.product,
-                leg_id=f"LEG_{leg}"
+                leg_id=f"LEG_{leg}",
+                buffer_pct=buffer_pct,
+                auto_chase=auto_chase
             )
             self.log_decision(
                 "ORDER SENT TO BROKER",
-                f"Dispatched SELL {opt_sym} (Qty: {total_qty}) to Order Manager for parallel routing"
+                f"Dispatched SELL {opt_sym} (Qty: {total_qty}) [Marketable LIMIT + buffer] to Order Manager"
             )
 
             # Estimated initial LTP for tracking until first fill/tick
-            est_ltp = round(underlying_ltp * 0.02, 1) or 120.0
+            est_ltp = round(underlying_ltp * 0.05, 1) or 500.0
             legs_data.append({
                 "leg": f"{self.symbol.split(':')[-1]} {atm_strike} {leg}",
                 "symbol": opt_sym,
@@ -331,6 +336,9 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         if not self.current_trade:
             return
         self.trade_state = "EXITING"
+        buffer_pct = float(self.config.get("limit_buffer_pct", 0.015))
+        auto_chase = bool(self.config.get("auto_chase", True))
+
         for leg in self.current_trade.get("legs", []):
             qty_to_buy = abs(leg.get("qty", 0))
             if qty_to_buy > 0 and leg.get("status") not in ["CLOSED", "EXIT_SENT"]:
@@ -338,13 +346,15 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
                     symbol=leg["symbol"],
                     side="BUY",
                     quantity=qty_to_buy,
-                    order_type="MARKET",
+                    order_type="LIMIT",
                     product=self.product,
-                    leg_id=f"EXIT_{leg.get('leg')}"
+                    leg_id=f"EXIT_{leg.get('leg')}",
+                    buffer_pct=buffer_pct,
+                    auto_chase=auto_chase
                 )
                 leg["status"] = "EXIT_SENT"
                 self.log_decision(
                     "ORDER SENT TO BROKER",
-                    f"Dispatched BUY {leg['symbol']} ({qty_to_buy} qty) for {reason} square-off.",
+                    f"Dispatched BUY {leg['symbol']} ({qty_to_buy} qty) [Marketable LIMIT + buffer] for {reason} square-off.",
                     level="SUCCESS"
                 )

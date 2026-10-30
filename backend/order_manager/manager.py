@@ -42,12 +42,14 @@ class OrderManager:
         symbol: str,
         side: str,
         quantity: int,
-        order_type: str = "MARKET",
+        order_type: str = "LIMIT",
         price: float = 0.0,
         trigger_price: float = 0.0,
         product: str = "MIS",
         strategy_instance_id: Optional[int] = None,
-        leg_id: Optional[str] = None
+        leg_id: Optional[str] = None,
+        buffer_pct: float = 0.015,
+        auto_chase: bool = True
     ) -> Dict[str, Any]:
         """
         Executes single client order with universal symbol mapping and reconciliation.
@@ -96,6 +98,8 @@ class OrderManager:
                 "trigger_price": trigger_price,
                 "product": product,
                 "is_paper": bool(account.paper_mode),
+                "buffer_pct": float(buffer_pct),
+                "auto_chase": bool(auto_chase),
                 "ltp": price or (mapping.tick_size if mapping else 100.0)
             }
 
@@ -135,12 +139,14 @@ class OrderManager:
         symbol: str,
         side: str,
         quantity: int,
-        order_type: str = "MARKET",
+        order_type: str = "LIMIT",
         price: float = 0.0,
         trigger_price: float = 0.0,
         product: str = "MIS",
         strategy_instance_id: Optional[int] = None,
-        leg_id: Optional[str] = None
+        leg_id: Optional[str] = None,
+        buffer_pct: float = 0.015,
+        auto_chase: bool = True
     ) -> List[Dict[str, Any]]:
         """
         One strategy maps to multiple broker/clients and fires orders in parallel.
@@ -157,7 +163,9 @@ class OrderManager:
                 trigger_price=trigger_price,
                 product=product,
                 strategy_instance_id=strategy_instance_id,
-                leg_id=leg_id
+                leg_id=leg_id,
+                buffer_pct=buffer_pct,
+                auto_chase=auto_chase
             )
             for cid in client_ids
         ]

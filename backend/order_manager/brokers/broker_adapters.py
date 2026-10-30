@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import random
 import uuid
@@ -144,6 +145,72 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 "timestamp": datetime.datetime.utcnow().isoformat()
             }
 
+    async def get_market_quote(self, canonical_symbol: str, broker_token: str, segment: str = "MCXFO") -> Dict[str, Any]:
+        """Fetches the live quote (ltp, bid, ask) from FeedManager or directly via XTS Quotes API"""
+        try:
+            from backend.feed_manager.manager import feed_manager
+            quote = await feed_manager.get_live_quote(canonical_symbol)
+            if quote and float(quote.get("ltp") or 0.0) > 0:
+                return quote
+        except Exception:
+            pass
+
+        # Direct HTTP fallback to XTS Quotes endpoint
+        try:
+            import requests
+            import json
+            url = "https://ttblaze.iifl.com/apibinarymarketdata/instruments/quotes"
+            seg_code = 51 if "MCX" in segment.upper() else (2 if "NFO" in segment.upper() else 1)
+            token = self.get_valid_token()
+            if token and str(broker_token).isdigit():
+                payload = {
+                    "instruments": [{"exchangeSegment": seg_code, "exchangeInstrumentID": int(broker_token)}],
+                    "xtsMessageCode": 1502,
+                    "publishFormat": "JSON"
+                }
+                resp = requests.post(url, json=payload, headers={"authorization": token, "Content-Type": "application/json"}, timeout=4)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    quotes = data.get("result", {}).get("listQuotes", [])
+                    if quotes:
+                        q_obj = json.loads(quotes[0]) if isinstance(quotes[0], str) else quotes[0]
+                        touch = q_obj.get("Touchline", {})
+                        ltp = float(touch.get("LastTradedPrice") or 0.0)
+                        bids = touch.get("BidInfo", {})
+                        asks = touch.get("AskInfo", {})
+                        bid = float(bids.get("Price") or 0.0) if isinstance(bids, dict) else 0.0
+                        ask = float(asks.get("Price") or 0.0) if isinstance(asks, dict) else 0.0
+                        close = float(touch.get("Close") or 0.0)
+                        return {
+                            "symbol": canonical_symbol,
+                            "ltp": ltp or (bid or ask or close),
+                            "bid": bid or ltp or close,
+                            "ask": ask or ltp or close,
+                            "close": close
+                        }
+        except Exception:
+            pass
+
+        return {"symbol": canonical_symbol, "ltp": 100.0, "bid": 99.5, "ask": 100.5, "close": 100.0}
+
+    async def place_order(self, order_dict: Dict[str, Any]) -> Dict[str, Any]:
+        is_paper = order_dict.get("is_paper", True)
+        if is_paper:
+            return await super().place_order(order_dict)
+
+        # Real Live Broker Execution
+        token = self.get_valid_token()
+        if not token:
+            return {
+                "success": False,
+                "broker_order_id": None,
+                "status": "REJECTED",
+                "filled_quantity": 0,
+                "average_price": 0.0,
+                "rejection_reason": f"XTS Today Session Token missing or expired for account {self.client_id}. Please generate today's token in Client Accounts.",
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            }
+
         # Live XTS Order Placement
         try:
             import requests
@@ -167,21 +234,53 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
 
             order_unique_id = str(order_dict.get("order_id", f"ORD_{random.randint(1000, 9999)}"))[-20:]
 
+            # Determine order type and marketable limit price
+            req_order_type = str(order_dict.get("order_type") or "LIMIT").upper()
+            req_price = float(order_dict.get("price") or 0.0)
+            side = order_dict["side"].upper()
+
+            # Mapping & tick size
+            mapping = symbol_mapper.get_mapping(canonical_symbol)
+            tick_size = float(mapping.tick_size if mapping else 0.05) or 0.05
+            buffer_pct = float(order_dict.get("buffer_pct") or 0.015)  # Default 1.5% buffer
+
+            # Fetch live quote in advance
+            quote = await self.get_market_quote(canonical_symbol, str(broker_token), exchange_seg)
+            ltp = float(quote.get("ltp") or order_dict.get("ltp") or 100.0)
+            bid = float(quote.get("bid") or ltp)
+            ask = float(quote.get("ask") or ltp)
+
+            # XTS ALGO accounts strictly prohibit MARKET orders or Price 0!
+            # Automatically convert to Marketable Limit with buffer relative to current bid/ask/LTP
+            if req_order_type == "MARKET" or req_price <= 0:
+                req_order_type = "LIMIT"
+                if side == "SELL":
+                    # Sell marketable limit: price below best bid / LTP to match immediately
+                    ref_p = bid if bid > 0 else ltp
+                    calc_p = max(ref_p * (1.0 - buffer_pct), tick_size)
+                else:
+                    # Buy marketable limit: price above best ask / LTP to match immediately
+                    ref_p = ask if ask > 0 else ltp
+                    calc_p = ref_p * (1.0 + buffer_pct)
+
+                req_price = round(round(calc_p / tick_size) * tick_size, 2)
+                print(f"[XTS Order] Marketable Limit Applied: {canonical_symbol} {side} | Ref LTP: {ltp} (Bid: {bid}, Ask: {ask}) | Buffer: {buffer_pct*100:.1f}% -> LimitPrice: {req_price}")
+
             payload = {
                 "exchangeSegment": exchange_seg,
                 "exchangeInstrumentID": int(broker_token) if str(broker_token).isdigit() else 26000,
                 "productType": order_dict.get("product", "MIS"),
-                "orderType": order_dict.get("order_type", "MARKET"),
-                "orderSide": order_dict["side"].upper(),
+                "orderType": req_order_type,
+                "orderSide": side,
                 "timeInForce": "DAY",
                 "disclosedQuantity": 0,
                 "orderQuantity": int(order_dict["quantity"]),
-                "limitPrice": float(order_dict.get("price", 0.0)),
+                "limitPrice": float(req_price),
                 "stopPrice": float(order_dict.get("trigger_price", 0.0)),
                 "orderUniqueIdentifier": order_unique_id
             }
 
-            print(f"[XTS Order] Dispatching live order for {self.client_id} to {order_url} | Symbol: {canonical_symbol} ({broker_symbol}, Token: {broker_token}) | Segment: {exchange_seg} | Side: {order_dict['side']} | Qty: {order_dict['quantity']}")
+            print(f"[XTS Order] Dispatching live order for {self.client_id} to {order_url} | Symbol: {canonical_symbol} ({broker_symbol}, Token: {broker_token}) | Segment: {exchange_seg} | Side: {side} | Qty: {order_dict['quantity']} | Type: {req_order_type} @ {req_price}")
 
             resp = requests.post(
                 order_url,
@@ -195,14 +294,61 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             if resp.status_code == 200 and data.get("type") == "success":
                 result = data.get("result", {})
                 b_id = str(result.get("AppOrderID") or result.get("orderID") or f"XTS_{random.randint(100000, 999999)}")
-                fill_price = float(order_dict.get("price") or order_dict.get("ltp") or 100.0)
+                final_status = "FILLED"
+                filled_qty = int(order_dict["quantity"])
+                fill_price = float(req_price or ltp)
+
+                # If auto-chase enabled, verify execution or modify order if market jumped
+                auto_chase = bool(order_dict.get("auto_chase", True))
+                if auto_chase and b_id:
+                    await asyncio.sleep(1.0)
+                    status_info = await self.get_order_status(b_id)
+                    order_st = status_info.get("status")
+                    if order_st == "FILLED":
+                        final_status = "FILLED"
+                        fill_price = float(status_info.get("average_price") or req_price)
+                    elif order_st in ["OPEN", "PENDING"]:
+                        # Order sitting in book - price moved! Modify order with fresh quote
+                        print(f"[XTS Order] Order {b_id} sitting as {order_st}. Chasing market price...")
+                        fresh_q = await self.get_market_quote(canonical_symbol, str(broker_token), exchange_seg)
+                        fresh_ltp = float(fresh_q.get("ltp") or ltp)
+                        fresh_bid = float(fresh_q.get("bid") or fresh_ltp)
+                        fresh_ask = float(fresh_q.get("ask") or fresh_ltp)
+
+                        chase_buffer = buffer_pct * 1.5
+                        if side == "SELL":
+                            new_calc = max((fresh_bid if fresh_bid > 0 else fresh_ltp) * (1.0 - chase_buffer), tick_size)
+                        else:
+                            new_calc = (fresh_ask if fresh_ask > 0 else fresh_ltp) * (1.0 + chase_buffer)
+                        new_price = round(round(new_calc / tick_size) * tick_size, 2)
+
+                        rem_qty = status_info.get("remaining_quantity") or order_dict["quantity"]
+                        mod_res = await self.modify_order(
+                            broker_order_id=b_id,
+                            quantity=rem_qty,
+                            price=new_price,
+                            order_unique_id=order_unique_id
+                        )
+                        if mod_res.get("success"):
+                            print(f"[XTS Order] Modified order {b_id} to new price {new_price} successfully.")
+                            await asyncio.sleep(1.0)
+                            post_mod_st = await self.get_order_status(b_id)
+                            if post_mod_st.get("status") == "FILLED":
+                                final_status = "FILLED"
+                                fill_price = float(post_mod_st.get("average_price") or new_price)
+                            else:
+                                final_status = post_mod_st.get("status", "OPEN")
+                                fill_price = new_price
+                        else:
+                            print(f"[XTS Order] Order modification attempt error: {mod_res.get('error')}")
+
                 return {
                     "success": True,
                     "broker_order_id": b_id,
                     "broker_symbol": broker_symbol,
                     "broker_token": broker_token,
-                    "status": "FILLED",
-                    "filled_quantity": order_dict["quantity"],
+                    "status": final_status,
+                    "filled_quantity": filled_qty,
                     "average_price": round(fill_price, 2),
                     "rejection_reason": None,
                     "timestamp": datetime.datetime.utcnow().isoformat()
@@ -228,6 +374,88 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 "rejection_reason": f"XTS Network Exception: {str(e)}",
                 "timestamp": datetime.datetime.utcnow().isoformat()
             }
+
+    async def modify_order(
+        self,
+        broker_order_id: str,
+        quantity: int,
+        price: float,
+        order_unique_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Modifies price / quantity of an open order on XTS: PUT /interactive/orders"""
+        token = self.get_valid_token()
+        if not token:
+            return {"success": False, "error": "XTS Session Token missing or expired"}
+
+        try:
+            import requests
+            url = self._get_url("orders")
+            order_uid = (order_unique_id or f"ORD_{broker_order_id}")[-20:]
+            payload = {
+                "appOrderID": int(broker_order_id) if str(broker_order_id).isdigit() else broker_order_id,
+                "modifiedProductType": "MIS",
+                "modifiedOrderType": "LIMIT",
+                "modifiedOrderQuantity": int(quantity),
+                "modifiedDisclosedQuantity": 0,
+                "modifiedLimitPrice": float(price),
+                "modifiedStopPrice": 0,
+                "modifiedTimeInForce": "DAY",
+                "orderUniqueIdentifier": order_uid
+            }
+            resp = requests.put(
+                url,
+                json=payload,
+                headers={"Authorization": token, "Content-Type": "application/json"},
+                timeout=10
+            )
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            if resp.status_code == 200 and data.get("type") == "success":
+                return {"success": True, "result": data.get("result", {})}
+            return {"success": False, "error": data.get("description") or resp.text}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def get_order_status(self, broker_order_id: str) -> Dict[str, Any]:
+        """Queries single order status from XTS: GET /interactive/orders"""
+        token = self.get_valid_token()
+        if not token:
+            return {"status": "UNKNOWN", "error": "Token missing"}
+
+        try:
+            import requests
+            url = self._get_url("orders")
+            resp = requests.get(
+                url,
+                params={"appOrderID": broker_order_id, "clientID": self.client_id},
+                headers={"Authorization": token, "Content-Type": "application/json"},
+                timeout=8
+            )
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            result = data.get("result", [])
+            order_info = result[0] if isinstance(result, list) and result else (result if isinstance(result, dict) else {})
+            status_raw = str(order_info.get("OrderStatus") or order_info.get("orderStatus") or "").upper()
+
+            mapped_status = "PENDING"
+            if "FILLED" in status_raw or "COMPLETE" in status_raw:
+                mapped_status = "FILLED"
+            elif "REJECT" in status_raw:
+                mapped_status = "REJECTED"
+            elif "CANCEL" in status_raw:
+                mapped_status = "CANCELLED"
+            elif "OPEN" in status_raw or "NEW" in status_raw:
+                mapped_status = "OPEN"
+
+            return {
+                "broker_order_id": str(broker_order_id),
+                "status": mapped_status,
+                "status_raw": status_raw,
+                "filled_quantity": int(order_info.get("CumulativeQuantity") or order_info.get("OrderQuantity") or 0),
+                "remaining_quantity": int(order_info.get("LeavesQuantity") or 0),
+                "average_price": float(order_info.get("OrderAverageTradedPrice") or order_info.get("OrderPrice") or 0.0),
+                "rejection_reason": order_info.get("CancelRejectReason")
+            }
+        except Exception as e:
+            return {"status": "UNKNOWN", "error": str(e)}
 
     async def get_margins(self) -> Dict[str, Any]:
         """

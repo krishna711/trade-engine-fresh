@@ -81,7 +81,10 @@ def seed_initial_data():
                         "lot_size": 10,
                         "stop_loss_per_lot": 750.0,
                         "allow_entry_in_window": True,
-                        "product": "MIS"
+                        "product": "MIS",
+                        "order_type": "LIMIT",
+                        "limit_buffer_pct": 0.015,
+                        "auto_chase": True
                     },
                     python_module="backend.strategy_manager.registered.time_atm_seller"
                 ),

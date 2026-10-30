@@ -47,11 +47,13 @@ class BaseStrategy(ABC):
         symbol: str,
         side: str,
         quantity: int,
-        order_type: str = "MARKET",
+        order_type: str = "LIMIT",
         price: float = 0.0,
         trigger_price: float = 0.0,
         product: str = "MIS",
-        leg_id: Optional[str] = None
+        leg_id: Optional[str] = None,
+        buffer_pct: float = 0.015,
+        auto_chase: bool = True
     ) -> Dict[str, Any]:
         """Dispatches an order request to the supervisor's out_queue for parallel routing"""
         order_req = {
@@ -62,7 +64,9 @@ class BaseStrategy(ABC):
             "price": price,
             "trigger_price": trigger_price,
             "product": product.upper(),
-            "leg_id": leg_id
+            "leg_id": leg_id,
+            "buffer_pct": buffer_pct,
+            "auto_chase": auto_chase
         }
         self.pending_orders.append(order_req)
         return order_req
