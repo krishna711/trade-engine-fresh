@@ -23,7 +23,14 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         self.legs = self.config.get("legs", ["CE", "PE"])
         self.lots = int(self.config.get("lots", 1))
         self.stop_loss_per_lot = float(self.config.get("stop_loss_per_lot", 750.0))
-        self.product = self.config.get("product", "MIS")
+        
+        # Product type: MCX Options / Futures require NRML in Indian brokers due to RMS intraday blocking
+        is_mcx = "MCX" in self.symbol.upper()
+        default_prod = "NRML" if is_mcx else "MIS"
+        self.product = str(self.config.get("product", default_prod)).upper()
+        if is_mcx and self.product == "MIS":
+            print(f"[TimeATM] MCX detected for {self.symbol}. Auto-switching product MIS -> NRML to satisfy broker RMS rule.")
+            self.product = "NRML"
         
         # Derive strike step automatically if not provided
         self.strike_step = float(self.config.get("strike_step", self._detect_strike_step(self.symbol)))
@@ -72,7 +79,9 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             self.stop_loss_per_lot = float(new_config["stop_loss_per_lot"])
         self.max_loss = self.stop_loss_per_lot * self.lots
         if "product" in new_config:
-            self.product = new_config["product"]
+            self.product = str(new_config["product"]).upper()
+        if "MCX" in self.symbol.upper() and self.product == "MIS":
+            self.product = "NRML"
         if "strike_step" in new_config:
             self.strike_step = float(new_config["strike_step"])
         if "lot_size" in new_config:
@@ -266,42 +275,68 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             # Entry fills
             avg_price = 0.0
             filled_count = 0
+            rejected_count = 0
+            rejection_reasons = []
+
             for r in results:
-                if r.get("success"):
+                if r.get("success") and r.get("status") == "FILLED":
                     avg_price += float(r.get("price", 0.0))
                     filled_count += 1
+                else:
+                    rejected_count += 1
+                    if r.get("rejection_reason"):
+                        rejection_reasons.append(r["rejection_reason"])
+
             if filled_count > 0:
                 avg_price = round(avg_price / filled_count, 2)
-
-            for leg in self.current_trade["legs"]:
-                if leg["symbol"] == sym:
-                    if avg_price > 0:
+                for leg in self.current_trade["legs"]:
+                    if leg["symbol"] == sym:
                         leg["entry"] = avg_price
                         leg["ltp"] = avg_price
-                    leg["status"] = "FILLED"
+                        leg["status"] = "FILLED"
 
-            self.log_decision(
-                "ORDER FILLED",
-                f"Leg {sym} SELL filled @ {avg_price} across {filled_count} broker account(s)."
-            )
-
-            # If all legs are filled, transition to IN_TRADE
-            if all(leg.get("status") == "FILLED" for leg in self.current_trade["legs"]):
-                self.trade_state = "IN_TRADE"
                 self.log_decision(
-                    "TRADE ACTIVE",
-                    f"All ATM legs filled. Active monitoring SL (Max Loss: -INR {self.max_loss:.2f}) and Exit Time ({self.exit_time})."
+                    "ORDER FILLED",
+                    f"Leg {sym} SELL filled @ {avg_price} across {filled_count} broker account(s)."
+                )
+
+                # If all legs are filled, transition to IN_TRADE
+                if all(leg.get("status") == "FILLED" for leg in self.current_trade["legs"]):
+                    self.trade_state = "IN_TRADE"
+                    self.log_decision(
+                        "TRADE ACTIVE",
+                        f"All ATM legs filled. Active monitoring SL (Max Loss: -INR {self.max_loss:.2f}) and Exit Time ({self.exit_time})."
+                    )
+            else:
+                rej_msg = "; ".join(set(rejection_reasons)) if rejection_reasons else "Broker/RMS rejected order"
+                for leg in self.current_trade["legs"]:
+                    if leg["symbol"] == sym:
+                        leg["status"] = "REJECTED"
+                self.trade_state = "REJECTED"
+                self.log_decision(
+                    "ORDER REJECTED",
+                    f"CRITICAL: Order {sym} rejected by broker: {rej_msg}",
+                    level="ERROR"
                 )
 
         elif side == "BUY" and self.current_trade:
             # Exit fills
-            self.log_decision("ORDER FILLED", f"Square-off BUY filled for {sym}.")
-            for leg in self.current_trade["legs"]:
-                if leg["symbol"] == sym:
-                    leg["status"] = "CLOSED"
-            if all(leg.get("status") == "CLOSED" for leg in self.current_trade["legs"]):
-                self.trade_state = "CLOSED"
-                self.log_decision("TRADE COMPLETED", f"Strategy cycle completed. Realized PnL: INR {self.current_trade.get('total_pnl', 0.0):.2f}")
+            filled_count = sum(1 for r in results if r.get("success") and r.get("status") == "FILLED")
+            if filled_count > 0:
+                self.log_decision("ORDER FILLED", f"Square-off BUY filled for {sym}.")
+                for leg in self.current_trade["legs"]:
+                    if leg["symbol"] == sym:
+                        leg["status"] = "CLOSED"
+                if all(leg.get("status") == "CLOSED" for leg in self.current_trade["legs"]):
+                    self.trade_state = "CLOSED"
+                    self.log_decision("TRADE COMPLETED", f"Strategy cycle completed. Realized PnL: INR {self.current_trade.get('total_pnl', 0.0):.2f}")
+            else:
+                rej_msg = "; ".join(set(r.get("rejection_reason") for r in results if r.get("rejection_reason"))) or "Broker/RMS rejected exit"
+                self.log_decision(
+                    "EXIT REJECTED",
+                    f"CRITICAL: Square-off BUY rejected for {sym}: {rej_msg}",
+                    level="ERROR"
+                )
 
     def _check_exit_conditions(self, total_pnl: float):
         if self.trade_state not in ["IN_TRADE", "ENTRY_SENT"] or not self.current_trade:

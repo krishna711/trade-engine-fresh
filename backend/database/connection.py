@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from backend.config import DB_URL, DEFAULT_FEED_PRIORITY, DEFAULT_LOT_SIZES
 from backend.database.models import (
     Base, Account, StrategyTemplate, StrategyInstance,
-    SymbolMapping, FeedBrokerStatus, SystemLog, Position
+    SymbolMapping, FeedBrokerStatus, SystemLog, Position, Order, Trade
 )
 
 
@@ -81,7 +81,7 @@ def seed_initial_data():
                         "lot_size": 10,
                         "stop_loss_per_lot": 750.0,
                         "allow_entry_in_window": True,
-                        "product": "MIS",
+                        "product": "NRML",
                         "order_type": "LIMIT",
                         "limit_buffer_pct": 0.015,
                         "auto_chase": True
@@ -440,6 +440,39 @@ def seed_initial_data():
         # Sync configured lot sizes into SymbolMapping table for automatic regulatory updates
         for sym_key, lot in DEFAULT_LOT_SIZES.items():
             db.query(SymbolMapping).filter(SymbolMapping.canonical_symbol.like(f"%{sym_key}%")).update({"lot_size": lot}, synchronize_session=False)
+
+        # Auto-migrate any existing MCX strategy instances and templates to NRML (broker RMS rule)
+        time_strat_tpl = db.query(StrategyTemplate).filter(StrategyTemplate.key == "strat_time_atm_seller_v1").first()
+        if time_strat_tpl and time_strat_tpl.default_config:
+            cfg = dict(time_strat_tpl.default_config)
+            cfg["product"] = "NRML"
+            time_strat_tpl.default_config = cfg
+
+        all_instances = db.query(StrategyInstance).all()
+        for inst in all_instances:
+            cfg = dict(inst.config or {})
+            sym = cfg.get("symbol", "")
+            if "MCX" in sym.upper() and cfg.get("product") != "NRML":
+                cfg["product"] = "NRML"
+                inst.config = cfg
+            # If instance had phantom zero-entry legs from rejected order, reset legs_info
+            if inst.legs_info:
+                valid_legs = [l for l in inst.legs_info if float(l.get("entry", 0.0) or 0.0) > 0.0 and l.get("status") != "REJECTED"]
+                if len(valid_legs) != len(inst.legs_info):
+                    inst.legs_info = valid_legs
+                    if not valid_legs:
+                        inst.last_trade_status = "REJECTED"
+
+        # Clean up any phantom trades that belong to REJECTED orders
+        rej_orders = db.query(Order).filter(
+            (Order.status == "REJECTED") | 
+            (Order.rejection_reason.isnot(None) & (Order.status != "FILLED")) |
+            ((Order.status == "FILLED") & (Order.rejection_reason.isnot(None)))
+        ).all()
+        for r_ord in rej_orders:
+            r_ord.status = "REJECTED"
+            r_ord.filled_quantity = 0
+            db.query(Trade).filter(Trade.order_id == r_ord.order_id).delete(synchronize_session=False)
 
         db.commit()
 

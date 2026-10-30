@@ -352,41 +352,70 @@ class StrategySupervisor:
             sym = ord_data.get("symbol")
             avg_p = 0.0
             filled_count = 0
+            rejected_count = 0
+            rejection_reasons = []
+
             for r in results:
-                if r.get("success"):
+                if r.get("success") and r.get("status") == "FILLED":
                     avg_p += float(r.get("price", 0.0))
                     filled_count += 1
+                elif r.get("status") in ["REJECTED", "CANCELLED"] or not r.get("success"):
+                    rejected_count += 1
+                    if r.get("rejection_reason"):
+                        rejection_reasons.append(r["rejection_reason"])
+
             if filled_count > 0:
                 avg_p = round(avg_p / filled_count, 2)
 
             current_legs = list(inst.legs_info or [])
             if side == "SELL": # Entry
-                inst.last_trade_status = "OPEN"
-                inst.last_trade_at = datetime.datetime.utcnow()
-                found = False
-                for leg in current_legs:
-                    if leg.get("symbol") == sym:
-                        leg["entry"] = avg_p
-                        leg["ltp"] = avg_p
-                        leg["qty"] = -ord_data.get("quantity", 10)
-                        found = True
-                        break
-                if not found:
-                    current_legs.append({
-                        "leg": sym.split(":")[-1],
-                        "symbol": sym,
-                        "entry": avg_p,
-                        "exit": None,
-                        "ltp": avg_p,
-                        "qty": -ord_data.get("quantity", 10),
-                        "pnl": 0.0
-                    })
-                inst.legs_info = current_legs
+                if filled_count > 0:
+                    inst.last_trade_status = "OPEN"
+                    inst.last_trade_at = datetime.datetime.utcnow()
+                    found = False
+                    for leg in current_legs:
+                        if leg.get("symbol") == sym:
+                            leg["entry"] = avg_p
+                            leg["ltp"] = avg_p
+                            leg["qty"] = -ord_data.get("quantity", 10)
+                            leg["status"] = "FILLED"
+                            found = True
+                            break
+                    if not found:
+                        current_legs.append({
+                            "leg": sym.split(":")[-1],
+                            "symbol": sym,
+                            "entry": avg_p,
+                            "exit": None,
+                            "ltp": avg_p,
+                            "qty": -ord_data.get("quantity", 10),
+                            "pnl": 0.0,
+                            "status": "FILLED"
+                        })
+                    inst.legs_info = current_legs
+                else:
+                    # All client orders for this leg were rejected
+                    inst.last_trade_status = "REJECTED"
+                    rej_summary = "; ".join(set(rejection_reasons)) if rejection_reasons else "Broker/RMS rejected order"
+                    for leg in current_legs:
+                        if leg.get("symbol") == sym:
+                            leg["status"] = "REJECTED"
+                    inst.legs_info = current_legs
+                    self._log_strategy_decision(
+                        instance_id,
+                        "ERROR",
+                        f"Order for {sym} REJECTED by broker: {rej_summary}",
+                        is_dismissed=False
+                    )
             elif side == "BUY": # Exit
                 for leg in current_legs:
                     if leg.get("symbol") == sym:
-                        leg["exit"] = avg_p
-                        leg["pnl"] = round(((leg.get("entry") or avg_p) - avg_p) * abs(leg.get("qty", 10)), 2)
+                        if filled_count > 0:
+                            leg["exit"] = avg_p
+                            leg["pnl"] = round(((leg.get("entry") or avg_p) - avg_p) * abs(leg.get("qty", 10)), 2)
+                            leg["status"] = "CLOSED"
+                        else:
+                            leg["status"] = "EXIT_REJECTED"
                 inst.legs_info = current_legs
                 if all(leg.get("exit") is not None for leg in current_legs):
                     inst.last_trade_status = "CLOSED"

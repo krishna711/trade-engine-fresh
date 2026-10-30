@@ -63,6 +63,13 @@ class OrderManager:
             mapping = symbol_mapper.get_mapping(symbol)
             segment = mapping.segment if mapping else (symbol.split(":")[0] if ":" in symbol else "NSE")
 
+            # For MCX / MCXFO, RMS blocks MIS orders across all brokers in India. Force NRML for MCX.
+            prod_upper = product.upper()
+            if "MCX" in symbol.upper() or segment.upper() in ["MCX", "MCXFO"]:
+                if prod_upper == "MIS":
+                    print(f"[OrderManager] Auto-switching MIS -> NRML for {symbol} ({segment}) to satisfy broker RMS rule.")
+                    prod_upper = "NRML"
+
             engine_order_id = f"ORD_{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
             order = Order(
@@ -74,7 +81,7 @@ class OrderManager:
                 broker=account.broker,
                 side=side.upper(),
                 order_type=order_type.upper(),
-                product=product.upper(),
+                product=prod_upper,
                 quantity=quantity,
                 price=price,
                 trigger_price=trigger_price,
@@ -96,7 +103,7 @@ class OrderManager:
                 "order_type": order_type.upper(),
                 "price": price,
                 "trigger_price": trigger_price,
-                "product": product,
+                "product": prod_upper,
                 "is_paper": bool(account.paper_mode),
                 "buffer_pct": float(buffer_pct),
                 "auto_chase": bool(auto_chase),
@@ -106,25 +113,33 @@ class OrderManager:
             resp = await adapter.place_order(order_dict)
 
             # Reconcile result
+            is_success = bool(resp.get("success", False))
+            order_status = resp.get("status", "FILLED" if is_success else "REJECTED")
+            filled_qty = int(resp.get("filled_quantity", quantity if (is_success and order_status == "FILLED") else 0))
+            fill_price = float(resp.get("average_price", price if is_success else 0.0))
+            rej_reason = resp.get("rejection_reason")
+
             reconcile_report = {
                 "order_id": engine_order_id,
                 "broker_order_id": resp.get("broker_order_id"),
-                "status": resp.get("status", "FILLED"),
-                "filled_quantity": resp.get("filled_quantity", quantity),
-                "average_price": resp.get("average_price", price),
+                "status": order_status,
+                "filled_quantity": filled_qty,
+                "average_price": fill_price,
                 "client_id": client_id,
                 "symbol": symbol,
-                "rejection_reason": resp.get("rejection_reason")
+                "rejection_reason": rej_reason
             }
             await reconciler.handle_execution_report(reconcile_report)
 
             return {
-                "success": True,
+                "success": is_success and order_status not in ["REJECTED", "CANCELLED"],
                 "client_id": client_id,
                 "order_id": engine_order_id,
                 "broker_order_id": resp.get("broker_order_id"),
-                "status": resp.get("status", "FILLED"),
-                "price": resp.get("average_price", price)
+                "status": order_status,
+                "price": fill_price,
+                "filled_quantity": filled_qty,
+                "rejection_reason": rej_reason
             }
 
         except Exception as e:
@@ -152,6 +167,10 @@ class OrderManager:
         One strategy maps to multiple broker/clients and fires orders in parallel.
         Executes concurrently with zero head-of-line blocking.
         """
+        # For MCX / MCXFO, RMS blocks MIS orders across all brokers in India. Force NRML for MCX.
+        if "MCX" in symbol.upper() and product.upper() == "MIS":
+            product = "NRML"
+
         tasks = [
             self.place_order(
                 client_id=cid,
