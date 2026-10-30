@@ -660,7 +660,6 @@ class ClientCardsManager {
                         </details>
                     </div>
                 `;
-            }
             } else if (this.activeDrawerTab === "holdings") {
                 const isLive = data.credentials && data.credentials.is_valid_today;
                 const totalInvested = (data.holdings || []).reduce((sum, h) => sum + (h.invested_value || (h.buy_price * h.qty) || 0), 0);
