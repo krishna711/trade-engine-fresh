@@ -25,15 +25,16 @@ class SupertrendMCXStrategy(BaseStrategy):
             self.log_decision("ORDER SENT TO BROKER", f"BUY {self.lots} Lot {self.symbol} @ MARKET across {len(self.client_ids)} account(s)")
             
             fill_price = close_p
+            # MCX order quantity is in lots directly
             self.current_trade = {
                 "symbol": self.symbol,
                 "side": "BUY",
                 "entry_price": fill_price,
-                "quantity": self.lots * 100,
+                "quantity": self.lots,
                 "sl_price": fill_price - self.stop_loss_pts,
                 "target_price": fill_price + self.target_pts,
                 "legs": [
-                    {"leg": f"{self.symbol} FUT", "entry": fill_price, "exit": None, "ltp": fill_price, "qty": self.lots * 100}
+                    {"leg": f"{self.symbol} FUT", "entry": fill_price, "exit": None, "ltp": fill_price, "qty": self.lots}
                 ]
             }
             self.trade_state = "IN_TRADE"

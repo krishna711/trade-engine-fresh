@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 from backend.database.connection import SessionLocal
 from backend.database.models import Order, Trade, Position, SystemLog
 from backend.core.events import event_bus
+from backend.core.symbol_mapper import symbol_mapper
 
 class OrderReconciler:
     """
@@ -152,6 +153,8 @@ class OrderReconciler:
         # Compute realized PnL on closed quantity
         closed_qty = min(pos.buy_quantity, pos.sell_quantity)
         if closed_qty > 0 and pos.buy_avg_price > 0 and pos.sell_avg_price > 0:
-            pos.realized_pnl = round(closed_qty * (pos.sell_avg_price - pos.buy_avg_price), 2)
+            is_mcx = "MCX" in order.symbol.upper() or (order.segment and "MCX" in order.segment.upper())
+            lot_mult = symbol_mapper.get_lot_size(order.symbol) if is_mcx else 1
+            pos.realized_pnl = round(closed_qty * (pos.sell_avg_price - pos.buy_avg_price) * lot_mult, 2)
 
 reconciler = OrderReconciler()

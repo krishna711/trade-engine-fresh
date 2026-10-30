@@ -168,7 +168,11 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
                     leg["ltp"] = ltp
                     if leg.get("entry") and leg["entry"] > 0:
                         # Selling: profit when LTP drops below entry price
-                        leg["pnl"] = round((leg["entry"] - ltp) * abs(leg["qty"]), 2)
+                        is_mcx = "MCX" in self.symbol.upper()
+                        # For MCX, order quantity is in lots, so rupee PnL = (entry - ltp) * lots * lot_size
+                        # For NSE/BSE, order quantity is already in total units (lots * lot_size)
+                        pnl_mult = self.lot_size if is_mcx else 1
+                        leg["pnl"] = round((leg["entry"] - ltp) * abs(leg["qty"]) * pnl_mult, 2)
 
             total_pnl = sum(leg.get("pnl", 0.0) for leg in self.current_trade["legs"])
             self.current_trade["total_pnl"] = round(total_pnl, 2)
@@ -205,13 +209,17 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
     def _trigger_entry(self, underlying_ltp: float, curr_time: datetime.time):
         atm_strike = int(round(underlying_ltp / self.strike_step) * self.strike_step)
         option_symbols = self._build_option_symbols(self.symbol, atm_strike)
-        total_qty = self.lots * self.lot_size
+
+        # MCX order quantity rule: For MCX orders, send lot without multiplying lot size.
+        # For NSE and BSE orders, total quantity is lots multiplied by lot size.
+        is_mcx = "MCX" in self.symbol.upper()
+        order_qty = self.lots if is_mcx else (self.lots * self.lot_size)
 
         self.log_decision(
             "ENTRY CONDITION MATCH",
             f"Time {curr_time.strftime('%H:%M:%S')} in window. "
             f"Underlying {self.symbol} LTP: {underlying_ltp:.2f} -> ATM Strike: {atm_strike}. "
-            f"Preparing to SELL {', '.join(option_symbols.values())} ({total_qty} qty) across {len(self.client_ids)} broker account(s)."
+            f"Preparing to SELL {', '.join(option_symbols.values())} ({order_qty} {'lots' if is_mcx else 'qty'}) across {len(self.client_ids)} broker account(s)."
         )
 
         legs_data = []
@@ -223,7 +231,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             self.emit_order(
                 symbol=opt_sym,
                 side="SELL",
-                quantity=total_qty,
+                quantity=order_qty,
                 order_type="LIMIT",
                 product=self.product,
                 leg_id=f"LEG_{leg}",
@@ -232,7 +240,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             )
             self.log_decision(
                 "ORDER SENT TO BROKER",
-                f"Dispatched SELL {opt_sym} (Qty: {total_qty}) [Marketable LIMIT + buffer] to Order Manager"
+                f"Dispatched SELL {opt_sym} (Qty: {order_qty} {'lots' if is_mcx else 'shares'}) [Marketable LIMIT + buffer] to Order Manager"
             )
 
             # Estimated initial LTP for tracking until first fill/tick
@@ -243,7 +251,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
                 "entry": est_ltp,
                 "exit": None,
                 "ltp": est_ltp,
-                "qty": -total_qty,
+                "qty": -order_qty,
                 "pnl": 0.0,
                 "status": "SENT"
             })

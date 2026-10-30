@@ -6,6 +6,7 @@ from backend.database.connection import SessionLocal
 from backend.database.models import StrategyInstance, StrategyTemplate, SystemLog, Account
 from backend.strategy_manager.worker import strategy_process_entrypoint
 from backend.core.events import event_bus
+from backend.core.symbol_mapper import symbol_mapper
 from backend.order_manager.manager import order_manager
 
 MODULE_CLASS_MAP = {
@@ -412,7 +413,9 @@ class StrategySupervisor:
                     if leg.get("symbol") == sym:
                         if filled_count > 0:
                             leg["exit"] = avg_p
-                            leg["pnl"] = round(((leg.get("entry") or avg_p) - avg_p) * abs(leg.get("qty", 10)), 2)
+                            is_mcx = "MCX" in sym.upper()
+                            lot_mult = symbol_mapper.get_lot_size(sym) if is_mcx else 1
+                            leg["pnl"] = round(((leg.get("entry") or avg_p) - avg_p) * abs(leg.get("qty", 10)) * lot_mult, 2)
                             leg["status"] = "CLOSED"
                         else:
                             leg["status"] = "EXIT_REJECTED"
