@@ -70,6 +70,13 @@ def strategy_process_entrypoint(
                 elif msg_type == "ORDER_RESULT":
                     instance.on_order_update(msg.get("data", {}))
 
+                elif msg_type == "UPDATE_CONFIG":
+                    new_cfg = msg.get("config", {})
+                    if hasattr(instance, "on_config_updated"):
+                        instance.on_config_updated(new_cfg)
+                    elif hasattr(instance, "config"):
+                        instance.config.update(new_cfg)
+
             except multiprocessing.queues.Empty:
                 pass
 

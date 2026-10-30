@@ -159,6 +159,31 @@ class StrategySupervisor:
         self._log_strategy_decision(instance_id, "INFO", "Strategy process container stopped")
         return True
 
+    async def update_strategy_config(self, instance_id: int, new_config: Dict[str, Any]) -> bool:
+        """
+        Sends dynamic parameter updates directly to the running worker container process.
+        Takes effect immediately without dropping connection or stopping the strategy.
+        """
+        worker = self.active_workers.get(instance_id)
+        if worker and "in_queue" in worker:
+            try:
+                worker["in_queue"].put({
+                    "type": "UPDATE_CONFIG",
+                    "config": new_config
+                })
+                if "symbol" in new_config:
+                    worker["symbol"] = new_config["symbol"]
+                self._log_strategy_decision(
+                    instance_id,
+                    "SUCCESS",
+                    f"Live parameter update delivered to worker process: {list(new_config.keys())}"
+                )
+                return True
+            except Exception as e:
+                print(f"[StrategyManager] Error updating live config for {instance_id}: {e}")
+                return False
+        return False
+
     async def duplicate_strategy(
         self,
         source_instance_id: int,

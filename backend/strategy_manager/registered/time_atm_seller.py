@@ -48,6 +48,36 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             f"Strike Step: {self.strike_step}"
         )
 
+    def on_config_updated(self, new_config: Dict[str, Any]):
+        """Dynamically applies parameter changes (timings, lots, stop loss) while running"""
+        self.config.update(new_config)
+        if "symbol" in new_config:
+            self.symbol = new_config["symbol"]
+        if "entry_time" in new_config:
+            self.entry_time = new_config["entry_time"]
+        if "exit_time" in new_config:
+            self.exit_time = new_config["exit_time"]
+        if "lots" in new_config:
+            self.lots = int(new_config["lots"])
+        if "stop_loss_per_lot" in new_config:
+            self.stop_loss_per_lot = float(new_config["stop_loss_per_lot"])
+        self.max_loss = self.stop_loss_per_lot * self.lots
+        if "product" in new_config:
+            self.product = new_config["product"]
+        if "strike_step" in new_config:
+            self.strike_step = float(new_config["strike_step"])
+        if "lot_size" in new_config:
+            self.lot_size = int(new_config["lot_size"])
+        if "allow_entry_in_window" in new_config:
+            self.allow_entry_in_window = bool(new_config["allow_entry_in_window"])
+
+        self.log_decision(
+            "CONFIG_UPDATE",
+            f"Live Parameters Updated | Lots: {self.lots} | SL/Lot: {self.stop_loss_per_lot} (Max Loss: ₹{self.max_loss:.2f}) | "
+            f"Entry: {self.entry_time} | Exit: {self.exit_time}",
+            level="SUCCESS"
+        )
+
     def _detect_strike_step(self, symbol: str) -> float:
         sym_upper = symbol.upper()
         if "CRUDEOIL" in sym_upper:

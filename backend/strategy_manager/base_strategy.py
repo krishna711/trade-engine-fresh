@@ -96,3 +96,15 @@ class BaseStrategy(ABC):
             self.decision_logs.pop(0)
         return entry
 
+    def on_config_updated(self, new_config: Dict[str, Any]):
+        """
+        Called when strategy parameters are dynamically modified at runtime.
+        Subclasses should override to update algorithm parameters without losing position tracking.
+        """
+        self.config.update(new_config)
+        if "symbol" in new_config:
+            self.symbol = new_config["symbol"]
+        if "timeframe" in new_config:
+            self.timeframe = new_config["timeframe"]
+        self.log_decision("CONFIG_UPDATE", f"Live parameters updated: {list(new_config.keys())}", level="SUCCESS")
+

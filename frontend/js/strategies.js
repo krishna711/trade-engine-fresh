@@ -219,6 +219,9 @@ class StrategiesManager {
                             <button class="action-btn-icon btn-action-remap" onclick="strategiesManager.openRemapClientsModal(${inst.id}, '${userNameEsc}')" title="Re-map Accounts">
                                 👥
                             </button>
+                            <button class="action-btn-icon btn-action-edit" onclick="strategiesManager.openEditModal(${inst.id})" title="Edit Strategy Parameters">
+                                ✏️
+                            </button>
                             <button class="action-btn-icon btn-action-chart" onclick="strategiesManager.openChart(${inst.id}, '${userNameEsc}')" title="Performance Chart">
                                 📈
                             </button>
@@ -373,6 +376,9 @@ class StrategiesManager {
                                 <button class="action-btn-icon btn-action-unmap" onclick="strategiesManager.unmapClient(${inst.id}, '${client.client_id}', '${clientNameEsc}')" title="Unmap ${clientNameEsc} from this strategy" style="color: var(--accent-amber);">
                                     🔗❌
                                 </button>
+                                <button class="action-btn-icon btn-action-edit" onclick="strategiesManager.openEditModal(${inst.id})" title="Edit Strategy Parameters">
+                                    ✏️
+                                </button>
                                 <button class="action-btn-icon btn-action-chart" onclick="strategiesManager.openChart(${inst.id}, '${userNameEsc}')" title="Performance Chart">
                                     📈
                                 </button>
@@ -464,6 +470,9 @@ class StrategiesManager {
                                 </button>
                                 <button class="action-btn-icon btn-action-unmap" onclick="strategiesManager.unmapClient(${inst.id}, '${acc.client_id}', '${clientNameEsc}')" title="Unmap strategy from this account" style="color: var(--accent-amber);">
                                     🔗❌
+                                </button>
+                                <button class="action-btn-icon btn-action-edit" onclick="strategiesManager.openEditModal(${inst.id})" title="Edit Strategy Parameters">
+                                    ✏️
                                 </button>
                                 <button class="action-btn-icon btn-action-chart" onclick="strategiesManager.openChart(${inst.id}, '${userNameEsc}')" title="Performance Chart">
                                     📈
@@ -1058,6 +1067,118 @@ class StrategiesManager {
             if (submitBtn) {
                 submitBtn.disabled = false;
                 submitBtn.innerText = "🚀 Deploy Strategy Instance";
+            }
+        }
+    }
+
+    async openEditModal(id) {
+        let inst = (this.latestInstances || []).find(i => i.id === id);
+        if (!inst) {
+            try {
+                const res = await fetch("/api/strategies/instances");
+                const all = await res.json();
+                this.latestInstances = all;
+                inst = all.find(i => i.id === id);
+            } catch (e) {
+                alert("Error loading strategy details: " + e);
+                return;
+            }
+        }
+        if (!inst) {
+            alert("Strategy instance not found.");
+            return;
+        }
+
+        const idEl = document.getElementById("edit-strat-id");
+        const titleEl = document.getElementById("edit-strat-title");
+        const subtitleEl = document.getElementById("edit-strat-subtitle");
+        const adminNameEl = document.getElementById("edit-strat-name-admin");
+        const userNameEl = document.getElementById("edit-strat-name-user");
+        const startTimeEl = document.getElementById("edit-strat-start-time");
+        const endTimeEl = document.getElementById("edit-strat-end-time");
+        const configJsonEl = document.getElementById("edit-strat-config-json");
+        const pillEl = document.getElementById("edit-strat-status-pill");
+
+        if (idEl) idEl.value = inst.id;
+        if (titleEl) titleEl.innerText = `Edit: ${inst.name_user || inst.name_admin}`;
+        if (subtitleEl) subtitleEl.innerText = `Instance #${inst.id} • Template: ${inst.template_key}`;
+        if (adminNameEl) adminNameEl.value = inst.name_admin || "";
+        if (userNameEl) userNameEl.value = inst.name_user || "";
+        if (startTimeEl) startTimeEl.value = inst.start_time || "";
+        if (endTimeEl) endTimeEl.value = inst.end_time || "";
+        if (configJsonEl) configJsonEl.value = JSON.stringify(inst.config || {}, null, 2);
+
+        if (pillEl) {
+            const isRunning = inst.status === "RUNNING";
+            pillEl.className = `status-pill status-${isRunning ? 'running' : 'stopped'}`;
+            pillEl.innerHTML = `<span class="status-dot"></span> ${inst.status}`;
+        }
+
+        const modal = document.getElementById("modal-edit-strategy");
+        if (modal) {
+            modal.classList.add("active");
+            modal.style.display = "";
+        }
+    }
+
+    async submitEditStrategy() {
+        const id = document.getElementById("edit-strat-id")?.value;
+        if (!id) return;
+
+        const nameAdmin = document.getElementById("edit-strat-name-admin")?.value?.trim() || "";
+        const nameUser = document.getElementById("edit-strat-name-user")?.value?.trim() || "";
+        const startTime = document.getElementById("edit-strat-start-time")?.value?.trim() || "";
+        const endTime = document.getElementById("edit-strat-end-time")?.value?.trim() || "";
+        const configJsonStr = document.getElementById("edit-strat-config-json")?.value?.trim() || "{}";
+
+        let parsedConfig = {};
+        try {
+            parsedConfig = JSON.parse(configJsonStr);
+        } catch (e) {
+            alert("Invalid Configuration JSON. Please check syntax:\n" + e);
+            return;
+        }
+
+        const submitBtn = document.getElementById("btn-submit-edit-strategy");
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerText = "⏳ Saving...";
+        }
+
+        try {
+            const res = await fetch(`/api/strategies/${id}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    name_admin: nameAdmin,
+                    name_user: nameUser,
+                    start_time: startTime,
+                    end_time: endTime,
+                    config: parsedConfig
+                })
+            });
+
+            const data = await res.json();
+            if (data.success) {
+                const modal = document.getElementById("modal-edit-strategy");
+                if (modal) modal.classList.remove("active");
+
+                await this.loadInstances();
+                if (window.clientCardsManager) await window.clientCardsManager.loadAccounts();
+
+                const hotMsg = data.hot_reloaded 
+                    ? "\n⚡ Parameters updated live in the running container process on the fly!" 
+                    : "\nParameters saved in database.";
+                alert(`✓ Strategy #${id} updated successfully!${hotMsg}`);
+            } else {
+                alert("Failed to update strategy: " + (data.detail || data.error));
+            }
+        } catch (e) {
+            alert("Network error updating strategy: " + e);
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerText = "💾 Save & Apply Parameters";
             }
         }
     }

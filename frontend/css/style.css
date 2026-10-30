@@ -719,6 +719,12 @@ table.data-table tbody td {
     color: var(--accent-red);
 }
 
+.action-btn-icon.btn-action-edit:hover {
+    background: rgba(59, 130, 246, 0.25);
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+}
+
 .action-btn-icon.btn-action-squareoff {
     color: var(--accent-amber);
 }

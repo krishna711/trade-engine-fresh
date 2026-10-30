@@ -770,6 +770,61 @@ def list_strategy_instances(db: Session = Depends(get_db)):
         })
     return result
 
+@app.put("/api/strategies/{id}")
+async def update_strategy_instance(
+    id: int,
+    payload: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Updates strategy instance parameters, names, timings, or configuration.
+    If the strategy is currently RUNNING, changes take effect immediately in the
+    running OS process container without requiring a restart.
+    """
+    inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()
+    if not inst:
+        raise HTTPException(status_code=404, detail="Strategy instance not found")
+
+    if "name_admin" in payload and payload["name_admin"]:
+        inst.instance_name_admin = payload["name_admin"]
+    if "name_user" in payload and payload["name_user"]:
+        inst.instance_name_user = payload["name_user"]
+    if "start_time" in payload and payload["start_time"]:
+        inst.start_time = payload["start_time"]
+    if "end_time" in payload and payload["end_time"]:
+        inst.end_time = payload["end_time"]
+    if "client_ids" in payload and payload["client_ids"] is not None:
+        inst.client_ids = list(payload["client_ids"])
+
+    new_config = payload.get("config")
+    if new_config and isinstance(new_config, dict):
+        merged_cfg = dict(inst.config or {})
+        merged_cfg.update(new_config)
+        inst.config = merged_cfg
+
+        if "entry_time" in new_config:
+            inst.start_time = new_config["entry_time"]
+        if "exit_time" in new_config:
+            inst.end_time = new_config["exit_time"]
+
+    db.commit()
+    db.refresh(inst)
+
+    # If currently running, hot-push updates to the live worker process container
+    hot_updated = False
+    if inst.status == "RUNNING" and new_config:
+        hot_updated = await strategy_supervisor.update_strategy_config(id, new_config)
+
+    return {
+        "success": True,
+        "strategy_id": id,
+        "status": inst.status,
+        "hot_reloaded": hot_updated,
+        "config": inst.config,
+        "start_time": inst.start_time,
+        "end_time": inst.end_time
+    }
+
 @app.put("/api/strategies/{id}/clients")
 def update_strategy_clients(id: int, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
     inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()
