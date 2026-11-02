@@ -142,9 +142,19 @@ async def websocket_endpoint(websocket: WebSocket):
 def get_dashboard_summary(db: Session = Depends(get_db)):
     accounts = db.query(Account).all()
     instances = db.query(StrategyInstance).all()
+    all_positions = db.query(Position).all()
 
-    total_unrealized = sum(inst.unrealized_pnl for inst in instances)
-    total_realized = sum(inst.realized_pnl for inst in instances)
+    # Calculate strategy PnL
+    inst_unrealized = sum(inst.unrealized_pnl for inst in instances)
+    inst_realized = sum(inst.realized_pnl for inst in instances)
+
+    # Calculate position PnL (from broker executed positions)
+    pos_unrealized = sum(p.unrealized_pnl for p in all_positions)
+    pos_realized = sum(p.realized_pnl for p in all_positions)
+
+    # Use whichever has active non-zero data (or sum if separate)
+    total_unrealized = inst_unrealized if abs(inst_unrealized) > 0.01 else pos_unrealized
+    total_realized = inst_realized if abs(inst_realized) > 0.01 else pos_realized
     total_pnl = total_unrealized + total_realized
 
     ticks = feed_manager.get_all_ticks()
@@ -906,6 +916,17 @@ async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
 def get_strategy_recent_trades(id: int, db: Session = Depends(get_db)):
     trades = db.query(Trade).filter(Trade.strategy_instance_id == id).order_by(Trade.id.desc()).limit(30).all()
     inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()
+    if not trades and inst:
+        # Fallback: check trades for mapped clients with matching symbol
+        cfg = inst.config or {}
+        sym = cfg.get("symbol", "")
+        base_sym = sym.split(":")[-1] if ":" in sym else sym
+        client_ids = inst.client_ids or []
+        if client_ids:
+            trades = db.query(Trade).filter(
+                Trade.client_id.in_(client_ids),
+                Trade.symbol.like(f"%{base_sym}%")
+            ).order_by(Trade.id.desc()).limit(30).all()
     return {
         "strategy_id": id,
         "legs_info": inst.legs_info if inst else [],

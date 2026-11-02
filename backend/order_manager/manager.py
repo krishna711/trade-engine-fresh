@@ -319,10 +319,13 @@ class OrderManager:
 
             for pos in positions:
                 pos.ltp = ltp
+                is_mcx = "MCX" in (pos.symbol or "").upper() or (pos.segment and "MCX" in pos.segment.upper())
+                lot_mult = symbol_mapper.get_lot_size(pos.symbol) if is_mcx else 1
+
                 if pos.net_quantity > 0: # Long position
-                    pos.unrealized_pnl = round(pos.net_quantity * (ltp - pos.buy_avg_price), 2)
+                    pos.unrealized_pnl = round(pos.net_quantity * (ltp - pos.buy_avg_price) * lot_mult, 2)
                 elif pos.net_quantity < 0: # Short position
-                    pos.unrealized_pnl = round(abs(pos.net_quantity) * (pos.sell_avg_price - ltp), 2)
+                    pos.unrealized_pnl = round(abs(pos.net_quantity) * (pos.sell_avg_price - ltp) * lot_mult, 2)
 
             db.commit()
         except Exception:

@@ -455,11 +455,12 @@ def seed_initial_data():
             if "MCX" in sym.upper() and cfg.get("product") != "NRML":
                 cfg["product"] = "NRML"
                 inst.config = cfg
-            # Keep legs that have valid status or entry price
+            # Keep legs that have valid status or entry price, filtering out stale 5850 test legs
             if inst.legs_info:
-                valid_legs = [l for l in inst.legs_info if l.get("status") in ["FILLED", "OPEN", "CLOSED"] or float(l.get("entry", 0.0) or 0.0) > 0.0]
-                if valid_legs:
-                    inst.legs_info = valid_legs
+                valid_legs = [l for l in inst.legs_info if "5850" not in str(l.get("symbol", "")) and (l.get("status") in ["FILLED", "OPEN", "CLOSED"] or float(l.get("entry", 0.0) or 0.0) > 0.0)]
+                inst.legs_info = valid_legs
+                if valid_legs and all(l.get("status") == "CLOSED" or l.get("exit") is not None for l in valid_legs):
+                    inst.last_trade_status = "CLOSED"
 
         # Clean up any phantom trades that belong to genuinely REJECTED orders
         rej_orders = db.query(Order).filter(
@@ -474,6 +475,26 @@ def seed_initial_data():
             Order.status == "FILLED",
             Order.rejection_reason.isnot(None)
         ).update({"rejection_reason": None}, synchronize_session=False)
+
+        # Ensure all FILLED orders have Trade records
+        filled_orders = db.query(Order).filter(Order.status == "FILLED", Order.filled_quantity > 0).all()
+        for f_ord in filled_orders:
+            ex_trd = db.query(Trade).filter(Trade.order_id == f_ord.order_id).first()
+            if not ex_trd:
+                trade = Trade(
+                    trade_id=f"TRD_{f_ord.created_at.strftime('%Y%m%d%H%M%S')}_{f_ord.id}",
+                    order_id=f_ord.order_id,
+                    client_id=f_ord.client_id,
+                    strategy_instance_id=f_ord.strategy_instance_id,
+                    symbol=f_ord.symbol,
+                    segment=f_ord.segment,
+                    side=f_ord.side,
+                    quantity=f_ord.filled_quantity,
+                    price=f_ord.average_price,
+                    leg_id=f_ord.leg_id,
+                    timestamp=f_ord.created_at
+                )
+                db.add(trade)
 
         # Auto-dismiss false rejection error logs if the order is actually FILLED or OPEN
         filled_or_open_symbols = [o.symbol for o in db.query(Order).filter(Order.status.in_(["FILLED", "OPEN"])).all()]

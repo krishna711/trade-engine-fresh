@@ -160,12 +160,12 @@ class OrderReconciler:
 
     async def reconcile_open_orders(self):
         """
-        Polls broker orderbook for any resting / open orders in the database.
+        Polls broker orderbook and tradebook for any resting / open orders in the database.
         Syncs fills and updates trade / position records automatically.
         """
         db = SessionLocal()
         try:
-            cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=12)
+            cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=14)
             open_orders = db.query(Order).filter(
                 Order.status.in_(["NEW", "PENDING", "OPEN"]),
                 Order.broker_order_id.isnot(None),
@@ -187,15 +187,18 @@ class OrderReconciler:
                 current_st = str(st_info.get("status") or "").upper()
 
                 if current_st in ["FILLED", "REJECTED", "CANCELLED"] and current_st != ord_rec.status:
-                    print(f"[OrderReconciler] Auto-reconciling open order {ord_rec.order_id} ({ord_rec.symbol}): {ord_rec.status} -> {current_st}")
+                    fill_p = float(st_info.get("average_price") or ord_rec.price)
+                    fill_q = int(st_info.get("filled_quantity") or ord_rec.quantity)
+                    print(f"[OrderReconciler] Auto-reconciling open order {ord_rec.order_id} ({ord_rec.symbol}): {ord_rec.status} -> {current_st} ({fill_q} @ {fill_p})")
                     await self.handle_execution_report({
                         "order_id": ord_rec.order_id,
                         "broker_order_id": ord_rec.broker_order_id,
                         "status": current_st,
-                        "filled_quantity": int(st_info.get("filled_quantity") or ord_rec.quantity),
-                        "average_price": float(st_info.get("average_price") or ord_rec.price),
+                        "filled_quantity": fill_q,
+                        "average_price": fill_p,
                         "client_id": ord_rec.client_id,
                         "symbol": ord_rec.symbol,
+                        "side": ord_rec.side,
                         "rejection_reason": st_info.get("rejection_reason")
                     })
         except Exception as e:

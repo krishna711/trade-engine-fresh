@@ -212,6 +212,12 @@ class App {
                 tEl.className = `pnl-val ${pnl.total_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}`;
                 tEl.innerText = `${pnl.total_pnl >= 0 ? '+' : ''}₹${pnl.total_pnl.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
             }
+
+            // Keep dashboard tables and client cards refreshed with latest PnL & trade states
+            if (this.currentView === "dashboard") {
+                if (window.strategiesManager) window.strategiesManager.loadInstances();
+                if (window.clientCardsManager) window.clientCardsManager.loadAccounts();
+            }
         } catch (e) {
             // silent retry
         }

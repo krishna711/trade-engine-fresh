@@ -523,23 +523,41 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             return {"success": False, "error": str(e)}
 
     async def get_order_status(self, broker_order_id: str) -> Dict[str, Any]:
-        """Queries single order status from XTS: GET /interactive/orders"""
+        """Queries single order status from XTS: GET /interactive/orders with tradebook fallback"""
         token = self.get_valid_token()
         if not token:
             return {"status": "UNKNOWN", "error": "Token missing"}
 
+        target_id = str(broker_order_id).strip()
         try:
             import requests
             url = self._get_url("orders")
             resp = requests.get(
                 url,
-                params={"appOrderID": broker_order_id, "clientID": self.client_id},
+                params={"clientID": self.client_id, "appOrderID": target_id},
                 headers={"Authorization": token, "Content-Type": "application/json"},
                 timeout=8
             )
             data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
             result = data.get("result", [])
-            order_info = result[0] if isinstance(result, list) and result else (result if isinstance(result, dict) else {})
+
+            order_info = {}
+            if isinstance(result, list):
+                # Search for specific order by AppOrderID, OrderID, or ExchangeOrderID
+                for o in result:
+                    if not isinstance(o, dict):
+                        continue
+                    app_id = str(o.get("AppOrderID") or o.get("appOrderID") or o.get("OrderID") or o.get("orderID") or "").strip()
+                    ex_id = str(o.get("ExchangeOrderID") or o.get("exchangeOrderID") or "").strip()
+                    if target_id and (app_id == target_id or ex_id == target_id):
+                        order_info = o
+                        break
+                # If not matched and target_id is empty, fall back to newest order
+                if not order_info and not target_id and result:
+                    order_info = result[-1]
+            elif isinstance(result, dict):
+                order_info = result
+
             status_raw = str(order_info.get("OrderStatus") or order_info.get("orderStatus") or "").upper()
 
             mapped_status = "PENDING"
@@ -567,8 +585,23 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             cum_qty = int(order_info.get("CumulativeQuantity") or order_info.get("cumulativeQuantity") or 0)
             avg_p = float(order_info.get("OrderAverageTradedPrice") or order_info.get("orderAverageTradedPrice") or 0.0)
 
+            # Tradebook fallback: If order status is not FILLED or cum_qty is 0, cross-check live tradebook
+            if target_id and mapped_status != "FILLED":
+                try:
+                    trades = await self.get_trades()
+                    for t in trades:
+                        t_oid = str(t.get("order_id") or "").strip()
+                        if t_oid and t_oid == target_id:
+                            mapped_status = "FILLED"
+                            status_raw = "COMPLETE (from tradebook)"
+                            cum_qty = int(t.get("quantity") or cum_qty or 1)
+                            avg_p = float(t.get("price") or avg_p)
+                            break
+                except Exception:
+                    pass
+
             return {
-                "broker_order_id": str(broker_order_id),
+                "broker_order_id": target_id,
                 "status": mapped_status,
                 "status_raw": status_raw,
                 "filled_quantity": cum_qty,

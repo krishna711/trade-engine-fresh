@@ -109,13 +109,29 @@ def strategy_process_entrypoint(
                     "symbols": subs
                 })
 
-            # Periodic timer check (every 1 second) for time-based entries & exits
+            # Periodic timer check (every 1 second) for time-based entries & exits and state sync
             now_ts = time.time()
             if now_ts - last_timer_call >= 1.0:
                 last_timer_call = now_ts
                 try:
                     if hasattr(instance, "on_timer"):
                         instance.on_timer()
+                except Exception:
+                    pass
+
+                # Emit real-time trade state, leg LTPs & PnL sync
+                try:
+                    trade_obj = getattr(instance, "current_trade", None)
+                    state_obj = getattr(instance, "trade_state", "IDLE")
+                    if trade_obj or state_obj != "IDLE":
+                        out_queue.put({
+                            "type": "STATE_UPDATE",
+                            "strategy_id": strategy_id,
+                            "data": {
+                                "trade_state": state_obj,
+                                "current_trade": trade_obj
+                            }
+                        })
                 except Exception:
                     pass
 

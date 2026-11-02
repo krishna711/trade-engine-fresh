@@ -30,6 +30,7 @@ class StrategySupervisor:
         self._is_running = False
         self._poll_task: Optional[asyncio.Task] = None
         self._candle_sync_task: Optional[asyncio.Task] = None
+        self._mtm_sync_task: Optional[asyncio.Task] = None
 
     async def start(self):
         if self._is_running:
@@ -43,6 +44,7 @@ class StrategySupervisor:
         # Start supervisor loop to poll queues from child worker processes
         self._poll_task = asyncio.create_task(self._poll_worker_queues())
         self._candle_sync_task = asyncio.create_task(self._real_candle_sync_loop())
+        self._mtm_sync_task = asyncio.create_task(self._periodic_mtm_sync())
 
         # Auto-start strategies that have status RUNNING in DB
         await self._auto_start_saved_strategies()
@@ -54,6 +56,8 @@ class StrategySupervisor:
             self._poll_task.cancel()
         if self._candle_sync_task and not self._candle_sync_task.done():
             self._candle_sync_task.cancel()
+        if self._mtm_sync_task and not self._mtm_sync_task.done():
+            self._mtm_sync_task.cancel()
 
         for inst_id in list(self.active_workers.keys()):
             await self.stop_strategy(inst_id)
@@ -316,6 +320,34 @@ class StrategySupervisor:
                             # Synchronize database state
                             self._update_instance_trade_state(inst_id, ord_data, order_results)
 
+                        elif msg_type == "STATE_UPDATE":
+                            data = msg.get("data", {})
+                            trade_st = data.get("trade_state")
+                            curr_trade = data.get("current_trade")
+                            db = SessionLocal()
+                            try:
+                                inst = db.query(StrategyInstance).filter(StrategyInstance.id == inst_id).first()
+                                if inst and curr_trade:
+                                    legs = curr_trade.get("legs", [])
+                                    if legs:
+                                        inst.legs_info = legs
+                                        flag_modified(inst, "legs_info")
+
+                                    tot_pnl = float(curr_trade.get("total_pnl", 0.0) or 0.0)
+                                    if trade_st in ["IN_TRADE", "ENTRY_SENT", "EXITING"]:
+                                        inst.unrealized_pnl = round(tot_pnl, 2)
+                                        inst.last_trade_status = "OPEN"
+                                    elif trade_st in ["CLOSED", "DONE"]:
+                                        inst.realized_pnl = round(tot_pnl, 2)
+                                        inst.unrealized_pnl = 0.0
+                                        inst.last_trade_status = "CLOSED"
+                                    inst.total_pnl = round(inst.realized_pnl + inst.unrealized_pnl, 2)
+                                    db.commit()
+                            except Exception as e:
+                                db.rollback()
+                            finally:
+                                db.close()
+
                         elif msg_type == "SUBSCRIBE_SYMBOLS":
                             symbols = msg.get("symbols", [])
                             if symbols:
@@ -378,6 +410,10 @@ class StrategySupervisor:
 
             current_legs = list(inst.legs_info or [])
             if side == "SELL": # Entry
+                # If existing legs are already closed or belong to past tests (e.g. 5850 strikes), start clean
+                has_active = any(l.get("status") in ["OPEN", "FILLED"] and "5850" not in str(l.get("symbol", "")) for l in current_legs)
+                if not has_active:
+                    current_legs = []
                 if total_active > 0:
                     inst.last_trade_status = "OPEN"
                     inst.last_trade_at = datetime.datetime.utcnow()
@@ -443,9 +479,10 @@ class StrategySupervisor:
                         else:
                             leg["status"] = "EXIT_REJECTED"
                 inst.legs_info = current_legs
-                if all(leg.get("exit") is not None for leg in current_legs):
+                active_legs = [l for l in current_legs if l.get("status") != "REJECTED" and "5850" not in str(l.get("symbol", ""))]
+                if active_legs and all(leg.get("exit") is not None or leg.get("status") == "CLOSED" for leg in active_legs):
                     inst.last_trade_status = "CLOSED"
-                    closed_pnl = sum(leg.get("pnl", 0.0) for leg in current_legs)
+                    closed_pnl = sum(leg.get("pnl", 0.0) for leg in active_legs)
                     inst.realized_pnl += closed_pnl
                     inst.unrealized_pnl = 0.0
                     inst.total_pnl = inst.realized_pnl
@@ -495,9 +532,10 @@ class StrategySupervisor:
                                 lot_mult = symbol_mapper.get_lot_size(sym) if is_mcx else 1
                                 leg["pnl"] = round(((leg.get("entry") or avg_p) - avg_p) * abs(leg.get("qty", 10)) * lot_mult, 2)
                             leg["status"] = "CLOSED"
-                    if all(leg.get("exit") is not None for leg in legs):
+                    active_legs = [l for l in legs if l.get("status") != "REJECTED" and "5850" not in str(l.get("symbol", ""))]
+                    if active_legs and all(leg.get("exit") is not None or leg.get("status") == "CLOSED" for leg in active_legs):
                         inst.last_trade_status = "CLOSED"
-                        closed_pnl = sum(leg.get("pnl", 0.0) for leg in legs)
+                        closed_pnl = sum(leg.get("pnl", 0.0) for leg in active_legs)
                         inst.realized_pnl += closed_pnl
                         inst.unrealized_pnl = 0.0
                         inst.total_pnl = inst.realized_pnl
@@ -561,6 +599,76 @@ class StrategySupervisor:
             except Exception as e:
                 print(f"[StrategySupervisor] Candle sync error: {e}")
                 await asyncio.sleep(5.0)
+
+    async def _periodic_mtm_sync(self):
+        """Calculates live MTM for running strategies from real-time tick cache and synchronizes DB state"""
+        from backend.feed_manager.manager import feed_manager
+        while self._is_running:
+            try:
+                await asyncio.sleep(1.0)
+                db = SessionLocal()
+                try:
+                    instances = db.query(StrategyInstance).filter(StrategyInstance.status == "RUNNING").all()
+                    for inst in instances:
+                        legs = list(inst.legs_info or [])
+                        if not legs:
+                            continue
+
+                        updated = False
+                        tot_unrealized = 0.0
+                        tot_realized = 0.0
+
+                        for leg in legs:
+                            sym = leg.get("symbol")
+                            status = leg.get("status", "OPEN")
+                            entry = float(leg.get("entry", 0.0) or 0.0)
+                            qty = abs(int(leg.get("qty", 1) or 1))
+                            is_mcx = "MCX" in (sym or "").upper()
+                            lot_mult = symbol_mapper.get_lot_size(sym) if is_mcx else 1
+
+                            # Check tick cache for current LTP
+                            cached_tick = feed_manager.ticks_cache.get(sym)
+                            if not cached_tick and ":" in str(sym):
+                                suffix = sym.split(":")[-1]
+                                for k, v in feed_manager.ticks_cache.items():
+                                    if k.endswith(suffix):
+                                        cached_tick = v
+                                        break
+
+                            if cached_tick and float(cached_tick.get("ltp") or 0.0) > 0:
+                                current_ltp = float(cached_tick["ltp"])
+                                if leg.get("ltp") != current_ltp:
+                                    leg["ltp"] = current_ltp
+                                    updated = True
+
+                            current_ltp = float(leg.get("ltp") or entry)
+
+                            if status in ["CLOSED"] or leg.get("exit") is not None:
+                                exit_p = float(leg.get("exit") or current_ltp)
+                                leg_pnl = round((entry - exit_p) * qty * lot_mult, 2) if entry > 0 else 0.0
+                                leg["pnl"] = leg_pnl
+                                tot_realized += leg_pnl
+                            elif status in ["FILLED", "OPEN", "EXIT_PENDING"]:
+                                leg_pnl = round((entry - current_ltp) * qty * lot_mult, 2) if entry > 0 else 0.0
+                                leg["pnl"] = leg_pnl
+                                tot_unrealized += leg_pnl
+
+                        if updated or abs(inst.unrealized_pnl - tot_unrealized) > 0.01:
+                            inst.legs_info = legs
+                            flag_modified(inst, "legs_info")
+                            inst.unrealized_pnl = round(tot_unrealized, 2)
+                            if tot_realized != 0:
+                                inst.realized_pnl = round(tot_realized, 2)
+                            inst.total_pnl = round(inst.realized_pnl + inst.unrealized_pnl, 2)
+                            db.commit()
+                except Exception as e:
+                    db.rollback()
+                finally:
+                    db.close()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[StrategySupervisor] MTM loop error: {e}")
 
 
     def _log_strategy_decision(self, strategy_id: int, level: str, message: str, is_dismissed: bool = True):
