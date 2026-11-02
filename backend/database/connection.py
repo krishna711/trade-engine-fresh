@@ -455,24 +455,36 @@ def seed_initial_data():
             if "MCX" in sym.upper() and cfg.get("product") != "NRML":
                 cfg["product"] = "NRML"
                 inst.config = cfg
-            # If instance had phantom zero-entry legs from rejected order, reset legs_info
+            # Keep legs that have valid status or entry price
             if inst.legs_info:
-                valid_legs = [l for l in inst.legs_info if float(l.get("entry", 0.0) or 0.0) > 0.0 and l.get("status") != "REJECTED"]
-                if len(valid_legs) != len(inst.legs_info):
+                valid_legs = [l for l in inst.legs_info if l.get("status") in ["FILLED", "OPEN", "CLOSED"] or float(l.get("entry", 0.0) or 0.0) > 0.0]
+                if valid_legs:
                     inst.legs_info = valid_legs
-                    if not valid_legs:
-                        inst.last_trade_status = "REJECTED"
 
-        # Clean up any phantom trades that belong to REJECTED orders
+        # Clean up any phantom trades that belong to genuinely REJECTED orders
         rej_orders = db.query(Order).filter(
-            (Order.status == "REJECTED") | 
-            (Order.rejection_reason.isnot(None) & (Order.status != "FILLED")) |
-            ((Order.status == "FILLED") & (Order.rejection_reason.isnot(None)))
+            (Order.status == "REJECTED")
         ).all()
         for r_ord in rej_orders:
-            r_ord.status = "REJECTED"
             r_ord.filled_quantity = 0
             db.query(Trade).filter(Trade.order_id == r_ord.order_id).delete(synchronize_session=False)
+
+        # Clear rejection reason if order is actually FILLED
+        db.query(Order).filter(
+            Order.status == "FILLED",
+            Order.rejection_reason.isnot(None)
+        ).update({"rejection_reason": None}, synchronize_session=False)
+
+        # Auto-dismiss false rejection error logs if the order is actually FILLED or OPEN
+        filled_or_open_symbols = [o.symbol for o in db.query(Order).filter(Order.status.in_(["FILLED", "OPEN"])).all()]
+        if filled_or_open_symbols:
+            for fsym in set(filled_or_open_symbols):
+                db.query(SystemLog).filter(
+                    SystemLog.level == "ERROR",
+                    SystemLog.is_dismissed == False,
+                    SystemLog.symbol == fsym,
+                    SystemLog.message.like("%REJECTED%")
+                ).update({"is_dismissed": True}, synchronize_session=False)
 
         db.commit()
 

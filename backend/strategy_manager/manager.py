@@ -2,6 +2,7 @@ import asyncio
 import multiprocessing
 import datetime
 from typing import Dict, Any, List, Optional
+from sqlalchemy.orm.attributes import flag_modified
 from backend.database.connection import SessionLocal
 from backend.database.models import StrategyInstance, StrategyTemplate, SystemLog, Account
 from backend.strategy_manager.worker import strategy_process_entrypoint
@@ -37,6 +38,7 @@ class StrategySupervisor:
 
         # Subscribe to feed ticks to route to relevant strategy workers
         event_bus.subscribe("feed.tick", self._on_feed_tick)
+        event_bus.subscribe("order.update", self._on_order_update_event)
 
         # Start supervisor loop to poll queues from child worker processes
         self._poll_task = asyncio.create_task(self._poll_worker_queues())
@@ -353,33 +355,40 @@ class StrategySupervisor:
             sym = ord_data.get("symbol")
             avg_p = 0.0
             filled_count = 0
+            open_count = 0
             rejected_count = 0
             rejection_reasons = []
 
             for r in results:
-                if r.get("success") and r.get("status") == "FILLED":
+                st = str(r.get("status") or "").upper()
+                if r.get("success") and st == "FILLED":
                     avg_p += float(r.get("price", 0.0))
                     filled_count += 1
-                elif r.get("status") in ["REJECTED", "CANCELLED"] or not r.get("success"):
+                elif r.get("success") and st in ["OPEN", "PENDING", "NEW"]:
+                    avg_p += float(r.get("price", 0.0))
+                    open_count += 1
+                elif st in ["REJECTED", "CANCELLED"] or not r.get("success"):
                     rejected_count += 1
                     if r.get("rejection_reason"):
                         rejection_reasons.append(r["rejection_reason"])
 
-            if filled_count > 0:
-                avg_p = round(avg_p / filled_count, 2)
+            total_active = filled_count + open_count
+            if total_active > 0:
+                avg_p = round(avg_p / total_active, 2)
 
             current_legs = list(inst.legs_info or [])
             if side == "SELL": # Entry
-                if filled_count > 0:
+                if total_active > 0:
                     inst.last_trade_status = "OPEN"
                     inst.last_trade_at = datetime.datetime.utcnow()
+                    leg_st = "FILLED" if filled_count > 0 else "OPEN"
                     found = False
                     for leg in current_legs:
                         if leg.get("symbol") == sym:
                             leg["entry"] = avg_p
                             leg["ltp"] = avg_p
                             leg["qty"] = -ord_data.get("quantity", 10)
-                            leg["status"] = "FILLED"
+                            leg["status"] = leg_st
                             found = True
                             break
                     if not found:
@@ -391,11 +400,23 @@ class StrategySupervisor:
                             "ltp": avg_p,
                             "qty": -ord_data.get("quantity", 10),
                             "pnl": 0.0,
-                            "status": "FILLED"
+                            "status": leg_st
                         })
                     inst.legs_info = current_legs
+                    if filled_count > 0:
+                        self._log_strategy_decision(
+                            instance_id,
+                            "SUCCESS",
+                            f"Order for {sym} FILLED @ {avg_p} across {filled_count} broker account(s)."
+                        )
+                    else:
+                        self._log_strategy_decision(
+                            instance_id,
+                            "INFO",
+                            f"Order for {sym} placed and OPEN in broker book @ {avg_p}. Awaiting fill."
+                        )
                 else:
-                    # All client orders for this leg were rejected
+                    # Truly REJECTED by broker
                     inst.last_trade_status = "REJECTED"
                     rej_summary = "; ".join(set(rejection_reasons)) if rejection_reasons else "Broker/RMS rejected order"
                     for leg in current_legs:
@@ -417,6 +438,8 @@ class StrategySupervisor:
                             lot_mult = symbol_mapper.get_lot_size(sym) if is_mcx else 1
                             leg["pnl"] = round(((leg.get("entry") or avg_p) - avg_p) * abs(leg.get("qty", 10)) * lot_mult, 2)
                             leg["status"] = "CLOSED"
+                        elif open_count > 0:
+                            leg["status"] = "EXIT_PENDING"
                         else:
                             leg["status"] = "EXIT_REJECTED"
                 inst.legs_info = current_legs
@@ -427,10 +450,93 @@ class StrategySupervisor:
                     inst.unrealized_pnl = 0.0
                     inst.total_pnl = inst.realized_pnl
 
+            flag_modified(inst, "legs_info")
             db.commit()
         except Exception as e:
             db.rollback()
             print(f"[StrategySupervisor] Error updating instance state: {e}")
+        finally:
+            db.close()
+
+    def _on_order_update_event(self, event_data: Dict[str, Any]):
+        """Event bus listener: Syncs broker execution reports back to running strategy instances"""
+        inst_id = event_data.get("strategy_id")
+        if not inst_id:
+            return
+
+        st = str(event_data.get("status") or "").upper()
+        sym = event_data.get("symbol")
+        avg_p = float(event_data.get("avg_price", 0.0) or 0.0)
+        side = str(event_data.get("side") or "SELL").upper()
+
+        db = SessionLocal()
+        try:
+            inst = db.query(StrategyInstance).filter(StrategyInstance.id == inst_id).first()
+            if not inst:
+                return
+
+            legs = [dict(l) for l in (inst.legs_info or [])]
+            if st == "FILLED":
+                if side == "SELL":
+                    inst.last_trade_status = "OPEN"
+                    inst.last_trade_at = datetime.datetime.utcnow()
+                    for leg in legs:
+                        if leg.get("symbol") == sym:
+                            if avg_p > 0:
+                                leg["entry"] = avg_p
+                                leg["ltp"] = avg_p
+                            leg["status"] = "FILLED"
+                elif side == "BUY":
+                    for leg in legs:
+                        if leg.get("symbol") == sym:
+                            if avg_p > 0:
+                                leg["exit"] = avg_p
+                                is_mcx = "MCX" in sym.upper()
+                                lot_mult = symbol_mapper.get_lot_size(sym) if is_mcx else 1
+                                leg["pnl"] = round(((leg.get("entry") or avg_p) - avg_p) * abs(leg.get("qty", 10)) * lot_mult, 2)
+                            leg["status"] = "CLOSED"
+                    if all(leg.get("exit") is not None for leg in legs):
+                        inst.last_trade_status = "CLOSED"
+                        closed_pnl = sum(leg.get("pnl", 0.0) for leg in legs)
+                        inst.realized_pnl += closed_pnl
+                        inst.unrealized_pnl = 0.0
+                        inst.total_pnl = inst.realized_pnl
+
+                inst.legs_info = legs
+                flag_modified(inst, "legs_info")
+                db.commit()
+
+                # Forward fill into child worker process container
+                worker = self.active_workers.get(inst_id)
+                if worker and "in_queue" in worker:
+                    try:
+                        worker["in_queue"].put({
+                            "type": "ORDER_RESULT",
+                            "data": {
+                                "order_request": {"symbol": sym, "side": side},
+                                "results": [{
+                                    "success": True,
+                                    "status": "FILLED",
+                                    "price": avg_p,
+                                    "symbol": sym,
+                                    "rejection_reason": None
+                                }]
+                            }
+                        })
+                    except Exception as e:
+                        print(f"[StrategySupervisor] Error forwarding order result to worker: {e}")
+            elif st in ["OPEN", "PENDING"]:
+                if inst.last_trade_status == "REJECTED":
+                    inst.last_trade_status = "OPEN"
+                for leg in legs:
+                    if leg.get("symbol") == sym and leg.get("status") != "FILLED":
+                        leg["status"] = "OPEN"
+                inst.legs_info = legs
+                flag_modified(inst, "legs_info")
+                db.commit()
+        except Exception as e:
+            db.rollback()
+            print(f"[StrategySupervisor] Error in _on_order_update_event: {e}")
         finally:
             db.close()
 

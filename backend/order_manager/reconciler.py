@@ -99,6 +99,7 @@ class OrderReconciler:
                 "strategy_id": order.strategy_instance_id,
                 "status": order.status,
                 "symbol": order.symbol,
+                "side": order.side,
                 "filled_qty": order.filled_quantity,
                 "avg_price": order.average_price
             })
@@ -156,5 +157,50 @@ class OrderReconciler:
             is_mcx = "MCX" in order.symbol.upper() or (order.segment and "MCX" in order.segment.upper())
             lot_mult = symbol_mapper.get_lot_size(order.symbol) if is_mcx else 1
             pos.realized_pnl = round(closed_qty * (pos.sell_avg_price - pos.buy_avg_price) * lot_mult, 2)
+
+    async def reconcile_open_orders(self):
+        """
+        Polls broker orderbook for any resting / open orders in the database.
+        Syncs fills and updates trade / position records automatically.
+        """
+        db = SessionLocal()
+        try:
+            cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=12)
+            open_orders = db.query(Order).filter(
+                Order.status.in_(["NEW", "PENDING", "OPEN"]),
+                Order.broker_order_id.isnot(None),
+                Order.created_at >= cutoff
+            ).all()
+
+            if not open_orders:
+                return
+
+            for ord_rec in open_orders:
+                from backend.database.models import Account
+                account = db.query(Account).filter(Account.client_id == ord_rec.client_id).first()
+                if not account or account.paper_mode:
+                    continue
+
+                from backend.order_manager.brokers.broker_adapters import create_broker_order_adapter
+                adapter = create_broker_order_adapter(account.broker, account.client_id, account.credentials_json)
+                st_info = await adapter.get_order_status(ord_rec.broker_order_id)
+                current_st = str(st_info.get("status") or "").upper()
+
+                if current_st in ["FILLED", "REJECTED", "CANCELLED"] and current_st != ord_rec.status:
+                    print(f"[OrderReconciler] Auto-reconciling open order {ord_rec.order_id} ({ord_rec.symbol}): {ord_rec.status} -> {current_st}")
+                    await self.handle_execution_report({
+                        "order_id": ord_rec.order_id,
+                        "broker_order_id": ord_rec.broker_order_id,
+                        "status": current_st,
+                        "filled_quantity": int(st_info.get("filled_quantity") or ord_rec.quantity),
+                        "average_price": float(st_info.get("average_price") or ord_rec.price),
+                        "client_id": ord_rec.client_id,
+                        "symbol": ord_rec.symbol,
+                        "rejection_reason": st_info.get("rejection_reason")
+                    })
+        except Exception as e:
+            print(f"[OrderReconciler] Background reconciliation error: {e}")
+        finally:
+            db.close()
 
 reconciler = OrderReconciler()

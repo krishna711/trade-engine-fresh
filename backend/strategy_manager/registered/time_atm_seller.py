@@ -283,38 +283,50 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             # Entry fills
             avg_price = 0.0
             filled_count = 0
+            open_count = 0
             rejected_count = 0
             rejection_reasons = []
 
             for r in results:
-                if r.get("success") and r.get("status") == "FILLED":
+                st = str(r.get("status") or "").upper()
+                if r.get("success") and st == "FILLED":
                     avg_price += float(r.get("price", 0.0))
                     filled_count += 1
+                elif r.get("success") and st in ["OPEN", "PENDING", "NEW"]:
+                    avg_price += float(r.get("price", 0.0))
+                    open_count += 1
                 else:
                     rejected_count += 1
                     if r.get("rejection_reason"):
                         rejection_reasons.append(r["rejection_reason"])
 
-            if filled_count > 0:
-                avg_price = round(avg_price / filled_count, 2)
+            total_active = filled_count + open_count
+            if total_active > 0:
+                avg_price = round(avg_price / total_active, 2)
                 for leg in self.current_trade["legs"]:
                     if leg["symbol"] == sym:
-                        leg["entry"] = avg_price
-                        leg["ltp"] = avg_price
-                        leg["status"] = "FILLED"
+                        if avg_price > 0:
+                            leg["entry"] = avg_price
+                            leg["ltp"] = avg_price
+                        leg["status"] = "FILLED" if filled_count > 0 else "OPEN"
 
-                self.log_decision(
-                    "ORDER FILLED",
-                    f"Leg {sym} SELL filled @ {avg_price} across {filled_count} broker account(s)."
-                )
-
-                # If all legs are filled, transition to IN_TRADE
-                if all(leg.get("status") == "FILLED" for leg in self.current_trade["legs"]):
-                    self.trade_state = "IN_TRADE"
+                if filled_count > 0:
                     self.log_decision(
-                        "TRADE ACTIVE",
-                        f"All ATM legs filled. Active monitoring SL (Max Loss: -INR {self.max_loss:.2f}) and Exit Time ({self.exit_time})."
+                        "ORDER FILLED",
+                        f"Leg {sym} SELL filled @ {avg_price} across {filled_count} broker account(s)."
                     )
+                else:
+                    self.log_decision(
+                        "ORDER OPEN",
+                        f"Leg {sym} SELL order is OPEN on exchange @ {avg_price}. Monitoring fills & PnL."
+                    )
+
+                # Transition to IN_TRADE so we actively track ticks, SL, and exits
+                self.trade_state = "IN_TRADE"
+                self.log_decision(
+                    "TRADE ACTIVE",
+                    f"ATM legs active. Active monitoring SL (Max Loss: -INR {self.max_loss:.2f}) and Exit Time ({self.exit_time})."
+                )
             else:
                 rej_msg = "; ".join(set(rejection_reasons)) if rejection_reasons else "Broker/RMS rejected order"
                 for leg in self.current_trade["legs"]:
@@ -329,7 +341,8 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
 
         elif side == "BUY" and self.current_trade:
             # Exit fills
-            filled_count = sum(1 for r in results if r.get("success") and r.get("status") == "FILLED")
+            filled_count = sum(1 for r in results if r.get("success") and str(r.get("status") or "").upper() == "FILLED")
+            open_count = sum(1 for r in results if r.get("success") and str(r.get("status") or "").upper() in ["OPEN", "PENDING", "NEW"])
             if filled_count > 0:
                 self.log_decision("ORDER FILLED", f"Square-off BUY filled for {sym}.")
                 for leg in self.current_trade["legs"]:
@@ -338,6 +351,8 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
                 if all(leg.get("status") == "CLOSED" for leg in self.current_trade["legs"]):
                     self.trade_state = "CLOSED"
                     self.log_decision("TRADE COMPLETED", f"Strategy cycle completed. Realized PnL: INR {self.current_trade.get('total_pnl', 0.0):.2f}")
+            elif open_count > 0:
+                self.log_decision("ORDER OPEN", f"Square-off BUY order for {sym} is OPEN on exchange. Monitoring exit fill.")
             else:
                 rej_msg = "; ".join(set(r.get("rejection_reason") for r in results if r.get("rejection_reason"))) or "Broker/RMS rejected exit"
                 self.log_decision(

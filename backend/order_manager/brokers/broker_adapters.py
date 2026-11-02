@@ -301,15 +301,24 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 result = data.get("result", {})
                 b_id = str(result.get("AppOrderID") or result.get("orderID") or "")
 
-                # Wait slightly for XTS OMS/RMS to validate and assign status
-                await asyncio.sleep(0.5)
+                status_info = {}
+                order_st = "OPEN"
+                status_raw = ""
+                rej_reason = None
 
-                status_info = await self.get_order_status(b_id) if b_id else {}
-                order_st = status_info.get("status", "OPEN")
-                rej_reason = status_info.get("rejection_reason")
-                status_raw = status_info.get("status_raw", "")
+                # Poll up to 3.6 seconds (6 checks * 0.6s) to allow RMS validation and exchange matching
+                for poll_attempt in range(6):
+                    await asyncio.sleep(0.6)
+                    status_info = await self.get_order_status(b_id) if b_id else {}
+                    order_st = status_info.get("status", "OPEN")
+                    status_raw = status_info.get("status_raw", "")
+                    rej_reason = status_info.get("rejection_reason")
 
-                print(f"[XTS Order] Order {b_id} initial OMS status: {order_st} ({status_raw}) | Rejection Reason: {rej_reason}")
+                    print(f"[XTS Order] Order {b_id} check {poll_attempt+1}/6: {order_st} ({status_raw})")
+                    if order_st in ["FILLED", "REJECTED", "CANCELLED"]:
+                        break
+
+                print(f"[XTS Order] Order {b_id} status after initial poll: {order_st} ({status_raw}) | Rejection Reason: {rej_reason}")
 
                 # 1. Intercept RMS / Exchange Rejections immediately!
                 if order_st == "REJECTED":
@@ -346,6 +355,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 if order_st == "FILLED":
                     fill_price = float(status_info.get("average_price") or req_price)
                     filled_qty = int(status_info.get("filled_quantity") or order_dict["quantity"])
+                    print(f"[XTS Order] Order {b_id} execution confirmed FILLED: {filled_qty} @ {fill_price}")
                     return {
                         "success": True,
                         "broker_order_id": b_id,
@@ -358,10 +368,10 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                         "timestamp": datetime.datetime.utcnow().isoformat()
                     }
 
-                # 3. If still OPEN / PENDING and auto_chase is enabled, modify and chase
+                # 3. If still OPEN / PENDING after 3.6s and auto_chase is enabled, modify and chase
                 auto_chase = bool(order_dict.get("auto_chase", True))
                 if auto_chase and b_id and order_st in ["OPEN", "PENDING"]:
-                    print(f"[XTS Order] Order {b_id} sitting as {order_st}. Chasing market price...")
+                    print(f"[XTS Order] Order {b_id} sitting as {order_st} after 3.6s. Chasing market price...")
                     fresh_q = await self.get_market_quote(canonical_symbol, str(broker_token), exchange_seg)
                     fresh_ltp = float(fresh_q.get("ltp") or ltp)
                     fresh_bid = float(fresh_q.get("bid") or fresh_ltp)
@@ -384,9 +394,14 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                     )
                     if mod_res.get("success"):
                         print(f"[XTS Order] Modified order {b_id} to new price {new_price} successfully.")
-                        await asyncio.sleep(0.5)
-                        post_mod_st = await self.get_order_status(b_id)
-                        post_st = post_mod_st.get("status")
+                        # Check post-modification status (up to 3 checks * 0.6s)
+                        for chase_attempt in range(3):
+                            await asyncio.sleep(0.6)
+                            post_mod_st = await self.get_order_status(b_id)
+                            post_st = post_mod_st.get("status")
+                            if post_st in ["FILLED", "REJECTED", "CANCELLED"]:
+                                break
+
                         if post_st == "REJECTED":
                             return {
                                 "success": False,
@@ -400,6 +415,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                                 "timestamp": datetime.datetime.utcnow().isoformat()
                             }
                         elif post_st == "FILLED":
+                            fill_p = float(post_mod_st.get("average_price") or new_price)
                             return {
                                 "success": True,
                                 "broker_order_id": b_id,
@@ -407,7 +423,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                                 "broker_token": broker_token,
                                 "status": "FILLED",
                                 "filled_quantity": int(post_mod_st.get("filled_quantity") or order_dict["quantity"]),
-                                "average_price": round(float(post_mod_st.get("average_price") or new_price), 2),
+                                "average_price": round(fill_p, 2),
                                 "rejection_reason": None,
                                 "timestamp": datetime.datetime.utcnow().isoformat()
                             }
@@ -426,17 +442,21 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                     else:
                         print(f"[XTS Order] Order modification attempt error: {mod_res.get('error')}")
 
-                # If no auto_chase or modification failed, return current book status
-                final_status = "FILLED" if order_st == "FILLED" else order_st
+                # Final re-check before returning current status
+                latest_st = await self.get_order_status(b_id) if b_id else status_info
+                final_st = latest_st.get("status", order_st)
+                fill_p = float(latest_st.get("average_price") or req_price)
+                fill_q = int(latest_st.get("filled_quantity") or (order_dict["quantity"] if final_st == "FILLED" else 0))
+
                 return {
-                    "success": order_st not in ["REJECTED", "CANCELLED"],
+                    "success": final_st not in ["REJECTED", "CANCELLED"],
                     "broker_order_id": b_id,
                     "broker_symbol": broker_symbol,
                     "broker_token": broker_token,
-                    "status": final_status,
-                    "filled_quantity": int(status_info.get("filled_quantity") or (order_dict["quantity"] if final_status == "FILLED" else 0)),
-                    "average_price": round(float(status_info.get("average_price") or req_price), 2),
-                    "rejection_reason": rej_reason if order_st in ["REJECTED", "CANCELLED"] else None,
+                    "status": final_st,
+                    "filled_quantity": fill_q,
+                    "average_price": round(fill_p, 2),
+                    "rejection_reason": latest_st.get("rejection_reason") if final_st in ["REJECTED", "CANCELLED"] else None,
                     "timestamp": datetime.datetime.utcnow().isoformat()
                 }
             else:

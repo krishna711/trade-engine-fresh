@@ -30,11 +30,25 @@ class OrderManager:
         self._is_running = True
         # Listen to ticks from event bus to update position mark-to-market and unrealized PnL
         event_bus.subscribe("feed.tick", self._on_tick_update)
-        print("[OrderManager] Started successfully.")
+        # Start background orderbook reconciler loop (every 5 seconds)
+        self._reconcile_task = asyncio.create_task(self._reconcile_loop())
+        print("[OrderManager] Started successfully with background orderbook reconciler.")
 
     async def stop(self):
         self._is_running = False
+        if hasattr(self, "_reconcile_task") and self._reconcile_task and not self._reconcile_task.done():
+            self._reconcile_task.cancel()
         print("[OrderManager] Stopped.")
+
+    async def _reconcile_loop(self):
+        while self._is_running:
+            try:
+                await reconciler.reconcile_open_orders()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[OrderManager] Background reconciler error: {e}")
+            await asyncio.sleep(5.0)
 
     async def place_order(
         self,
