@@ -593,140 +593,140 @@ def seed_initial_data():
             historical_reports = [
                 TradeReport(
                     cycle_id="TC_20261101_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 17NOV2026 CE 9450", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 17NOV2026 CE 9450", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 11, 1, 17, 45, 0), closed_at=datetime.datetime(2026, 11, 1, 19, 6, 11),
                     entry_prices=[459.00, 440.70], exit_prices=[404.35, 582.00], reason="-", mtm=-5211.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261030_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 17NOV2026 CE 9900", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 17NOV2026 CE 9900", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 30, 17, 45, 0), closed_at=datetime.datetime(2026, 10, 30, 23, 18, 2),
                     entry_prices=[506.70, 507.00], exit_prices=[518.50, 476.90], reason="-", mtm=1098.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261029_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 17NOV2026 CE 9650", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 17NOV2026 CE 9650", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 29, 17, 45, 0), closed_at=datetime.datetime(2026, 10, 29, 23, 18, 1),
                     entry_prices=[494.45, 483.35], exit_prices=[511.70, 456.90], reason="-", mtm=552.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261028_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 17NOV2026 CE 9700", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 17NOV2026 CE 9700", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 28, 17, 45, 0), closed_at=datetime.datetime(2026, 10, 28, 23, 18, 1),
                     entry_prices=[494.75, 512.65], exit_prices=[561.00, 451.75], reason="-", mtm=-291.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261027_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 17NOV2026 CE 9750", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 17NOV2026 CE 9750", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 27, 17, 45, 0), closed_at=datetime.datetime(2026, 10, 27, 23, 18, 1),
                     entry_prices=[552.90, 535.35], exit_prices=[407.15, 652.20], reason="-", mtm=1674.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261026_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 17NOV2026 CE 9650", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 17NOV2026 CE 9650", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 26, 17, 45, 1), closed_at=datetime.datetime(2026, 10, 26, 23, 18, 1),
                     entry_prices=[568.10, 557.40], exit_prices=[601.10, 513.00], reason="-", mtm=684.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261023_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 17NOV2026 CE 9600", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 17NOV2026 CE 9600", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 23, 17, 45, 0), closed_at=datetime.datetime(2026, 10, 23, 23, 18, 1),
                     entry_prices=[580.00, 573.50], exit_prices=[692.70, 494.00], reason="-", mtm=-2028.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261022_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 17NOV2026 CE 9450", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 17NOV2026 CE 9450", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 22, 17, 45, 1), closed_at=datetime.datetime(2026, 10, 22, 23, 18, 1),
                     entry_prices=[552.00, 538.10], exit_prices=[561.15, 530.05], reason="-", mtm=-66.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261021_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 17NOV2026 CE 9500", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 17NOV2026 CE 9500", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 21, 17, 45, 0), closed_at=datetime.datetime(2026, 10, 21, 23, 18, 2),
                     entry_prices=[548.00, 526.25], exit_prices=[384.00, 670.00], reason="-", mtm=1222.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261020_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 17NOV2026 CE 9600", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 17NOV2026 CE 9600", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 20, 17, 45, 1), closed_at=datetime.datetime(2026, 10, 20, 23, 18, 1),
                     entry_prices=[456.15, 676.45], exit_prices=[467.15, 601.65], reason="-", mtm=3868.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261019_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 17NOV2026 CE 9250", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 17NOV2026 CE 9250", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 19, 17, 45, 1), closed_at=datetime.datetime(2026, 10, 19, 23, 18, 1),
                     entry_prices=[475.45, 595.75], exit_prices=[619.95, 476.00], reason="-", mtm=-1485.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261016_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 15OCT2026 CE 9100", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 15OCT2026 CE 9100", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 16, 17, 45, 0), closed_at=datetime.datetime(2026, 10, 16, 23, 18, 1),
                     entry_prices=[126.30, 145.10], exit_prices=[114.00, 89.05], reason="-", mtm=4341.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261015_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 15OCT2026 CE 8750", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 15OCT2026 CE 8750", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 15, 17, 45, 1), closed_at=datetime.datetime(2026, 10, 15, 23, 18, 1),
                     entry_prices=[154.90, 145.70], exit_prices=[264.40, 60.65], reason="-", mtm=-1470.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261014_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 15OCT2026 CE 8900", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 15OCT2026 CE 8900", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 14, 17, 45, 0), closed_at=datetime.datetime(2026, 10, 14, 23, 18, 2),
                     entry_prices=[198.50, 236.55], exit_prices=[219.90, 138.81], reason="-", mtm=3068.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261013_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 15OCT2026 CE 8750", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 15OCT2026 CE 8750", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 13, 17, 45, 0), closed_at=datetime.datetime(2026, 10, 13, 23, 18, 2),
                     entry_prices=[253.45, 234.45], exit_prices=[302.55, 173.20], reason="-", mtm=729.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261009_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 15OCT2026 CE 8900", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 15OCT2026 CE 8900", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 9, 17, 45, 1), closed_at=datetime.datetime(2026, 10, 9, 23, 18, 1),
                     entry_prices=[273.60, 264.40], exit_prices=[239.60, 269.45], reason="-", mtm=1737.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261008_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 15OCT2026 CE 8700", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 15OCT2026 CE 8700", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 8, 16, 30, 0), closed_at=datetime.datetime(2026, 10, 8, 23, 18, 2),
                     entry_prices=[290.05, 267.10], exit_prices=[197.95, 352.30], reason="-", mtm=414.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261007_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 15OCT2026 CE 8650", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 15OCT2026 CE 8650", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 7, 16, 30, 0), closed_at=datetime.datetime(2026, 10, 7, 23, 18, 1),
                     entry_prices=[305.20, 280.10], exit_prices=[210.40, 327.40], reason="-", mtm=2850.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261006_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 15OCT2026 CE 8600", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 15OCT2026 CE 8600", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 6, 16, 30, 0), closed_at=datetime.datetime(2026, 10, 6, 23, 18, 1),
                     entry_prices=[315.00, 295.50], exit_prices=[220.10, 337.90], reason="-", mtm=3150.00, status="CLOSED"
                 ),
                 TradeReport(
                     cycle_id="TC_20261005_QUANTZEN_1", client_id="QUANTZEN", strategy_instance_id=1,
-                    strategy_name="Crude Short Straddle", symbol="CRUDEOILM 15OCT2026 CE 8550", segment="MCX",
+                    strategy_name="MCX Straddle", symbol="CRUDEOILM 15OCT2026 CE 8550", segment="MCX",
                     side="SELL", quantity=60, is_paper=False, mode="LIVE",
                     opened_at=datetime.datetime(2026, 10, 5, 16, 30, 0), closed_at=datetime.datetime(2026, 10, 5, 23, 18, 1),
                     entry_prices=[330.40, 310.25], exit_prices=[250.35, 358.60], reason="-", mtm=2102.00, status="CLOSED"

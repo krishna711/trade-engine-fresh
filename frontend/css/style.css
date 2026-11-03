@@ -1304,7 +1304,7 @@ table.data-table tbody td {
     color: var(--text-muted);
 }
 
-.date-input-group input {
+.date-input-group input[type="date"] {
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
     border-radius: 6px;
@@ -1312,8 +1312,14 @@ table.data-table tbody td {
     color: var(--text-primary);
     font-family: var(--font-mono);
     font-size: 0.75rem;
-    width: 105px;
+    width: 128px;
     outline: none;
+    color-scheme: dark;
+    cursor: pointer;
+}
+
+body.light-theme .date-input-group input[type="date"] {
+    color-scheme: light;
 }
 
 .date-input-group input:focus {

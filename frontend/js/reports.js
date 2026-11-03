@@ -1,5 +1,5 @@
 /**
- * Reports and Historical Trade Audit Manager
+ * Reports and Real Trade Audit Manager
  * Handles multi-client & strategy filtering, date selection, trade listing with stacked prices, and MTM aggregation
  */
 class ReportsManager {
@@ -17,7 +17,26 @@ class ReportsManager {
     }
 
     init() {
+        this.initDates();
         this.bindEvents();
+    }
+
+    initDates() {
+        const fromDateEl = document.getElementById("rep-from-date");
+        const toDateEl = document.getElementById("rep-to-date");
+
+        const today = new Date();
+        const yyyy = today.getFullYear();
+        const mm = String(today.getMonth() + 1).padStart(2, '0');
+        const dd = String(today.getDate()).padStart(2, '0');
+        const todayStr = `${yyyy}-${mm}-${dd}`;
+
+        if (fromDateEl && !fromDateEl.value) {
+            fromDateEl.value = "2026-10-01";
+        }
+        if (toDateEl && !toDateEl.value) {
+            toDateEl.value = todayStr;
+        }
     }
 
     bindEvents() {
@@ -102,6 +121,7 @@ class ReportsManager {
     }
 
     async loadReports() {
+        this.initDates();
         if (!this.isInitialized) {
             await this.loadFilters();
             this.isInitialized = true;
@@ -117,19 +137,13 @@ class ReportsManager {
                 this.clients = data.clients || [];
                 this.strategies = data.strategies || [];
 
-                // Default selection: select QUANTZEN
-                if (this.selectedClientIds.size === 0) {
-                    const hasQuantzen = this.clients.some(c => c.id === "QUANTZEN");
-                    if (hasQuantzen) {
-                        this.selectedClientIds.add("QUANTZEN");
-                    } else if (this.clients.length > 0) {
-                        this.selectedClientIds.add(this.clients[0].id);
-                    }
-                }
+                // Select ALL real clients by default
+                this.selectedClientIds.clear();
+                this.clients.forEach(c => this.selectedClientIds.add(c.id));
 
-                if (this.selectedStrategyNames.size === 0) {
-                    this.strategies.forEach(s => this.selectedStrategyNames.add(s.name));
-                }
+                // Select ALL real strategies by default
+                this.selectedStrategyNames.clear();
+                this.strategies.forEach(s => this.selectedStrategyNames.add(s.name));
 
                 this.renderClientFilters();
                 this.renderStrategyFilters();
@@ -249,7 +263,40 @@ class ReportsManager {
         this.loadTrades();
     }
 
+    renderEmptyTrades(message) {
+        const tbody = document.getElementById("reports-trades-tbody");
+        const totalTradesEl = document.getElementById("rep-total-trades");
+        const totalMtmEl = document.getElementById("rep-total-mtm-val");
+        const badgeMtm = document.getElementById("rep-badge-mtm");
+
+        if (totalTradesEl) totalTradesEl.innerText = "0";
+        if (totalMtmEl) totalMtmEl.innerText = "₹0.00";
+        if (badgeMtm) {
+            badgeMtm.style.color = "var(--text-secondary)";
+            badgeMtm.style.borderColor = "var(--border-color)";
+        }
+        if (tbody) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="13" style="text-align: center; color: var(--text-muted); padding: 2.5rem;">
+                        ${message}
+                    </td>
+                </tr>
+            `;
+        }
+    }
+
     async loadTrades() {
+        if (this.clients.length > 0 && this.selectedClientIds.size === 0) {
+            this.renderEmptyTrades("No client accounts selected. Please check at least one client.");
+            return;
+        }
+
+        if (this.strategies.length > 0 && this.selectedStrategyNames.size === 0) {
+            this.renderEmptyTrades("No strategies selected. Please check at least one strategy.");
+            return;
+        }
+
         const tbody = document.getElementById("reports-trades-tbody");
         const totalTradesEl = document.getElementById("rep-total-trades");
         const totalMtmEl = document.getElementById("rep-total-mtm-val");
@@ -303,13 +350,7 @@ class ReportsManager {
             tbody.innerHTML = "";
 
             if (!data.trades || data.trades.length === 0) {
-                tbody.innerHTML = `
-                    <tr>
-                        <td colspan="13" style="text-align: center; color: var(--text-muted); padding: 2rem;">
-                            No trade reports found matching selected criteria.
-                        </td>
-                    </tr>
-                `;
+                this.renderEmptyTrades("No trade reports found matching selected criteria.");
                 return;
             }
 
@@ -339,6 +380,7 @@ class ReportsManager {
                     `<span class="mode-badge-paper">PAPER</span>`;
 
                 const sideClass = (t.side || "").toUpperCase() === "BUY" ? "side-buy" : "side-sell";
+                const statusClass = t.status === "OPEN" ? "status-open-pill" : "status-closed-pill";
 
                 tr.innerHTML = `
                     <td style="white-space: nowrap; font-family: var(--font-mono); font-size: 0.78rem;">${t.opened}</td>
@@ -353,7 +395,7 @@ class ReportsManager {
                     <td>${exitHtml}</td>
                     <td style="color: var(--text-muted);">${t.reason || "-"}</td>
                     <td class="${mtmClass}">${mtmStr}</td>
-                    <td><span class="status-closed-pill">${t.status}</span></td>
+                    <td><span class="${statusClass}">${t.status}</span></td>
                 `;
 
                 tbody.appendChild(tr);

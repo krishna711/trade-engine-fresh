@@ -1301,7 +1301,7 @@ def parse_report_date(d_str: Optional[str], is_end_of_day: bool = False) -> Opti
         return None
     d_str = d_str.strip()
     dt = None
-    for fmt in ["%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"]:
+    for fmt in ["%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y", "%Y/%m/%d"]:
         try:
             dt = datetime.datetime.strptime(d_str, fmt)
             break
@@ -1314,9 +1314,99 @@ def parse_report_date(d_str: Optional[str], is_end_of_day: bool = False) -> Opti
             return dt.replace(hour=0, minute=0, second=0, microsecond=0)
     return None
 
+def sync_real_engine_data_to_reports(db: Session):
+    """
+    Scans real StrategyInstance, Order, and Trade tables to ensure any real engine
+    trades and active positions are represented in TradeReport.
+    """
+    try:
+        # 1. Sync from real StrategyInstance states (both OPEN and CLOSED)
+        instances = db.query(StrategyInstance).all()
+        for inst in instances:
+            legs = inst.legs_info or []
+            if not legs:
+                continue
+            
+            client_id = inst.client_ids[0] if (inst.client_ids and len(inst.client_ids) > 0) else "QUANTZEN"
+            strat_name = inst.instance_name_user or inst.instance_name_admin or "MCX Straddle"
+            
+            active_legs = [l for l in legs if l.get("entry") or l.get("status") in ["FILLED", "OPEN", "CLOSED"]]
+            if not active_legs:
+                continue
+
+            today_str = (inst.last_trade_at or datetime.datetime.utcnow()).strftime("%Y%m%d")
+            cycle_id = f"TC_{today_str}_{client_id}_{inst.id}"
+
+            rep = db.query(TradeReport).filter(TradeReport.cycle_id == cycle_id).first()
+            if not rep:
+                rep = TradeReport(
+                    cycle_id=cycle_id,
+                    client_id=client_id,
+                    strategy_instance_id=inst.id,
+                    strategy_name=strat_name,
+                    opened_at=inst.last_trade_at or datetime.datetime.utcnow()
+                )
+                db.add(rep)
+
+            sym = active_legs[0].get("symbol", "CRUDEOILM")
+            rep.symbol = sym.replace("MCXFO:", "").replace("MCX:", "")
+            rep.segment = "MCX" if "MCX" in sym.upper() else "NSE"
+            rep.side = "SELL"
+            rep.quantity = sum(abs(l.get("qty", 10)) for l in active_legs)
+            rep.is_paper = False
+            rep.mode = "LIVE"
+            rep.entry_prices = [round(float(l.get("entry") or 0.0), 2) for l in active_legs if l.get("entry")]
+            rep.exit_prices = [round(float(l.get("exit") or 0.0), 2) for l in active_legs if l.get("exit")]
+            rep.legs_info = active_legs
+
+            if inst.last_trade_status == "CLOSED":
+                rep.status = "CLOSED"
+                rep.closed_at = rep.closed_at or datetime.datetime.utcnow()
+                rep.reason = "EXIT_TIME"
+                rep.mtm = round(float(inst.realized_pnl or 0.0), 2)
+            else:
+                rep.status = "OPEN"
+                rep.closed_at = None
+                rep.reason = "-"
+                rep.mtm = round(float(inst.unrealized_pnl or 0.0), 2)
+
+        # 2. Check standalone real trades in Trade table
+        trades = db.query(Trade).all()
+        for trd in trades:
+            trd_cycle_id = f"TRD_{trd.trade_id}"
+            rep = db.query(TradeReport).filter(TradeReport.cycle_id == trd_cycle_id).first()
+            if not rep:
+                db.add(TradeReport(
+                    cycle_id=trd_cycle_id,
+                    client_id=trd.client_id or "QUANTZEN",
+                    strategy_instance_id=trd.strategy_instance_id,
+                    strategy_name="MCX Straddle" if "CRUDE" in trd.symbol else "Trading Alpha",
+                    symbol=trd.symbol.replace("MCXFO:", "").replace("MCX:", ""),
+                    segment=trd.segment or "MCX",
+                    side=trd.side,
+                    quantity=trd.quantity,
+                    is_paper=False,
+                    mode="LIVE",
+                    opened_at=trd.timestamp or datetime.datetime.utcnow(),
+                    closed_at=trd.timestamp,
+                    entry_prices=[round(float(trd.price), 2)],
+                    exit_prices=[round(float(trd.price), 2)],
+                    reason="-",
+                    mtm=0.0,
+                    status="CLOSED"
+                ))
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[Reports] Error syncing real data to reports: {e}")
+
 @app.get("/api/reports/filters")
 async def get_reports_filters(db: Session = Depends(get_db)):
-    """Returns available clients and strategies for reports filter panes"""
+    """Returns REAL connected clients and strategies for reports filter panes"""
+    sync_real_engine_data_to_reports(db)
+
+    # 1. Real Client Accounts strictly from database
     accounts = db.query(Account).all()
     clients = []
     seen_clients = set()
@@ -1330,7 +1420,7 @@ async def get_reports_filters(db: Session = Depends(get_db)):
                 "broker": acc.broker
             })
     
-    # Also extract distinct clients from TradeReport if not present in Account
+    # Also extract distinct clients from real TradeReport and Trade records
     try:
         rep_clients = db.query(TradeReport.client_id).distinct().all()
         for (cid,) in rep_clients:
@@ -1340,29 +1430,33 @@ async def get_reports_filters(db: Session = Depends(get_db)):
                     "id": cid,
                     "name": cid,
                     "status": "ACTIVE",
-                    "broker": "XTS" if cid == "QUANTZEN" else "BROKER"
+                    "broker": "XTS"
                 })
     except Exception:
         pass
 
-    # Ensure reference accounts from user terminal exist
-    for ref_cid in ["QUANTZEN", "PCG6092A", "XTS"]:
-        if ref_cid not in seen_clients:
-            seen_clients.add(ref_cid)
-            clients.append({
-                "id": ref_cid,
-                "name": ref_cid,
-                "status": "ACTIVE",
-                "broker": "XTS"
-            })
+    try:
+        trd_clients = db.query(Trade.client_id).distinct().all()
+        for (cid,) in trd_clients:
+            if cid and cid not in seen_clients:
+                seen_clients.add(cid)
+                clients.append({
+                    "id": cid,
+                    "name": cid,
+                    "status": "ACTIVE",
+                    "broker": "XTS"
+                })
+    except Exception:
+        pass
 
+    # 2. Real Strategies from instances and reports
     instances = db.query(StrategyInstance).all()
     strategies = []
     seen_strat_names = set()
     for inst in instances:
-        mapped_client = inst.client_ids[0] if (inst.client_ids and len(inst.client_ids) > 0) else "QUANTZEN"
-        slug = inst.template_key.lower().replace("_", "-") if inst.template_key else "crudeoil-short-straddle"
-        name = inst.instance_name_user or inst.instance_name_admin
+        mapped_client = inst.client_ids[0] if (inst.client_ids and len(inst.client_ids) > 0) else (clients[0]["id"] if clients else "QUANTZEN")
+        slug = inst.template_key.lower().replace("_", "-") if inst.template_key else "strat-time-atm-seller-v1"
+        name = inst.instance_name_user or inst.instance_name_admin or "MCX Straddle"
         if name not in seen_strat_names:
             seen_strat_names.add(name)
             strategies.append({
@@ -1372,7 +1466,7 @@ async def get_reports_filters(db: Session = Depends(get_db)):
                 "slug": slug
             })
 
-    # Include historical strategy names from TradeReport
+    # Include any distinct historical strategy names from TradeReport
     try:
         rep_strats = db.query(TradeReport.strategy_name).distinct().all()
         for (sname,) in rep_strats:
@@ -1381,8 +1475,8 @@ async def get_reports_filters(db: Session = Depends(get_db)):
                 strategies.append({
                     "id": sname,
                     "name": sname,
-                    "client_name": "QUANTZEN",
-                    "slug": sname.lower().replace(" ", "-")
+                    "client_name": clients[0]["id"] if clients else "QUANTZEN",
+                    "slug": "strat-time-atm-seller-v1" if "straddle" in sname.lower() or "mcx" in sname.lower() else sname.lower().replace(" ", "-")
                 })
     except Exception:
         pass
@@ -1405,7 +1499,9 @@ async def get_reports_trades(
     search: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
-    """Fetches filtered trades with aggregated metrics (total trades, total MTM)"""
+    """Fetches real filtered trades with aggregated metrics (total trades, total MTM)"""
+    sync_real_engine_data_to_reports(db)
+
     query = db.query(TradeReport)
 
     if client_ids and isinstance(client_ids, str):
@@ -1416,7 +1512,16 @@ async def get_reports_trades(
     if strategy_names and isinstance(strategy_names, str):
         s_list = [s.strip() for s in strategy_names.split(",") if s.strip() and s.strip().lower() != "all"]
         if s_list:
-            query = query.filter(TradeReport.strategy_name.in_(s_list))
+            # Expand common aliases so MCX Straddle and Crude Short Straddle match seamlessly
+            expanded_s_list = set(s_list)
+            for s in s_list:
+                s_lower = s.lower()
+                if "straddle" in s_lower or "mcx" in s_lower or "crude" in s_lower:
+                    expanded_s_list.add("MCX Straddle")
+                    expanded_s_list.add("Crude Short Straddle")
+                    expanded_s_list.add("MCX Time-Based ATM Strike Seller (CrudeOilM)")
+                    expanded_s_list.add("MCX Automated ATM Seller")
+            query = query.filter(TradeReport.strategy_name.in_(list(expanded_s_list)))
 
     if from_date and isinstance(from_date, str):
         f_dt = parse_report_date(from_date, is_end_of_day=False)
