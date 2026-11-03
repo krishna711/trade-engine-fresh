@@ -353,8 +353,56 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
 
                 # 2. Check if already FILLED
                 if order_st == "FILLED":
-                    fill_price = float(status_info.get("average_price") or req_price)
-                    filled_qty = int(status_info.get("filled_quantity") or order_dict["quantity"])
+                    fill_price = float(status_info.get("average_price") or 0.0)
+                    filled_qty = int(status_info.get("filled_quantity") or 0)
+
+                    # If status_info returned 0.0 for average_price, actively query tradebook & positions
+                    if fill_price <= 0.0 and b_id:
+                        try:
+                            trades = await self.get_trades()
+                            matched_t = [
+                                t for t in trades 
+                                if str(b_id) in [
+                                    str(t.get("order_id")), 
+                                    str(t.get("broker_order_id")), 
+                                    str(t.get("app_order_id")),
+                                    str(t.get("exchange_order_id")),
+                                    str((t.get("raw") or {}).get("AppOrderID")),
+                                    str((t.get("raw") or {}).get("OrderID")),
+                                    str((t.get("raw") or {}).get("ExchangeOrderID"))
+                                ]
+                            ]
+                            if matched_t:
+                                tot_val = sum(float(t["price"]) * int(t["quantity"]) for t in matched_t if float(t.get("price", 0)) > 0)
+                                tot_q = sum(int(t["quantity"]) for t in matched_t if int(t.get("quantity", 0)) > 0)
+                                if tot_q > 0:
+                                    fill_price = round(tot_val / tot_q, 2)
+                                    filled_qty = tot_q
+                        except Exception as e_trd:
+                            print(f"[XTS Order] Tradebook lookup error for order {b_id}: {e_trd}")
+
+                    if fill_price <= 0.0:
+                        try:
+                            positions = await self.get_positions()
+                            ord_sym = str(broker_symbol or canonical_symbol).upper().replace(" ", "")
+                            side_u = str(order_dict.get("side", "BUY")).upper()
+                            for p in positions:
+                                p_sym = str(p.get("symbol", "")).upper().replace(" ", "")
+                                if ord_sym and (ord_sym in p_sym or p_sym in ord_sym):
+                                    p_price = float(p.get("sell_avg", 0.0) if side_u == "SELL" else p.get("buy_avg", 0.0) or 0.0)
+                                    if p_price > 0:
+                                        fill_price = p_price
+                                        break
+                        except Exception as e_pos:
+                            print(f"[XTS Order] Positions lookup error for order {b_id}: {e_pos}")
+
+                    # Fall back to limit req_price only if broker returned no traded price anywhere
+                    if fill_price <= 0.0:
+                        fill_price = float(req_price)
+
+                    if filled_qty <= 0:
+                        filled_qty = int(order_dict.get("quantity") or 1)
+
                     print(f"[XTS Order] Order {b_id} execution confirmed FILLED: {filled_qty} @ {fill_price}")
                     return {
                         "success": True,
@@ -415,7 +463,9 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                                 "timestamp": datetime.datetime.utcnow().isoformat()
                             }
                         elif post_st == "FILLED":
-                            fill_p = float(post_mod_st.get("average_price") or new_price)
+                            fill_p = float(post_mod_st.get("average_price") or 0.0)
+                            if fill_p <= 0.0:
+                                fill_p = float(new_price)
                             return {
                                 "success": True,
                                 "broker_order_id": b_id,
@@ -445,7 +495,9 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 # Final re-check before returning current status
                 latest_st = await self.get_order_status(b_id) if b_id else status_info
                 final_st = latest_st.get("status", order_st)
-                fill_p = float(latest_st.get("average_price") or req_price)
+                fill_p = float(latest_st.get("average_price") or 0.0)
+                if fill_p <= 0.0 and final_st == "FILLED":
+                    fill_p = float(req_price)
                 fill_q = int(latest_st.get("filled_quantity") or (order_dict["quantity"] if final_st == "FILLED" else 0))
 
                 return {
@@ -523,7 +575,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             return {"success": False, "error": str(e)}
 
     async def get_order_status(self, broker_order_id: str) -> Dict[str, Any]:
-        """Queries single order status from XTS: GET /interactive/orders with tradebook fallback"""
+        """Queries single order status from XTS: GET /interactive/orders with tradebook and position book fallback"""
         token = self.get_valid_token()
         if not token:
             return {"status": "UNKNOWN", "error": "Token missing"}
@@ -532,14 +584,34 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
         try:
             import requests
             url = self._get_url("orders")
-            resp = requests.get(
-                url,
-                params={"clientID": self.client_id, "appOrderID": target_id},
-                headers={"Authorization": token, "Content-Type": "application/json"},
-                timeout=8
-            )
-            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
-            result = data.get("result", [])
+            
+            # Query candidate parameter variations
+            param_candidates = []
+            if self.client_id:
+                if target_id:
+                    param_candidates.append({"clientID": self.client_id, "appOrderID": target_id})
+                param_candidates.append({"clientID": self.client_id})
+            if target_id:
+                param_candidates.append({"appOrderID": target_id})
+            param_candidates.append({})
+
+            result = []
+            for p in param_candidates:
+                try:
+                    resp = requests.get(
+                        url,
+                        params=p,
+                        headers={"Authorization": token, "Content-Type": "application/json"},
+                        timeout=8
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+                        res_candidate = data.get("result", [])
+                        if res_candidate:
+                            result = res_candidate
+                            break
+                except Exception:
+                    continue
 
             order_info = {}
             if isinstance(result, list):
@@ -583,22 +655,86 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
 
             # Cumulative quantity represents actual executed contracts
             cum_qty = int(order_info.get("CumulativeQuantity") or order_info.get("cumulativeQuantity") or 0)
-            avg_p = float(order_info.get("OrderAverageTradedPrice") or order_info.get("orderAverageTradedPrice") or 0.0)
+            avg_p_raw = (
+                order_info.get("OrderAverageTradedPrice") or 
+                order_info.get("orderAverageTradedPrice") or 
+                order_info.get("AveragePrice") or 
+                order_info.get("averagePrice") or 
+                order_info.get("AverageTradedPrice") or 
+                order_info.get("averageTradedPrice") or 
+                order_info.get("AvgPrice") or 
+                order_info.get("avgPrice") or 
+                order_info.get("TradedPrice") or 
+                order_info.get("tradedPrice") or 
+                order_info.get("TradePrice") or 
+                order_info.get("tradePrice") or 
+                0.0
+            )
+            try:
+                avg_p = float(avg_p_raw or 0.0)
+            except (ValueError, TypeError):
+                avg_p = 0.0
 
-            # Tradebook fallback: If order status is not FILLED or cum_qty is 0, cross-check live tradebook
-            if target_id and mapped_status != "FILLED":
+            # Tradebook fallback: If order status is not FILLED or cum_qty is 0 or avg_p is 0, cross-check live tradebook
+            if target_id and (mapped_status != "FILLED" or avg_p <= 0.0 or cum_qty <= 0):
                 try:
                     trades = await self.get_trades()
+                    matched_trades = []
                     for t in trades:
-                        t_oid = str(t.get("order_id") or "").strip()
-                        if t_oid and t_oid == target_id:
-                            mapped_status = "FILLED"
-                            status_raw = "COMPLETE (from tradebook)"
-                            cum_qty = int(t.get("quantity") or cum_qty or 1)
-                            avg_p = float(t.get("price") or avg_p)
-                            break
-                except Exception:
-                    pass
+                        t_oids = [
+                            str(t.get("order_id") or "").strip(),
+                            str(t.get("broker_order_id") or "").strip(),
+                            str(t.get("trade_id") or "").strip(),
+                            str(t.get("app_order_id") or "").strip(),
+                            str(t.get("exchange_order_id") or "").strip()
+                        ]
+                        raw_t = t.get("raw") or {}
+                        t_oids.extend([
+                            str(raw_t.get("AppOrderID") or "").strip(),
+                            str(raw_t.get("OrderID") or "").strip(),
+                            str(raw_t.get("ExchangeOrderID") or "").strip()
+                        ])
+                        if target_id in t_oids and target_id != "":
+                            matched_trades.append(t)
+
+                    if matched_trades:
+                        mapped_status = "FILLED"
+                        status_raw = "COMPLETE (from tradebook)"
+                        tot_q = sum(int(t.get("quantity") or 0) for t in matched_trades if int(t.get("quantity") or 0) > 0)
+                        tot_v = sum(float(t.get("price") or 0.0) * int(t.get("quantity") or 0) for t in matched_trades if float(t.get("price") or 0.0) > 0)
+                        if tot_q > 0:
+                            cum_qty = tot_q
+                            avg_p = round(tot_v / tot_q, 2)
+                        elif matched_trades[0].get("price"):
+                            avg_p = float(matched_trades[0]["price"])
+                except Exception as e_trd:
+                    print(f"[XTS Order Status] Error cross-checking tradebook: {e_trd}")
+
+            # Position book fallback: If still avg_p <= 0.0 and mapped_status is FILLED, check positions
+            if (mapped_status == "FILLED" or not order_info) and avg_p <= 0.0:
+                try:
+                    positions = await self.get_positions()
+                    ord_sym = str(order_info.get("TradingSymbol") or order_info.get("tradingSymbol") or order_info.get("Symbol") or "").upper().replace(" ", "")
+                    ord_side = str(order_info.get("OrderSide") or order_info.get("orderSide") or order_info.get("TransactionType") or "").upper()
+                    for p in positions:
+                        p_sym = str(p.get("symbol") or "").upper().replace(" ", "")
+                        if ord_sym and (ord_sym in p_sym or p_sym in ord_sym):
+                            p_sell = float(p.get("sell_avg", 0.0) or 0.0)
+                            p_buy = float(p.get("buy_avg", 0.0) or 0.0)
+                            if ord_side == "SELL" and p_sell > 0:
+                                avg_p = p_sell
+                                mapped_status = "FILLED"
+                                break
+                            elif ord_side == "BUY" and p_buy > 0:
+                                avg_p = p_buy
+                                mapped_status = "FILLED"
+                                break
+                            elif p_sell > 0 or p_buy > 0:
+                                avg_p = p_sell or p_buy
+                                mapped_status = "FILLED"
+                                break
+                except Exception as e_pos:
+                    print(f"[XTS Order Status] Error cross-checking position book: {e_pos}")
 
             return {
                 "broker_order_id": target_id,
@@ -1323,14 +1459,32 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 elif "T" in ts:
                     ts = ts.split("T")[-1][:8]
 
+                trade_price = float(
+                    t.get("TradedPrice") or 
+                    t.get("tradedPrice") or 
+                    t.get("TradePrice") or 
+                    t.get("tradePrice") or 
+                    t.get("OrderAverageTradedPrice") or 
+                    t.get("AveragePrice") or 
+                    t.get("OrderPrice") or 
+                    t.get("price") or 
+                    0.0
+                )
+                app_order_id = str(t.get("AppOrderID") or t.get("appOrderID") or t.get("OrderID") or t.get("orderID") or "")
+                exch_order_id = str(t.get("ExchangeOrderID") or t.get("exchangeOrderID") or "")
+
                 trades.append({
-                    "trade_id": str(t.get("ExchangeTradeID") or t.get("exchangeTradeID") or t.get("TradeID") or t.get("tradeID") or t.get("AppOrderID") or ""),
-                    "order_id": str(t.get("AppOrderID") or t.get("appOrderID") or ""),
+                    "trade_id": str(t.get("ExchangeTradeID") or t.get("exchangeTradeID") or t.get("TradeID") or t.get("tradeID") or app_order_id),
+                    "order_id": app_order_id,
+                    "broker_order_id": exch_order_id or app_order_id,
+                    "app_order_id": app_order_id,
+                    "exchange_order_id": exch_order_id,
                     "symbol": t.get("TradingSymbol") or t.get("tradingSymbol") or t.get("Symbol") or "UNKNOWN",
                     "side": str(t.get("OrderSide") or t.get("orderSide") or t.get("TransactionType") or "BUY").upper(),
                     "quantity": int(t.get("TradedQuantity") or t.get("tradedQuantity") or t.get("OrderQuantity") or t.get("quantity") or 0),
-                    "price": float(t.get("TradedPrice") or t.get("tradedPrice") or t.get("OrderPrice") or t.get("price") or 0.0),
-                    "timestamp": ts
+                    "price": round(trade_price, 2),
+                    "timestamp": ts,
+                    "raw": t
                 })
 
             print(f"[XTS Order Broker] Parsed {len(trades)} trades for {self.client_id}", flush=True)

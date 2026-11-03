@@ -507,6 +507,40 @@ def seed_initial_data():
                     SystemLog.message.like("%REJECTED%")
                 ).update({"is_dismissed": True}, synchronize_session=False)
 
+        # Correct any existing orders, trades, positions, and strategy instance legs
+        # that were recorded with the limit buffer price instead of the true broker fill price
+        price_fixes = {
+            "9200CE": {"old": 482.9, "new": 490.25},
+            "9200PE": {"old": 468.0, "new": 475.15}
+        }
+        for ord_obj in db.query(Order).filter(Order.status == "FILLED").all():
+            for key_s, pinfo in price_fixes.items():
+                if key_s in ord_obj.symbol and abs(ord_obj.average_price - pinfo["old"]) < 0.15:
+                    ord_obj.average_price = pinfo["new"]
+                    db.query(Trade).filter(Trade.order_id == ord_obj.order_id).update({"price": pinfo["new"]}, synchronize_session=False)
+
+        for pos_obj in db.query(Position).all():
+            for key_s, pinfo in price_fixes.items():
+                if key_s in pos_obj.symbol:
+                    if abs(pos_obj.sell_avg_price - pinfo["old"]) < 0.15:
+                        pos_obj.sell_avg_price = pinfo["new"]
+                        pos_obj.sell_amount = round(pos_obj.sell_quantity * pinfo["new"], 2)
+                    elif abs(pos_obj.buy_avg_price - pinfo["old"]) < 0.15:
+                        pos_obj.buy_avg_price = pinfo["new"]
+                        pos_obj.buy_amount = round(pos_obj.buy_quantity * pinfo["new"], 2)
+
+        for inst in all_instances:
+            if inst.legs_info:
+                mod_inst = False
+                for leg in inst.legs_info:
+                    for key_s, pinfo in price_fixes.items():
+                        if key_s in str(leg.get("symbol") or leg.get("leg") or ""):
+                            if abs(float(leg.get("entry") or 0.0) - pinfo["old"]) < 0.15:
+                                leg["entry"] = pinfo["new"]
+                                mod_inst = True
+                if mod_inst:
+                    flag_modified(inst, "legs_info")
+
         db.commit()
 
 

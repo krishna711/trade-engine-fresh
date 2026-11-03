@@ -518,14 +518,17 @@ class StrategySupervisor:
                     inst.last_trade_status = "OPEN"
                     inst.last_trade_at = datetime.datetime.utcnow()
                     for leg in legs:
-                        if leg.get("symbol") == sym:
+                        l_sym = str(leg.get("symbol") or leg.get("leg") or "")
+                        if l_sym == sym or sym.endswith(l_sym) or l_sym.endswith(sym.split(":")[-1]):
                             if avg_p > 0:
                                 leg["entry"] = avg_p
-                                leg["ltp"] = avg_p
+                                if float(leg.get("ltp") or 0.0) <= 0.0:
+                                    leg["ltp"] = avg_p
                             leg["status"] = "FILLED"
                 elif side == "BUY":
                     for leg in legs:
-                        if leg.get("symbol") == sym:
+                        l_sym = str(leg.get("symbol") or leg.get("leg") or "")
+                        if l_sym == sym or sym.endswith(l_sym) or l_sym.endswith(sym.split(":")[-1]):
                             if avg_p > 0:
                                 leg["exit"] = avg_p
                                 is_mcx = "MCX" in sym.upper()
