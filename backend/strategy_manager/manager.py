@@ -467,12 +467,14 @@ class StrategySupervisor:
                     )
             elif side == "BUY": # Exit
                 for leg in current_legs:
-                    if leg.get("symbol") == sym:
+                    l_sym = str(leg.get("symbol") or leg.get("leg") or "")
+                    if l_sym == sym or sym.endswith(l_sym) or l_sym.endswith(sym.split(":")[-1]):
                         if filled_count > 0:
                             leg["exit"] = avg_p
                             is_mcx = "MCX" in sym.upper()
                             lot_mult = symbol_mapper.get_lot_size(sym) if is_mcx else 1
-                            leg["pnl"] = round(((leg.get("entry") or avg_p) - avg_p) * abs(leg.get("qty", 10)) * lot_mult, 2)
+                            entry_p = float(leg.get("entry") or avg_p)
+                            leg["pnl"] = round((entry_p - avg_p) * abs(leg.get("qty", 10)) * lot_mult, 2)
                             leg["status"] = "CLOSED"
                         elif open_count > 0:
                             leg["status"] = "EXIT_PENDING"
@@ -483,7 +485,7 @@ class StrategySupervisor:
                 if active_legs and all(leg.get("exit") is not None or leg.get("status") == "CLOSED" for leg in active_legs):
                     inst.last_trade_status = "CLOSED"
                     closed_pnl = sum(leg.get("pnl", 0.0) for leg in active_legs)
-                    inst.realized_pnl += closed_pnl
+                    inst.realized_pnl = closed_pnl
                     inst.unrealized_pnl = 0.0
                     inst.total_pnl = inst.realized_pnl
 
@@ -539,7 +541,7 @@ class StrategySupervisor:
                     if active_legs and all(leg.get("exit") is not None or leg.get("status") == "CLOSED" for leg in active_legs):
                         inst.last_trade_status = "CLOSED"
                         closed_pnl = sum(leg.get("pnl", 0.0) for leg in active_legs)
-                        inst.realized_pnl += closed_pnl
+                        inst.realized_pnl = closed_pnl
                         inst.unrealized_pnl = 0.0
                         inst.total_pnl = inst.realized_pnl
 
@@ -647,14 +649,22 @@ class StrategySupervisor:
                             current_ltp = float(leg.get("ltp") or entry)
 
                             if status in ["CLOSED"] or leg.get("exit") is not None:
-                                exit_p = float(leg.get("exit") or current_ltp)
-                                leg_pnl = round((entry - exit_p) * qty * lot_mult, 2) if entry > 0 else 0.0
+                                exit_p = float(leg.get("exit") or 0.0)
+                                if exit_p > 0:
+                                    leg_pnl = round((entry - exit_p) * qty * lot_mult, 2) if entry > 0 else 0.0
+                                else:
+                                    leg_pnl = float(leg.get("pnl") or 0.0)
                                 leg["pnl"] = leg_pnl
                                 tot_realized += leg_pnl
                             elif status in ["FILLED", "OPEN", "EXIT_PENDING"]:
                                 leg_pnl = round((entry - current_ltp) * qty * lot_mult, 2) if entry > 0 else 0.0
                                 leg["pnl"] = leg_pnl
                                 tot_unrealized += leg_pnl
+
+                        # If all active legs are closed, or last trade status is CLOSED, unrealized PnL is strictly 0.0!
+                        is_all_closed = all(l.get("status") == "CLOSED" or l.get("exit") is not None for l in legs if "5850" not in str(l.get("symbol", "")))
+                        if is_all_closed or inst.last_trade_status == "CLOSED":
+                            tot_unrealized = 0.0
 
                         if updated or abs(inst.unrealized_pnl - tot_unrealized) > 0.01:
                             inst.legs_info = legs

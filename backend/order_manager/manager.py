@@ -313,12 +313,15 @@ class OrderManager:
         db = SessionLocal()
         try:
             positions = db.query(Position).filter(
-                Position.symbol == symbol,
-                Position.net_quantity != 0
+                Position.symbol == symbol
             ).all()
 
             for pos in positions:
                 pos.ltp = ltp
+                if pos.net_quantity == 0:
+                    pos.unrealized_pnl = 0.0
+                    continue
+
                 is_mcx = "MCX" in (pos.symbol or "").upper() or (pos.segment and "MCX" in pos.segment.upper())
                 lot_mult = symbol_mapper.get_lot_size(pos.symbol) if is_mcx else 1
 

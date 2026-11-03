@@ -159,7 +159,7 @@ class StrategiesManager {
                         <span class="leg-pill">
                             <span class="leg-name">${leg.leg}</span>
                             <span>Entry: ₹${Number(leg.entry || 0).toFixed(2)}</span>
-                            <span>Exit: ${leg.exit ? '₹' + Number(leg.exit).toFixed(2) : '<em style="color:var(--accent-amber)">OPEN</em>'}</span>
+                            <span>Exit: ${leg.exit ? '₹' + Number(leg.exit).toFixed(2) : (leg.status === 'CLOSED' || inst.last_trade_status === 'CLOSED' ? '₹' + Number(leg.ltp || 0).toFixed(2) : '<em style="color:var(--accent-amber)">OPEN</em>')}</span>
                             <span>LTP: ₹${Number(leg.ltp || 0).toFixed(2)}</span>
                         </span>
                     `).join("")}
@@ -772,7 +772,7 @@ class StrategiesManager {
                                 <span class="leg-pill">
                                     <span class="leg-name">${l.leg}</span>
                                     <span>Entry: ₹${Number(l.entry || 0).toFixed(2)}</span>
-                                    <span>Exit: ${l.exit ? '₹' + Number(l.exit).toFixed(2) : 'OPEN'}</span>
+                                    <span>Exit: ${l.exit ? '₹' + Number(l.exit).toFixed(2) : (l.status === 'CLOSED' ? '₹' + Number(l.ltp || 0).toFixed(2) : 'OPEN')}</span>
                                     <span>LTP: ₹${Number(l.ltp || 0).toFixed(2)}</span>
                                     <span class="${l.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-weight: 700;">₹${Number(l.pnl || 0).toFixed(2)}</span>
                                 </span>

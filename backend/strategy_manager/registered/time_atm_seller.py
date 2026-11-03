@@ -344,13 +344,22 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             filled_count = sum(1 for r in results if r.get("success") and str(r.get("status") or "").upper() == "FILLED")
             open_count = sum(1 for r in results if r.get("success") and str(r.get("status") or "").upper() in ["OPEN", "PENDING", "NEW"])
             if filled_count > 0:
-                self.log_decision("ORDER FILLED", f"Square-off BUY filled for {sym}.")
+                avg_exit_p = round(sum(float(r.get("price", 0.0)) for r in results if r.get("success") and str(r.get("status") or "").upper() == "FILLED") / filled_count, 2)
+                self.log_decision("ORDER FILLED", f"Square-off BUY filled for {sym} @ ₹{avg_exit_p}.")
                 for leg in self.current_trade["legs"]:
-                    if leg["symbol"] == sym:
+                    if leg["symbol"] == sym or sym.endswith(str(leg.get("symbol", "")).split(":")[-1]):
+                        leg["exit"] = avg_exit_p
                         leg["status"] = "CLOSED"
+                        is_mcx = "MCX" in self.symbol.upper()
+                        pnl_mult = self.lot_size if is_mcx else 1
+                        entry_p = float(leg.get("entry") or avg_exit_p)
+                        leg["pnl"] = round((entry_p - avg_exit_p) * abs(leg.get("qty", 1)) * pnl_mult, 2)
+
                 if all(leg.get("status") == "CLOSED" for leg in self.current_trade["legs"]):
                     self.trade_state = "CLOSED"
-                    self.log_decision("TRADE COMPLETED", f"Strategy cycle completed. Realized PnL: INR {self.current_trade.get('total_pnl', 0.0):.2f}")
+                    tot_realized = sum(l.get("pnl", 0.0) for l in self.current_trade["legs"])
+                    self.current_trade["total_pnl"] = round(tot_realized, 2)
+                    self.log_decision("TRADE COMPLETED", f"Strategy cycle completed. Realized PnL: INR {tot_realized:.2f}")
             elif open_count > 0:
                 self.log_decision("ORDER OPEN", f"Square-off BUY order for {sym} is OPEN on exchange. Monitoring exit fill.")
             else:

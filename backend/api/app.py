@@ -145,15 +145,18 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
     all_positions = db.query(Position).all()
 
     # Calculate strategy PnL
-    inst_unrealized = sum(inst.unrealized_pnl for inst in instances)
+    inst_unrealized = sum(inst.unrealized_pnl for inst in instances if inst.last_trade_status != "CLOSED")
     inst_realized = sum(inst.realized_pnl for inst in instances)
 
-    # Calculate position PnL (from broker executed positions)
-    pos_unrealized = sum(p.unrealized_pnl for p in all_positions)
+    # Calculate position PnL (from broker executed positions with active contracts)
+    pos_unrealized = sum(p.unrealized_pnl for p in all_positions if p.net_quantity != 0)
     pos_realized = sum(p.realized_pnl for p in all_positions)
 
-    # Use whichever has active non-zero data (or sum if separate)
-    total_unrealized = inst_unrealized if abs(inst_unrealized) > 0.01 else pos_unrealized
+    has_open_trades = any(inst.last_trade_status in ["OPEN", "ENTRY_SENT", "IN_TRADE"] for inst in instances) or any(p.net_quantity != 0 for p in all_positions)
+    if not has_open_trades:
+        total_unrealized = 0.0
+    else:
+        total_unrealized = inst_unrealized if abs(inst_unrealized) > 0.01 else pos_unrealized
     total_realized = inst_realized if abs(inst_realized) > 0.01 else pos_realized
     total_pnl = total_unrealized + total_realized
 
@@ -179,7 +182,7 @@ def list_accounts(db: Session = Depends(get_db)):
     for acc in accounts:
         # Calculate account PnL across active strategies running in this account
         acc_positions = db.query(Position).filter(Position.client_id == acc.client_id).all()
-        u_pnl = sum(p.unrealized_pnl for p in acc_positions)
+        u_pnl = sum(p.unrealized_pnl for p in acc_positions if p.net_quantity != 0)
         r_pnl = sum(p.realized_pnl for p in acc_positions)
         t_pnl = u_pnl + r_pnl
 
@@ -738,7 +741,7 @@ def list_strategy_instances(db: Session = Depends(get_db)):
                 Position.client_id == cid,
                 Position.strategy_instance_id == inst.id
             ).all()
-            u_pnl = sum(p.unrealized_pnl for p in acc_positions)
+            u_pnl = sum(p.unrealized_pnl for p in acc_positions if p.net_quantity != 0)
             r_pnl = sum(p.realized_pnl for p in acc_positions)
             t_pnl = u_pnl + r_pnl
 
@@ -771,7 +774,7 @@ def list_strategy_instances(db: Session = Depends(get_db)):
             "start_time": inst.start_time,
             "end_time": inst.end_time,
             "pnl": {
-                "unrealized": round(inst.unrealized_pnl, 2),
+                "unrealized": round(inst.unrealized_pnl if inst.last_trade_status != "CLOSED" else 0.0, 2),
                 "realized": round(inst.realized_pnl, 2),
                 "total": round(inst.total_pnl, 2)
             },

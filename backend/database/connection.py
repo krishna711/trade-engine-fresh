@@ -519,18 +519,64 @@ def seed_initial_data():
                     ord_obj.average_price = pinfo["new"]
                     db.query(Trade).filter(Trade.order_id == ord_obj.order_id).update({"price": pinfo["new"]}, synchronize_session=False)
 
+        # Zero out unrealized PnL on any closed positions (net_quantity == 0)
+        for pos_obj in db.query(Position).all():
+            if pos_obj.net_quantity == 0:
+                pos_obj.unrealized_pnl = 0.0
+
+        # Sync exit orders if filled with buffer prices to genuine broker traded prices:
+        # CE Exit BUY: 497.00 -> 491.35
+        # PE Exit BUY: 485.90 -> 478.75
+        exit_fixes = {
+            "9200CE": {"old": 497.0, "new": 491.35},
+            "9200PE": {"old": 485.9, "new": 478.75}
+        }
+        for ord_obj in db.query(Order).filter(Order.status == "FILLED", Order.side == "BUY").all():
+            for key_s, pinfo in exit_fixes.items():
+                if key_s in ord_obj.symbol and abs(ord_obj.average_price - pinfo["old"]) < 0.15:
+                    ord_obj.average_price = pinfo["new"]
+                    db.query(Trade).filter(Trade.order_id == ord_obj.order_id).update({"price": pinfo["new"]}, synchronize_session=False)
+
         for pos_obj in db.query(Position).all():
             for key_s, pinfo in price_fixes.items():
                 if key_s in pos_obj.symbol:
                     if abs(pos_obj.sell_avg_price - pinfo["old"]) < 0.15:
                         pos_obj.sell_avg_price = pinfo["new"]
                         pos_obj.sell_amount = round(pos_obj.sell_quantity * pinfo["new"], 2)
-                    elif abs(pos_obj.buy_avg_price - pinfo["old"]) < 0.15:
+            for key_s, pinfo in exit_fixes.items():
+                if key_s in pos_obj.symbol:
+                    if abs(pos_obj.buy_avg_price - pinfo["old"]) < 0.15:
                         pos_obj.buy_avg_price = pinfo["new"]
                         pos_obj.buy_amount = round(pos_obj.buy_quantity * pinfo["new"], 2)
+            if pos_obj.net_quantity == 0:
+                pos_obj.unrealized_pnl = 0.0
+                if "9200CE" in pos_obj.symbol:
+                    pos_obj.realized_pnl = -11.00
+                elif "9200PE" in pos_obj.symbol:
+                    pos_obj.realized_pnl = -36.00
 
         for inst in all_instances:
-            if inst.legs_info:
+            if inst.last_trade_status == "CLOSED" or (inst.legs_info and all(l.get("status") == "CLOSED" or l.get("exit") is not None for l in inst.legs_info if "5850" not in str(l.get("symbol", "")))):
+                inst.last_trade_status = "CLOSED"
+                inst.unrealized_pnl = 0.0
+                if inst.legs_info:
+                    for leg in inst.legs_info:
+                        leg_sym = str(leg.get("symbol") or leg.get("leg") or "")
+                        if "9200CE" in leg_sym:
+                            leg["entry"] = 490.25
+                            leg["exit"] = 491.35
+                            leg["pnl"] = -11.00
+                            leg["status"] = "CLOSED"
+                        elif "9200PE" in leg_sym:
+                            leg["entry"] = 475.15
+                            leg["exit"] = 478.75
+                            leg["pnl"] = -36.00
+                            leg["status"] = "CLOSED"
+                    flag_modified(inst, "legs_info")
+                    tot_real = sum(float(l.get("pnl") or 0.0) for l in inst.legs_info if "5850" not in str(l.get("symbol", "")))
+                    inst.realized_pnl = tot_real
+                    inst.total_pnl = tot_real
+            elif inst.legs_info:
                 mod_inst = False
                 for leg in inst.legs_info:
                     for key_s, pinfo in price_fixes.items():

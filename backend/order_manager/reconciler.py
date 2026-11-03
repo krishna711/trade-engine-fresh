@@ -173,6 +173,8 @@ class OrderReconciler:
         pos.sell_avg_price = round(sell_amt / sell_qty, 2) if sell_qty > 0 else 0.0
 
         pos.net_quantity = buy_qty - sell_qty
+        if pos.net_quantity == 0:
+            pos.unrealized_pnl = 0.0
 
         # Realized PnL on closed contracts
         closed_qty = min(buy_qty, sell_qty)
