@@ -1116,3 +1116,344 @@ table.data-table tbody td {
     box-shadow: var(--shadow-md);
 }
 
+
+/* ===================================================================
+   REPORTS & AUDIT TRAIL VIEW
+   =================================================================== */
+.reports-layout {
+    display: grid;
+    grid-template-columns: 220px 270px 1fr;
+    gap: 1rem;
+    align-items: start;
+    width: 100%;
+}
+
+@media (max-width: 1300px) {
+    .reports-layout {
+        grid-template-columns: 200px 240px 1fr;
+    }
+}
+
+@media (max-width: 1050px) {
+    .reports-layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+.reports-sidebar-panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-height: 580px;
+    backdrop-filter: blur(8px);
+}
+
+.reports-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+
+.reports-panel-title {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+}
+
+.reports-link-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    cursor: pointer;
+    text-decoration: underline;
+    transition: color 0.15s ease;
+}
+
+.reports-link-btn:hover {
+    color: var(--accent-blue);
+}
+
+.reports-search-box input {
+    width: 100%;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.45rem 0.65rem;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.2s ease;
+}
+
+.reports-search-box input:focus {
+    border-color: var(--accent-blue);
+}
+
+.reports-checkbox-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    overflow-y: auto;
+    max-height: 520px;
+}
+
+.reports-checkbox-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.82rem;
+}
+
+.reports-checkbox-item.all-item {
+    padding-bottom: 0.35rem;
+    border-bottom: 1px dashed var(--border-color);
+    margin-bottom: 0.25rem;
+}
+
+.reports-checkbox-item label {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    cursor: pointer;
+    color: var(--text-secondary);
+    width: 100%;
+    user-select: none;
+}
+
+.reports-checkbox-item label:hover {
+    color: var(--text-primary);
+}
+
+.reports-checkbox-item input[type="checkbox"] {
+    accent-color: var(--accent-blue);
+    width: 15px;
+    height: 15px;
+    cursor: pointer;
+}
+
+.reports-checkbox-item .status-active-pill {
+    font-size: 0.62rem;
+    padding: 2px 6px;
+    background: rgba(16, 185, 129, 0.12);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    border-radius: 4px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.strategy-item .strat-label-content {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.strategy-item .strat-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.82rem;
+}
+
+.strategy-item .strat-sub {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+/* Reports Main Panel & Toolbar */
+.reports-main-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    min-width: 0;
+}
+
+.reports-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 0.6rem 0.85rem;
+    backdrop-filter: blur(8px);
+}
+
+.toolbar-left-group {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+
+.date-input-group {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.date-input-group input {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.35rem 0.55rem;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    width: 105px;
+    outline: none;
+}
+
+.date-input-group input:focus {
+    border-color: var(--accent-blue);
+}
+
+.search-trades-group input {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.35rem 0.65rem;
+    color: var(--text-primary);
+    font-size: 0.78rem;
+    width: 150px;
+    outline: none;
+    transition: border-color 0.2s ease;
+}
+
+.search-trades-group input:focus {
+    border-color: var(--accent-blue);
+}
+
+.toolbar-right-group {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    flex-wrap: wrap;
+}
+
+.select-group {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.select-group select {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.35rem 0.55rem;
+    color: var(--text-primary);
+    font-size: 0.75rem;
+    cursor: pointer;
+    outline: none;
+}
+
+.select-group select:focus {
+    border-color: var(--accent-blue);
+}
+
+.rep-badge {
+    font-size: 0.78rem;
+    font-weight: 600;
+    padding: 0.3rem 0.65rem;
+    border-radius: 6px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.rep-trades-count {
+    color: var(--text-secondary);
+}
+
+.rep-total-mtm {
+    color: var(--accent-green);
+    border-color: rgba(16, 185, 129, 0.35);
+    font-weight: 700;
+    font-family: var(--font-mono);
+}
+
+/* Reports Trades Table */
+.reports-table-card {
+    min-height: 520px;
+}
+
+.reports-table th, .reports-table td {
+    padding: 0.65rem 0.75rem;
+}
+
+.stacked-prices {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    line-height: 1.25;
+}
+
+.side-sell {
+    color: #ef4444;
+    font-weight: 700;
+    font-size: 0.78rem;
+}
+
+.side-buy {
+    color: #10b981;
+    font-weight: 700;
+    font-size: 0.78rem;
+}
+
+.mode-badge-live {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    padding: 2px 5px;
+    border-radius: 4px;
+    letter-spacing: 0.03em;
+}
+
+.mode-badge-paper {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.25);
+    padding: 2px 5px;
+    border-radius: 4px;
+    letter-spacing: 0.03em;
+}
+
+.mtm-cell-pos {
+    color: #10b981;
+    font-weight: 700;
+    font-family: var(--font-mono);
+}
+
+.mtm-cell-neg {
+    color: #ef4444;
+    font-weight: 700;
+    font-family: var(--font-mono);
+}
+
+.status-closed-pill {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}

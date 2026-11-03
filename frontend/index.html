@@ -33,6 +33,9 @@
                 <button class="nav-btn" data-view="logs" id="nav-logs">
                     <span>📜</span> Logs & Events
                 </button>
+                <button class="nav-btn" data-view="reports" id="nav-reports">
+                    <span>📑</span> Reports
+                </button>
             </nav>
 
             <!-- Consolidated PnL Widget (Short U: R: T:) -->
@@ -342,6 +345,137 @@
                             <!-- Populated dynamically -->
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </section>
+
+
+        <!-- ===============================================================
+             VIEW 5: REPORTS & AUDIT TRAIL PAGE
+             =============================================================== -->
+        <section class="view-section" id="view-reports">
+            <div class="reports-layout">
+                <!-- 1. Left Sidebar: Clients Filter -->
+                <div class="reports-sidebar-panel">
+                    <div class="reports-panel-header">
+                        <span class="reports-panel-title">Clients (<span id="rep-clients-count">0</span>)</span>
+                        <button type="button" class="reports-link-btn" id="rep-clients-select-all">Select all</button>
+                    </div>
+                    <div class="reports-checkbox-item all-item">
+                        <label>
+                            <input type="checkbox" id="rep-clients-all-chk">
+                            <span>All clients</span>
+                        </label>
+                    </div>
+                    <div class="reports-checkbox-list" id="rep-clients-list">
+                        <!-- Injected dynamically -->
+                    </div>
+                </div>
+
+                <!-- 2. Middle Sidebar: Strategies Filter -->
+                <div class="reports-sidebar-panel">
+                    <div class="reports-panel-header">
+                        <span class="reports-panel-title">Strategies (<span id="rep-strats-count">0</span>)</span>
+                        <button type="button" class="reports-link-btn" id="rep-strats-select-all">Select all</button>
+                    </div>
+                    <div class="reports-search-box">
+                        <input type="text" id="rep-strats-search" placeholder="Search strategies" autocomplete="off">
+                    </div>
+                    <div class="reports-checkbox-item all-item">
+                        <label>
+                            <input type="checkbox" id="rep-strats-all-chk">
+                            <span>All strategies</span>
+                        </label>
+                    </div>
+                    <div class="reports-checkbox-list" id="rep-strats-list">
+                        <!-- Injected dynamically -->
+                    </div>
+                </div>
+
+                <!-- 3. Right / Main Area: Reports Toolbar & Data Table -->
+                <div class="reports-main-panel">
+                    <!-- Filter Toolbar -->
+                    <div class="reports-toolbar">
+                        <div class="toolbar-left-group">
+                            <div class="date-input-group">
+                                <label>From</label>
+                                <input type="text" id="rep-from-date" value="01-10-2026" placeholder="DD-MM-YYYY">
+                            </div>
+                            <div class="date-input-group">
+                                <label>To</label>
+                                <input type="text" id="rep-to-date" value="03-11-2026" placeholder="DD-MM-YYYY">
+                            </div>
+                            <button class="action-btn-sm" id="rep-btn-refresh">Refresh</button>
+
+                            <div class="search-trades-group">
+                                <input type="text" id="rep-trades-search" placeholder="Search trades" autocomplete="off">
+                            </div>
+                        </div>
+
+                        <div class="toolbar-right-group">
+                            <div class="select-group">
+                                <label>Mode</label>
+                                <select id="rep-filter-mode">
+                                    <option value="LIVE" selected>Live only</option>
+                                    <option value="PAPER">Paper only</option>
+                                    <option value="ALL">All modes</option>
+                                </select>
+                            </div>
+
+                            <div class="select-group">
+                                <label>Status</label>
+                                <select id="rep-filter-status">
+                                    <option value="CLOSED" selected>Closed only</option>
+                                    <option value="OPEN">Open only</option>
+                                    <option value="ALL">All statuses</option>
+                                </select>
+                            </div>
+
+                            <div class="select-group">
+                                <label>Order</label>
+                                <select id="rep-filter-order">
+                                    <option value="newest" selected>Newest first</option>
+                                    <option value="oldest">Oldest first</option>
+                                </select>
+                            </div>
+
+                            <div class="rep-badge rep-trades-count" id="rep-badge-trades-count">
+                                Trades: <span id="rep-total-trades">0</span>
+                            </div>
+
+                            <div class="rep-badge rep-total-mtm" id="rep-badge-mtm">
+                                Total MTM: <span id="rep-total-mtm-val">₹0.00</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Table Card -->
+                    <div class="table-card reports-table-card">
+                        <div class="table-responsive">
+                            <table class="data-table reports-table" id="reports-trades-table">
+                                <thead>
+                                    <tr>
+                                        <th>Opened</th>
+                                        <th>Closed</th>
+                                        <th>Client</th>
+                                        <th>Strategy</th>
+                                        <th>Mode</th>
+                                        <th>Symbol</th>
+                                        <th>Side</th>
+                                        <th>Qty</th>
+                                        <th>Entry</th>
+                                        <th>Exit</th>
+                                        <th>Reason</th>
+                                        <th>MTM</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="reports-trades-tbody">
+                                    <!-- Populated dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -847,6 +981,7 @@
     <script src="js/strategies.js?v=3.0"></script>
     <script src="js/status_page.js?v=3.0"></script>
     <script src="js/logs_page.js?v=3.0"></script>
+    <script src="js/reports.js?v=3.0"></script>
     <script src="js/app.js?v=3.0"></script>
 </body>
 </html>

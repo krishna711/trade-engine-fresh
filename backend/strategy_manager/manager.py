@@ -4,7 +4,7 @@ import datetime
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm.attributes import flag_modified
 from backend.database.connection import SessionLocal
-from backend.database.models import StrategyInstance, StrategyTemplate, SystemLog, Account
+from backend.database.models import StrategyInstance, StrategyTemplate, SystemLog, Account, TradeReport
 from backend.strategy_manager.worker import strategy_process_entrypoint
 from backend.core.events import event_bus
 from backend.core.symbol_mapper import symbol_mapper
@@ -375,6 +375,44 @@ class StrategySupervisor:
                 print(f"[StrategySupervisor] Poller error: {e}")
                 await asyncio.sleep(0.5)
 
+    def _record_trade_report(self, db, inst, active_legs, reason="EXIT_TIME"):
+        """Records or updates a TradeReport entry when a strategy cycle closes or updates"""
+        try:
+            today_str = datetime.datetime.utcnow().strftime("%Y%m%d")
+            client_id = inst.client_ids[0] if (inst.client_ids and len(inst.client_ids) > 0) else "QUANTZEN"
+            cycle_id = f"TC_{today_str}_{client_id}_{inst.id}"
+
+            rep = db.query(TradeReport).filter(TradeReport.cycle_id == cycle_id).first()
+            if not rep:
+                rep = TradeReport(
+                    cycle_id=cycle_id,
+                    client_id=client_id,
+                    strategy_instance_id=inst.id,
+                    strategy_name=inst.instance_name_user or inst.instance_name_admin or "Strategy",
+                    opened_at=inst.last_trade_at or datetime.datetime.utcnow()
+                )
+                db.add(rep)
+
+            rep.closed_at = datetime.datetime.utcnow()
+            sym = active_legs[0].get("symbol", "CRUDEOILM") if active_legs else "CRUDEOILM"
+            rep.symbol = sym.replace("MCXFO:", "").replace("MCX:", "")
+            rep.segment = "MCX" if "MCX" in sym.upper() else "NSE"
+            rep.side = "SELL"
+            rep.quantity = sum(abs(l.get("qty", 10)) for l in active_legs) if active_legs else 10
+            rep.is_paper = False
+            rep.mode = "LIVE"
+            
+            entry_prices = [round(float(l.get("entry") or 0.0), 2) for l in active_legs if l.get("entry")]
+            exit_prices = [round(float(l.get("exit") or 0.0), 2) for l in active_legs if l.get("exit")]
+            rep.entry_prices = entry_prices
+            rep.exit_prices = exit_prices
+            rep.legs_info = active_legs
+            rep.reason = reason
+            rep.mtm = round(float(inst.realized_pnl or 0.0), 2)
+            rep.status = "CLOSED"
+        except Exception as e:
+            print(f"[StrategySupervisor] Error recording trade report: {e}")
+
     def _update_instance_trade_state(self, instance_id: int, ord_data: Dict[str, Any], results: List[Dict[str, Any]]):
         """Syncs filled order details with the StrategyInstance record in database"""
         db = SessionLocal()
@@ -544,6 +582,7 @@ class StrategySupervisor:
                         inst.realized_pnl = closed_pnl
                         inst.unrealized_pnl = 0.0
                         inst.total_pnl = inst.realized_pnl
+                        self._record_trade_report(db, inst, active_legs, reason="EXIT_TIME")
 
                 inst.legs_info = legs
                 flag_modified(inst, "legs_info")

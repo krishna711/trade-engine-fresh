@@ -12,7 +12,7 @@ from backend.config import BASE_DIR, DEFAULT_SUBSCRIPTIONS, SUPPORTED_SEGMENTS
 from backend.database.connection import get_db, SessionLocal
 from backend.database.models import (
     Account, StrategyTemplate, StrategyInstance, Order, Trade, Position,
-    SymbolMapping, SystemLog, FeedBrokerStatus
+    SymbolMapping, SystemLog, FeedBrokerStatus, TradeReport
 )
 from backend.feed_manager.manager import feed_manager
 from backend.order_manager.manager import order_manager
@@ -1289,4 +1289,191 @@ XTS_FEED_API_SECRET={api_secret}
         "is_live_connected": getattr(xts_broker, "is_live_connected", False),
         "user_id": getattr(xts_broker, "user_id", None),
         "status": feed_manager.get_status()
+    }
+
+
+# ==============================================================================
+# REPORTS & AUDIT TRAIL API
+# ==============================================================================
+
+def parse_report_date(d_str: Optional[str], is_end_of_day: bool = False) -> Optional[datetime.datetime]:
+    if not d_str or not isinstance(d_str, str):
+        return None
+    d_str = d_str.strip()
+    dt = None
+    for fmt in ["%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d"]:
+        try:
+            dt = datetime.datetime.strptime(d_str, fmt)
+            break
+        except ValueError:
+            pass
+    if dt:
+        if is_end_of_day:
+            return dt.replace(hour=23, minute=59, second=59, microsecond=999999)
+        else:
+            return dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    return None
+
+@app.get("/api/reports/filters")
+async def get_reports_filters(db: Session = Depends(get_db)):
+    """Returns available clients and strategies for reports filter panes"""
+    accounts = db.query(Account).all()
+    clients = []
+    seen_clients = set()
+    for acc in accounts:
+        if acc.client_id and acc.client_id not in seen_clients:
+            seen_clients.add(acc.client_id)
+            clients.append({
+                "id": acc.client_id,
+                "name": acc.client_name or acc.client_id,
+                "status": "ACTIVE" if acc.is_active else "INACTIVE",
+                "broker": acc.broker
+            })
+    
+    # Also extract distinct clients from TradeReport if not present in Account
+    try:
+        rep_clients = db.query(TradeReport.client_id).distinct().all()
+        for (cid,) in rep_clients:
+            if cid and cid not in seen_clients:
+                seen_clients.add(cid)
+                clients.append({
+                    "id": cid,
+                    "name": cid,
+                    "status": "ACTIVE",
+                    "broker": "XTS" if cid == "QUANTZEN" else "BROKER"
+                })
+    except Exception:
+        pass
+
+    # Ensure reference accounts from user terminal exist
+    for ref_cid in ["QUANTZEN", "PCG6092A", "XTS"]:
+        if ref_cid not in seen_clients:
+            seen_clients.add(ref_cid)
+            clients.append({
+                "id": ref_cid,
+                "name": ref_cid,
+                "status": "ACTIVE",
+                "broker": "XTS"
+            })
+
+    instances = db.query(StrategyInstance).all()
+    strategies = []
+    seen_strat_names = set()
+    for inst in instances:
+        mapped_client = inst.client_ids[0] if (inst.client_ids and len(inst.client_ids) > 0) else "QUANTZEN"
+        slug = inst.template_key.lower().replace("_", "-") if inst.template_key else "crudeoil-short-straddle"
+        name = inst.instance_name_user or inst.instance_name_admin
+        if name not in seen_strat_names:
+            seen_strat_names.add(name)
+            strategies.append({
+                "id": inst.id,
+                "name": name,
+                "client_name": mapped_client,
+                "slug": slug
+            })
+
+    # Include historical strategy names from TradeReport
+    try:
+        rep_strats = db.query(TradeReport.strategy_name).distinct().all()
+        for (sname,) in rep_strats:
+            if sname and sname not in seen_strat_names:
+                seen_strat_names.add(sname)
+                strategies.append({
+                    "id": sname,
+                    "name": sname,
+                    "client_name": "QUANTZEN",
+                    "slug": sname.lower().replace(" ", "-")
+                })
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "clients": clients,
+        "strategies": strategies
+    }
+
+@app.get("/api/reports/trades")
+async def get_reports_trades(
+    client_ids: Optional[str] = Query(None),
+    strategy_names: Optional[str] = Query(None),
+    from_date: Optional[str] = Query(None),
+    to_date: Optional[str] = Query(None),
+    mode: Optional[str] = Query("ALL"),
+    status: Optional[str] = Query("ALL"),
+    order: Optional[str] = Query("newest"),
+    search: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    """Fetches filtered trades with aggregated metrics (total trades, total MTM)"""
+    query = db.query(TradeReport)
+
+    if client_ids and isinstance(client_ids, str):
+        c_list = [c.strip() for c in client_ids.split(",") if c.strip() and c.strip().lower() != "all"]
+        if c_list:
+            query = query.filter(TradeReport.client_id.in_(c_list))
+
+    if strategy_names and isinstance(strategy_names, str):
+        s_list = [s.strip() for s in strategy_names.split(",") if s.strip() and s.strip().lower() != "all"]
+        if s_list:
+            query = query.filter(TradeReport.strategy_name.in_(s_list))
+
+    if from_date and isinstance(from_date, str):
+        f_dt = parse_report_date(from_date, is_end_of_day=False)
+        if f_dt:
+            query = query.filter(TradeReport.opened_at >= f_dt)
+
+    if to_date and isinstance(to_date, str):
+        t_dt = parse_report_date(to_date, is_end_of_day=True)
+        if t_dt:
+            query = query.filter(TradeReport.opened_at <= t_dt)
+
+    if mode and isinstance(mode, str) and mode.upper() in ["LIVE", "PAPER"]:
+        query = query.filter(TradeReport.mode == mode.upper())
+
+    if status and isinstance(status, str) and status.upper() in ["CLOSED", "OPEN"]:
+        query = query.filter(TradeReport.status == status.upper())
+
+    if search and isinstance(search, str):
+        pat = f"%{search.strip()}%"
+        query = query.filter(
+            (TradeReport.symbol.ilike(pat)) |
+            (TradeReport.client_id.ilike(pat)) |
+            (TradeReport.strategy_name.ilike(pat)) |
+            (TradeReport.reason.ilike(pat))
+        )
+
+    if order and isinstance(order, str) and order.lower() == "oldest":
+        query = query.order_by(TradeReport.opened_at.asc())
+    else:
+        query = query.order_by(TradeReport.opened_at.desc())
+
+    reports = query.all()
+    total_mtm = sum(r.mtm for r in reports)
+
+    trade_list = []
+    for r in reports:
+        trade_list.append({
+            "id": r.id,
+            "cycle_id": r.cycle_id,
+            "opened": r.opened_at.strftime("%m/%d/%Y, %I:%M:%S %p") if r.opened_at else "-",
+            "closed": r.closed_at.strftime("%m/%d/%Y, %I:%M:%S %p") if r.closed_at else "-",
+            "client": r.client_id,
+            "strategy": r.strategy_name,
+            "mode": r.mode,
+            "symbol": r.symbol,
+            "side": r.side,
+            "qty": r.quantity,
+            "entry_prices": r.entry_prices or [],
+            "exit_prices": r.exit_prices or [],
+            "reason": r.reason or "-",
+            "mtm": round(r.mtm, 2),
+            "status": r.status
+        })
+
+    return {
+        "success": True,
+        "total_trades": len(trade_list),
+        "total_mtm": round(total_mtm, 2),
+        "trades": trade_list
     }

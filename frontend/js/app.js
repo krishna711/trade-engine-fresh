@@ -93,6 +93,8 @@ class App {
             if (window.statusManager) window.statusManager.loadFeedStatus();
         } else if (viewName === "logs") {
             if (window.logsManager) window.logsManager.loadLogs();
+        } else if (viewName === "reports") {
+            if (window.reportsManager) window.reportsManager.loadReports();
         }
     }
 

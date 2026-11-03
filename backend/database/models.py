@@ -217,3 +217,37 @@ class FeedBrokerStatus(Base):
     error_count = Column(Integer, default=0)
     subscribed_count = Column(Integer, default=0)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class TradeReport(Base):
+    """Historical and live trade cycle records for comprehensive multi-client & strategy reporting"""
+    __tablename__ = "trade_reports"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cycle_id = Column(String(100), unique=True, nullable=False)
+    client_id = Column(String(100), nullable=False)
+    strategy_instance_id = Column(Integer, nullable=True)
+    strategy_name = Column(String(150), nullable=False)
+    
+    symbol = Column(String(100), nullable=False)
+    segment = Column(String(20), default="MCX")
+    side = Column(String(10), default="SELL")
+    quantity = Column(Integer, default=1)
+    
+    is_paper = Column(Boolean, default=False)
+    mode = Column(String(10), default="LIVE") # "LIVE" or "PAPER"
+    
+    opened_at = Column(DateTime, nullable=False)
+    closed_at = Column(DateTime, nullable=True)
+    
+    entry_prices = Column(JSON, default=list) # e.g. [459.00, 440.70]
+    exit_prices = Column(JSON, default=list)  # e.g. [404.35, 582.00]
+    legs_info = Column(JSON, default=list)
+    
+    reason = Column(String(50), default="-")  # e.g. "EXIT_TIME", "STOP_LOSS", "MANUAL", "-"
+    mtm = Column(Float, default=0.0)
+    status = Column(String(20), default="CLOSED") # "CLOSED" or "OPEN"
+    
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
