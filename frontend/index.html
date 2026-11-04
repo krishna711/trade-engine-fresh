@@ -71,84 +71,63 @@
                 <div class="logo-badge" title="Fresh Trade Engine">⚡</div>
             </div>
 
-            <!-- Navigation Tabs -->
+            <!-- Navigation Links (Clean Minimalist Nav - Screenshot 3 Style) -->
             <nav class="nav-menu">
-                <button class="nav-btn active" data-view="dashboard" id="nav-dashboard">
-                    <span>📊</span> Dashboard
+                <button class="nav-link-btn active" data-view="dashboard" id="nav-dashboard">
+                    Clients
                 </button>
-                <button class="nav-btn" data-view="strategies" id="nav-strategies">
-                    <span>⚙️</span> Strategies <span class="brand-tag" style="font-size: 0.6rem; margin-left: 2px;">ADMIN</span>
+                <button class="nav-link-btn" data-view="strategies" id="nav-strategies">
+                    Strategies
                 </button>
-                <button class="nav-btn" data-view="status" id="nav-status">
-                    <span>🩺</span> Status & Diagnostics
+                <button class="nav-link-btn" data-view="reports" id="nav-reports">
+                    Reports
                 </button>
-                <button class="nav-btn" data-view="logs" id="nav-logs">
-                    <span>📜</span> Logs & Events
+                <button class="nav-link-btn" data-view="logs" id="nav-logs">
+                    Logs & Events
                 </button>
-                <button class="nav-btn" data-view="reports" id="nav-reports">
-                    <span>📑</span> Reports
+                <button class="nav-link-btn" data-view="status" id="nav-status">
+                    Status
                 </button>
-                <button class="nav-btn admin-only" data-action="users" id="nav-users" onclick="window.userManager.openUsersModal()" title="User & Role Management (Admin)">
-                    <span>👥</span> Users <span class="brand-tag" style="font-size: 0.6rem; margin-left: 2px;">ADMIN</span>
+                <button class="nav-link-btn admin-only" data-action="users" id="nav-users" onclick="window.userManager.openUsersModal()" title="User Management (Admin)">
+                    Users
                 </button>
             </nav>
 
-            <!-- Consolidated PnL Widget (Short U: R: T:) -->
+            <!-- Consolidated PnL Widget (Clean Inline PnL - Screenshot 3 Style) -->
             <div class="header-pnl-widget">
-                <div class="pnl-inline-item">
-                    <span class="pnl-tag">U:</span>
-                    <span class="pnl-val pnl-positive" id="header-unrealized-pnl">+₹0.00</span>
-                </div>
-                <div class="pnl-divider">|</div>
-                <div class="pnl-inline-item">
-                    <span class="pnl-tag">R:</span>
-                    <span class="pnl-val pnl-positive" id="header-realized-pnl">+₹0.00</span>
-                </div>
-                <div class="pnl-divider">|</div>
-                <div class="pnl-inline-item">
-                    <span class="pnl-tag">T:</span>
-                    <span class="pnl-val pnl-positive" id="header-total-pnl">+₹0.00</span>
-                </div>
+                <span class="pnl-header-label">PnL</span>
+                <span class="pnl-tag">U:</span>
+                <span class="pnl-val pnl-positive" id="header-unrealized-pnl">+₹0.00</span>
+                <span class="pnl-tag" style="margin-left: 6px;">R:</span>
+                <span class="pnl-val pnl-positive" id="header-realized-pnl">+₹0.00</span>
+                <span class="pnl-tag" style="margin-left: 6px;">T:</span>
+                <span class="pnl-val pnl-positive" id="header-total-pnl">+₹0.00</span>
             </div>
 
             <!-- Header Controls & User Menu -->
             <div class="header-controls">
-                <!-- Admin vs User View Switcher -->
-                <div class="role-switcher" title="Toggle Admin vs Non-Admin User view">
-                    <button class="role-btn active" id="btn-role-admin">ADMIN</button>
-                    <button class="role-btn" id="btn-role-user">USER</button>
+                <!-- WebSocket Live Stream Dot -->
+                <div class="status-pill status-running" id="ws-status-badge" title="WebSocket Live Stream">
+                    <span class="status-dot"></span> <span id="ws-status-text">LIVE</span>
                 </div>
 
                 <!-- Dark / Light Theme Toggle -->
-                <button class="icon-btn" id="btn-theme-toggle" title="Toggle Dark/Light Theme">
+                <button class="icon-btn-clean" id="btn-theme-toggle" title="Toggle Dark/Light Theme">
                     🌓
                 </button>
 
-                <!-- User Management (Admin Only) -->
-                <button class="icon-btn admin-only" id="btn-open-users" title="User Management (Create Admin / Normal Users)" onclick="window.userManager.openUsersModal()">
-                    👥
-                </button>
-
-                <!-- User Profile Display -->
-                <div class="header-user-profile" id="header-user-profile" title="Logged-in User Account">
-                    <span class="header-user-avatar" id="header-user-avatar">👤</span>
-                    <span class="header-user-name" id="header-user-name">User</span>
-                    <span class="header-user-role-badge header-role-user" id="header-user-role-badge">USER</span>
-                </div>
-
-                <!-- Sign Out Button -->
-                <button class="btn-logout" id="btn-logout" title="Sign Out / Lock Terminal" onclick="window.authManager.logout()">
-                    <span>🚪</span> Sign Out
-                </button>
-
-                <!-- Broker & Feed Settings -->
-                <button class="icon-btn" id="btn-open-settings" title="Broker Feed & API Credentials">
+                <!-- Broker Feed & API Credentials Settings -->
+                <button class="icon-btn-clean" id="btn-open-settings" title="Broker Feed & API Credentials">
                     ⚙️
                 </button>
 
-                <!-- WebSocket Connection Status Dot -->
-                <div class="status-pill status-running" id="ws-status-badge" title="WebSocket Live Stream">
-                    <span class="status-dot"></span> <span id="ws-status-text">LIVE</span>
+                <!-- User Profile & Sign Out (Compact) -->
+                <div class="header-user-profile" id="header-user-profile" title="Logged-in Account">
+                    <span class="header-user-avatar" id="header-user-avatar">👤</span>
+                    <span class="header-user-name" id="header-user-name">User</span>
+                    <button class="btn-logout-mini" id="btn-logout" title="Sign Out / Lock Terminal" onclick="window.authManager.logout()">
+                        🚪
+                    </button>
                 </div>
             </div>
         </div>
@@ -566,6 +545,7 @@
             </div>
             <div style="display: flex; gap: 0.5rem; align-items: center;">
                 <button class="action-btn-sm" id="btn-drawer-sync" style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); font-size: 0.75rem; padding: 4px 10px; cursor: pointer; border-radius: 4px;" title="Refresh live holdings, margins, and positions from broker" onclick="if(clientCardsManager.currentClientId) clientCardsManager.syncBrokerDataNow(clientCardsManager.currentClientId)">🔄 Sync Broker</button>
+                <button class="action-btn-sm" id="btn-drawer-delete" style="background: rgba(239, 68, 68, 0.12); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); font-size: 0.75rem; padding: 4px 10px; cursor: pointer; border-radius: 4px;" title="Delete this account" onclick="if(clientCardsManager.currentClientId) clientCardsManager.deleteAccount(clientCardsManager.currentClientId, clientCardsManager.currentClientName)">🗑️ Delete</button>
                 <button class="icon-btn" id="drawer-close-btn">&times;</button>
             </div>
         </div>

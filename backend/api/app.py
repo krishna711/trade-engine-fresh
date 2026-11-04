@@ -370,6 +370,28 @@ def toggle_account_paper_mode(client_id: str, db: Session = Depends(get_db), cur
     db.commit()
     return {"success": True, "client_id": client_id, "paper_mode": acc.paper_mode}
 
+@app.post("/api/accounts/{client_id}/set-mode")
+def set_account_paper_mode(client_id: str, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    acc = db.query(Account).filter(Account.client_id == client_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if current_user.role != "ADMIN" and acc.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not have permission to manage this account.")
+    acc.paper_mode = bool(payload.get("paper_mode", True))
+    db.commit()
+    return {"success": True, "client_id": client_id, "paper_mode": acc.paper_mode}
+
+@app.post("/api/accounts/{client_id}/toggle-active")
+def toggle_account_active(client_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    acc = db.query(Account).filter(Account.client_id == client_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if current_user.role != "ADMIN" and acc.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not have permission to manage this account.")
+    acc.is_active = not acc.is_active
+    db.commit()
+    return {"success": True, "client_id": client_id, "is_active": acc.is_active}
+
 @app.post("/api/accounts/{client_id}/login")
 def toggle_account_login(client_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     acc = db.query(Account).filter(Account.client_id == client_id).first()

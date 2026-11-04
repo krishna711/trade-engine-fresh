@@ -276,91 +276,119 @@ class ClientCardsManager {
         }
 
         this.gridEl.innerHTML = accounts.map(acc => {
-            const isPos = acc.total_pnl >= 0;
-            const sign = isPos ? "+" : "";
-            const pnlCls = isPos ? "pnl-positive" : "pnl-negative";
-            const brokerCls = `broker-${acc.broker.toLowerCase()}`;
+            const uPos = acc.unrealized_pnl >= 0;
+            const rPos = acc.realized_pnl >= 0;
+            const tPos = acc.total_pnl >= 0;
 
+            const uSign = uPos ? "+" : "";
+            const rSign = rPos ? "+" : "";
+            const tSign = tPos ? "+" : "";
+
+            const uCls = uPos ? "pos" : "neg";
+            const rCls = rPos ? "pos" : "neg";
+            const tCls = tPos ? "pos" : "neg";
+
+            const brokerDisplay = acc.broker ? acc.broker.toUpperCase() : "XTS";
+            const isActive = Boolean(acc.is_active);
+
+            // Owner badge if admin and owned by another user
             const ownerBadge = (window.app && window.app.currentRole === "ADMIN" && acc.owner_username)
-                ? `<span class="brand-tag" style="font-size: 0.65rem; background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.3);" title="Account owner: ${acc.owner_username}">👤 ${acc.owner_username}</span>`
+                ? `<span class="card-owner-tag" title="Account owner: ${acc.owner_username}">👤 ${acc.owner_username}</span>`
                 : '';
 
-            const tokenBadge = acc.broker === 'XTS' ? (
-                acc.has_token_today 
-                ? `<span style="font-size: 0.68rem; padding: 1px 6px; border-radius: 4px; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 600; cursor: pointer;" onclick="clientCardsManager.openDrawer('${acc.client_id}', '${acc.client_name.replace(/'/g, "\\'")}', 'credentials')" title="Token active for today (${acc.token_date}). Click to view or regenerate.">🔑 Token Active</span>`
-                : `<span style="font-size: 0.68rem; padding: 1px 6px; border-radius: 4px; background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); font-weight: 600; cursor: pointer;" onclick="clientCardsManager.openDrawer('${acc.client_id}', '${acc.client_name.replace(/'/g, "\\'")}', 'credentials')" title="No active token for today. Click to generate or enter token.">⚠️ Set Today Token</span>`
-            ) : '';
+            // Token status indicator
+            const isXts = (acc.broker || '').toUpperCase() === 'XTS';
+            const tokenActive = isXts ? acc.has_token_today : true;
+            const tokenTooltip = isXts
+                ? (acc.has_token_today ? `XTS Session Active for Today (${acc.token_date}). Click to view.` : '⚠️ XTS Session Token required today. Click to generate.')
+                : 'API Credentials & Session';
 
             return `
                 <div class="client-card" id="card-${acc.client_id}">
-                    <div class="client-card-header">
-                        <div class="client-info">
-                            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
-                                <h3>${acc.client_name}</h3>
-                                <span class="broker-tag ${brokerCls}">${acc.broker}</span>
-                                ${ownerBadge}
-                                ${tokenBadge}
-                            </div>
-                            <span class="client-id">${acc.client_id} &bull; ${acc.running_strategies_count} Strategies</span>
+                    <div class="card-top-row">
+                        <div class="card-name-wrap">
+                            <span class="card-title" title="${acc.client_id}">${acc.client_name || acc.client_id}</span>
+                            ${ownerBadge}
                         </div>
-                        <div style="display: flex; gap: 0.35rem; align-items: center;">
-                            <button class="mode-toggle-btn ${acc.paper_mode ? 'mode-paper' : 'mode-live'}" 
-                                    onclick="clientCardsManager.toggleMode('${acc.client_id}')" 
-                                    title="Click to toggle Paper/Live mode">
-                                ${acc.paper_mode ? '📄 PAPER' : '🟢 LIVE'}
-                            </button>
-                            <button class="icon-btn-delete-acc" 
-                                    onclick="clientCardsManager.deleteAccount('${acc.client_id}', '${acc.client_name.replace(/'/g, "\\'")}')" 
-                                    title="Delete Account" 
-                                    style="background: rgba(239, 68, 68, 0.12); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 4px 7px; cursor: pointer; font-size: 0.8rem; transition: all 0.2s;">
-                                🗑️
-                            </button>
-                        </div>
+                        <span class="card-status-badge ${isActive ? 'status-active' : 'status-inactive'}" 
+                              onclick="clientCardsManager.toggleActive('${acc.client_id}')" 
+                              title="Click to toggle Active/Inactive">
+                            ${isActive ? 'ACTIVE' : 'INACTIVE'}
+                        </span>
                     </div>
 
-                    <!-- PnL Grid (Short U: R: T:) -->
-                    <div class="card-pnl-grid">
-                        <div class="card-pnl-item">
-                            <span class="card-pnl-title">U:</span>
-                            <span class="card-pnl-num ${acc.unrealized_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">
-                                ${acc.unrealized_pnl >= 0 ? '+' : ''}₹${acc.unrealized_pnl.toFixed(2)}
-                            </span>
-                        </div>
-                        <div class="card-pnl-item">
-                            <span class="card-pnl-title">R:</span>
-                            <span class="card-pnl-num ${acc.realized_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}">
-                                ${acc.realized_pnl >= 0 ? '+' : ''}₹${acc.realized_pnl.toFixed(2)}
-                            </span>
-                        </div>
-                        <div class="card-pnl-item">
-                            <span class="card-pnl-title">T:</span>
-                            <span class="card-pnl-num ${pnlCls}">
-                                ${sign}₹${acc.total_pnl.toFixed(2)}
-                            </span>
-                        </div>
+                    <div class="card-broker-text">${brokerDisplay}</div>
+
+                    <div class="card-pnl-line">
+                        <span class="pnl-lbl">U:</span> <span class="pnl-val ${uCls}">${uSign}₹${acc.unrealized_pnl.toFixed(2)}</span>
+                        <span class="pnl-lbl">R:</span> <span class="pnl-val ${rCls}">${rSign}₹${acc.realized_pnl.toFixed(2)}</span>
+                        <span class="pnl-lbl">T:</span> <span class="pnl-val ${tCls}">${tSign}₹${acc.total_pnl.toFixed(2)}</span>
                     </div>
 
-                    <!-- Prominent Actions -->
-                    <div class="card-actions-row">
-                        <button class="btn-square-off" onclick="clientCardsManager.squareOff('${acc.client_id}')" title="Emergency Square Off all positions for this account">
-                            ⚡ SQUARE OFF
-                        </button>
-                        <button class="btn-card-menu" onclick="clientCardsManager.toggleLogin('${acc.client_id}', ${acc.is_logged_in})" title="Session status">
-                            ${acc.is_logged_in ? '🟢 Active' : '⚪ Terminated'}
-                        </button>
-                        <button class="btn-card-menu" onclick="clientCardsManager.openDrawer('${acc.client_id}', '${acc.client_name.replace(/'/g, "\\'")}', 'credentials')" title="View / Update API credentials and Today's Token">
-                            🔑 Token
-                        </button>
-                        <button class="btn-card-menu" onclick="clientCardsManager.openDrawer('${acc.client_id}', '${acc.client_name.replace(/'/g, "\\'")}', 'positions')" title="View OrderBook, Trades, Positions, Margins">
-                            📋 Details
-                        </button>
-                        <button class="btn-card-menu btn-card-delete" onclick="clientCardsManager.deleteAccount('${acc.client_id}', '${acc.client_name.replace(/'/g, "\\'")}')" title="Delete Client Account" style="color: #ef4444; border-color: rgba(239, 68, 68, 0.5); background: rgba(239, 68, 68, 0.12); font-weight: 700; cursor: pointer;">
-                            🗑️ Delete
-                        </button>
+                    <div class="card-toolbar">
+                        <div class="mode-pill-group">
+                            <button class="mode-pill ${acc.paper_mode ? 'active' : ''}" 
+                                    onclick="clientCardsManager.setMode('${acc.client_id}', true)" 
+                                    title="Switch to Paper Trading">PAPER</button>
+                            <button class="mode-pill ${!acc.paper_mode ? 'active live' : ''}" 
+                                    onclick="clientCardsManager.setMode('${acc.client_id}', false)" 
+                                    title="Switch to Live Broker Orders">LIVE</button>
+                        </div>
+
+                        <div class="card-action-icons">
+                            <button class="btn-tool-icon ${tokenActive ? 'tool-token-active' : 'tool-token-warn'}" 
+                                    onclick="clientCardsManager.openDrawer('${acc.client_id}', '${acc.client_name.replace(/'/g, "\\'")}', 'credentials')" 
+                                    title="${tokenTooltip}">
+                                ➔
+                            </button>
+                            <button class="btn-tool-icon ${isActive ? 'tool-power-active' : 'tool-power-off'}" 
+                                    onclick="clientCardsManager.toggleActive('${acc.client_id}')" 
+                                    title="${isActive ? 'Account Active (Click to Pause)' : 'Account Paused (Click to Activate)'}">
+                                ⏻
+                            </button>
+                            <button class="btn-tool-icon tool-squareoff" 
+                                    onclick="clientCardsManager.squareOff('${acc.client_id}')" 
+                                    title="Emergency Square Off all positions">
+                                ✕
+                            </button>
+                            <button class="btn-tool-icon tool-more" 
+                                    onclick="clientCardsManager.openDrawer('${acc.client_id}', '${acc.client_name.replace(/'/g, "\\'")}', 'positions')" 
+                                    title="View Positions, Orders, Margins & Account Settings">
+                                ⋮
+                            </button>
+                        </div>
                     </div>
                 </div>
             `;
         }).join("");
+    }
+
+    async setMode(clientId, isPaper) {
+        try {
+            const res = await fetch(`/api/accounts/${clientId}/set-mode`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ paper_mode: isPaper })
+            });
+            const data = await res.json();
+            if (data.success) {
+                this.loadAccounts();
+            }
+        } catch (e) {
+            alert("Failed to update mode: " + e);
+        }
+    }
+
+    async toggleActive(clientId) {
+        try {
+            const res = await fetch(`/api/accounts/${clientId}/toggle-active`, { method: "POST" });
+            const data = await res.json();
+            if (data.success) {
+                this.loadAccounts();
+            }
+        } catch (e) {
+            alert("Failed to toggle active status: " + e);
+        }
     }
 
     async toggleMode(clientId) {

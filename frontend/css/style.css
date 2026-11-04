@@ -123,7 +123,42 @@ header.app-header {
 .nav-menu {
     display: flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 1.25rem;
+}
+
+.nav-link-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0.35rem 0.1rem;
+    position: relative;
+    transition: color 0.15s ease;
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+}
+
+.nav-link-btn:hover {
+    color: var(--text-primary);
+}
+
+.nav-link-btn.active {
+    color: #ffffff;
+    font-weight: 700;
+}
+
+.nav-link-btn.active::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--accent-blue);
+    border-radius: 2px;
 }
 
 .nav-btn {
@@ -152,15 +187,62 @@ header.app-header {
     font-weight: 600;
 }
 
-/* Consolidated PnL Widget (Short U: R: T:) */
+/* Consolidated PnL Widget (Clean Inline PnL - Screenshot 3 Style) */
 .header-pnl-widget {
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    padding: 0.35rem 0.85rem;
-    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    padding: 0.3rem 0.75rem;
+    border-radius: 6px;
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.45rem;
+    font-size: 0.82rem;
+}
+
+.pnl-header-label {
+    font-weight: 700;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    margin-right: 3px;
+}
+
+.icon-btn-clean {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+}
+
+.icon-btn-clean:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.btn-logout-mini {
+    background: transparent;
+    border: none;
+    color: #f87171;
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 2px 4px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s ease;
+    margin-left: 2px;
+}
+
+.btn-logout-mini:hover {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
 }
 
 .pnl-inline-item {
@@ -371,52 +453,222 @@ main.main-content {
 }
 
 /* ===================================================================
-   CLIENT CARDS (Responsive Card Grid with Controlled Max Width)
+   CLIENT CARDS (Compact Grid - Screenshot 4 Layout)
    =================================================================== */
 .client-cards-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 380px));
-    gap: 1rem;
-    align-items: start;
+    grid-template-columns: repeat(auto-fill, minmax(235px, 1fr));
+    gap: 0.75rem;
+    align-items: stretch;
 }
 
 .client-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
+    background: #0f141f;
+    border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
-    padding: 0.95rem;
+    padding: 0.7rem 0.85rem;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
-    box-shadow: var(--shadow-md);
-    backdrop-filter: blur(10px);
-    transition: transform 0.2s ease, border-color 0.2s ease;
-    position: relative;
-    overflow: hidden;
-    max-width: 420px;
-    width: 100%;
+    justify-content: space-between;
+    gap: 0.25rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+    transition: transform 0.15s ease, border-color 0.15s ease;
     box-sizing: border-box;
+    min-height: 115px;
 }
 
 .client-card:hover {
     transform: translateY(-2px);
-    border-color: var(--border-glow);
+    border-color: rgba(59, 130, 246, 0.35);
 }
 
-.client-card-header {
+.card-top-row {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
 }
 
-.client-info h3 {
-    font-size: 0.95rem;
-    font-weight: 600;
+.card-name-wrap {
     display: flex;
     align-items: center;
     gap: 0.4rem;
+    min-width: 0;
 }
 
+.card-title {
+    font-weight: 700;
+    font-size: 0.92rem;
+    color: #ffffff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.card-owner-tag {
+    font-size: 0.65rem;
+    background: rgba(139, 92, 246, 0.15);
+    color: #a78bfa;
+    border: 1px solid rgba(139, 92, 246, 0.3);
+    padding: 1px 5px;
+    border-radius: 4px;
+}
+
+.card-status-badge {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    user-select: none;
+    transition: opacity 0.15s ease;
+}
+
+.card-status-badge:hover {
+    opacity: 0.8;
+}
+
+.card-status-badge.status-active {
+    color: #38bdf8;
+}
+
+.card-status-badge.status-inactive {
+    color: #64748b;
+}
+
+.card-broker-text {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-top: -2px;
+}
+
+.card-pnl-line {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin: 0.15rem 0 0.3rem 0;
+}
+
+.pnl-lbl {
+    color: #94a3b8;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+.card-pnl-line .pnl-val.pos {
+    color: #10b981;
+}
+
+.card-pnl-line .pnl-val.neg {
+    color: #ef4444;
+}
+
+.card-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: auto;
+    padding-top: 0.4rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.mode-pill-group {
+    display: inline-flex;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.mode-pill {
+    background: transparent;
+    border: none;
+    color: #64748b;
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 3px 8px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+
+.mode-pill.active {
+    background: rgba(255, 255, 255, 0.15);
+    color: #ffffff;
+}
+
+.mode-pill.active.live {
+    background: #0284c7;
+    color: #ffffff;
+}
+
+.card-action-icons {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.btn-tool-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #cbd5e1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    padding: 0;
+}
+
+.btn-tool-icon:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.tool-token-active {
+    color: #38bdf8;
+    border-color: rgba(56, 189, 248, 0.35);
+}
+
+.tool-token-warn {
+    color: #f59e0b;
+    border-color: rgba(245, 158, 11, 0.4);
+}
+
+.tool-power-active {
+    color: #10b981;
+    border-color: rgba(16, 185, 129, 0.35);
+}
+
+.tool-power-off {
+    color: #64748b;
+    opacity: 0.6;
+}
+
+.tool-squareoff {
+    color: #f87171;
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+.tool-squareoff:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}
+
+.tool-more {
+    color: #94a3b8;
+    border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* Retain legacy broker and drawer helpers */
 .broker-tag {
     font-size: 0.65rem;
     font-weight: 700;
@@ -431,111 +683,6 @@ main.main-content {
 .broker-zerodha { background: rgba(239, 68, 68, 0.2); color: var(--accent-red); }
 .broker-dhan { background: rgba(139, 92, 246, 0.2); color: var(--accent-purple); }
 .broker-fyers { background: rgba(6, 182, 212, 0.2); color: var(--accent-cyan); }
-
-.client-id {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-}
-
-/* Paper / Live Mode Pill Switcher */
-.mode-toggle-btn {
-    border: none;
-    cursor: pointer;
-    font-size: 0.7rem;
-    font-weight: 700;
-    padding: 3px 8px;
-    border-radius: 12px;
-    letter-spacing: 0.05em;
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    transition: all 0.2s ease;
-}
-
-.mode-toggle-btn.mode-paper {
-    background: rgba(245, 158, 11, 0.2);
-    color: var(--accent-amber);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-}
-
-.mode-toggle-btn.mode-live {
-    background: rgba(16, 185, 129, 0.2);
-    color: var(--accent-green);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-}
-
-/* Card PnL Grid */
-.card-pnl-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    padding: 0.6rem;
-    text-align: center;
-}
-
-.card-pnl-item span {
-    display: block;
-}
-
-.card-pnl-title {
-    font-size: 0.65rem;
-    color: var(--text-muted);
-    font-weight: 600;
-}
-
-.card-pnl-num {
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    font-weight: 700;
-    margin-top: 2px;
-}
-
-/* Card Actions */
-.card-actions-row {
-    display: flex;
-    gap: 0.5rem;
-}
-
-.btn-square-off {
-    flex: 1;
-    background: var(--accent-red);
-    color: white;
-    border: none;
-    padding: 0.5rem;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background 0.15s ease;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.3rem;
-}
-
-.btn-square-off:hover {
-    background: #dc2626;
-}
-
-.btn-card-menu {
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    color: var(--text-secondary);
-    padding: 0.5rem 0.75rem;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    cursor: pointer;
-    font-weight: 500;
-    transition: all 0.15s ease;
-}
-
-.btn-card-menu:hover {
-    background: var(--bg-primary);
-    color: var(--text-primary);
-}
 
 /* ===================================================================
    DATA TABLES (STRATEGY LISTS, LOGS, ETC.)
