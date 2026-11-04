@@ -107,6 +107,15 @@ class App {
         if (btnAdmin) btnAdmin.classList.toggle("active", role === "ADMIN");
         if (btnUser) btnUser.classList.toggle("active", role === "USER");
 
+        // Toggle admin-only controls
+        const btnOpenUsers = document.getElementById("btn-open-users");
+        const navUsers = document.getElementById("nav-users");
+        if (btnOpenUsers) btnOpenUsers.style.display = role === "ADMIN" ? "inline-flex" : "none";
+        if (navUsers) navUsers.style.display = role === "ADMIN" ? "inline-flex" : "none";
+        document.querySelectorAll(".admin-only").forEach(el => {
+            el.style.display = role === "ADMIN" ? "" : "none";
+        });
+
         // Re-render strategy lists to toggle admin vs user names
         if (window.strategiesManager) {
             window.strategiesManager.loadInstances();

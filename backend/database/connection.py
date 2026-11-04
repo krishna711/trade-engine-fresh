@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from backend.config import DB_URL, DEFAULT_FEED_PRIORITY, DEFAULT_LOT_SIZES
 from backend.database.models import (
     Base, Account, StrategyTemplate, StrategyInstance,
-    SymbolMapping, FeedBrokerStatus, SystemLog, Position, Order, Trade, TradeReport
+    SymbolMapping, FeedBrokerStatus, SystemLog, Position, Order, Trade, TradeReport, User
 )
 
 
@@ -735,8 +735,33 @@ def seed_initial_data():
             for rep in historical_reports:
                 db.add(rep)
 
-        db.commit()
 
+        # 7. Seed Default Users (Admin and Normal User) if empty
+        if db.query(User).count() == 0:
+            import hashlib
+            def _quick_hash(pwd):
+                return hashlib.sha256(pwd.encode('utf-8')).hexdigest()
+
+            admin_user = User(
+                username="admin",
+                full_name="System Administrator",
+                email="admin@fresh-trade.local",
+                password_hash=_quick_hash("admin123"),
+                role="ADMIN",
+                is_active=True
+            )
+            trader_user = User(
+                username="trader",
+                full_name="Standard Trader",
+                email="trader@fresh-trade.local",
+                password_hash=_quick_hash("trader123"),
+                role="USER",
+                is_active=True
+            )
+            db.add(admin_user)
+            db.add(trader_user)
+
+        db.commit()
 
 
     except Exception as e:

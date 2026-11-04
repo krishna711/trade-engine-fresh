@@ -12,7 +12,7 @@ from backend.config import BASE_DIR, DEFAULT_SUBSCRIPTIONS, SUPPORTED_SEGMENTS
 from backend.database.connection import get_db, SessionLocal
 from backend.database.models import (
     Account, StrategyTemplate, StrategyInstance, Order, Trade, Position,
-    SymbolMapping, SystemLog, FeedBrokerStatus, TradeReport
+    SymbolMapping, SystemLog, FeedBrokerStatus, TradeReport, User
 )
 from backend.feed_manager.manager import feed_manager
 from backend.order_manager.manager import order_manager
@@ -1581,4 +1581,189 @@ async def get_reports_trades(
         "total_trades": len(trade_list),
         "total_mtm": round(total_mtm, 2),
         "trades": trade_list
+    }
+
+
+# ==============================================================================
+# USER & ROLE MANAGEMENT API
+# ==============================================================================
+
+import hashlib
+import secrets
+
+def hash_user_password(password: str) -> str:
+    salt = secrets.token_hex(8)
+    h = hashlib.sha256((salt + password).encode('utf-8')).hexdigest()
+    return f"{salt}${h}"
+
+def verify_user_password(password: str, hashed: str) -> bool:
+    if not hashed:
+        return False
+    if "$" in hashed:
+        salt, h = hashed.split("$", 1)
+        return hashlib.sha256((salt + password).encode('utf-8')).hexdigest() == h
+    return hashlib.sha256(password.encode('utf-8')).hexdigest() == hashed
+
+@app.get("/api/users")
+async def list_users(db: Session = Depends(get_db)):
+    """List all registered users with their roles and status"""
+    users = db.query(User).order_by(User.id.asc()).all()
+    user_list = []
+    for u in users:
+        user_list.append({
+            "id": u.id,
+            "username": u.username,
+            "full_name": u.full_name or u.username,
+            "email": u.email or "",
+            "role": u.role,
+            "is_active": u.is_active,
+            "created_at": u.created_at.strftime("%Y-%m-%d %H:%M:%S") if u.created_at else "-"
+        })
+    return {
+        "success": True,
+        "total": len(user_list),
+        "users": user_list
+    }
+
+@app.post("/api/users")
+async def create_user(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """Create a new user (ADMIN or USER)"""
+    username = str(payload.get("username", "")).strip()
+    password = str(payload.get("password", "")).strip()
+    role = str(payload.get("role", "USER")).strip().upper()
+    full_name = str(payload.get("full_name", "")).strip()
+    email = str(payload.get("email", "")).strip()
+    is_active = bool(payload.get("is_active", True))
+
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required.")
+    
+    if len(username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters.")
+
+    if not password or len(password) < 4:
+        raise HTTPException(status_code=400, detail="Password must be at least 4 characters.")
+
+    if role not in ["ADMIN", "USER"]:
+        raise HTTPException(status_code=400, detail="Role must be either 'ADMIN' or 'USER'.")
+
+    # Check for existing user (case-insensitive)
+    existing = db.query(User).filter(User.username.ilike(username)).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Username '{username}' already exists.")
+
+    new_user = User(
+        username=username,
+        full_name=full_name or username,
+        email=email,
+        password_hash=hash_user_password(password),
+        role=role,
+        is_active=is_active
+    )
+    db.add(new_user)
+
+    # Log system event
+    db.add(SystemLog(
+        category="BROKER_API",
+        level="SUCCESS",
+        symbol="USER_MGMT",
+        message=f"New {role} user created: '{username}' ({full_name or username})"
+    ))
+
+    db.commit()
+    db.refresh(new_user)
+
+    return {
+        "success": True,
+        "message": f"{role} user '{username}' created successfully.",
+        "user": {
+            "id": new_user.id,
+            "username": new_user.username,
+            "full_name": new_user.full_name,
+            "email": new_user.email,
+            "role": new_user.role,
+            "is_active": new_user.is_active,
+            "created_at": new_user.created_at.strftime("%Y-%m-%d %H:%M:%S") if new_user.created_at else "-"
+        }
+    }
+
+@app.put("/api/users/{user_id}")
+async def update_user(user_id: int, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """Update user details, role, status, or password"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    new_role = payload.get("role")
+    new_is_active = payload.get("is_active")
+
+    # Guard: prevent removing or deactivating the last active ADMIN
+    if (new_role and new_role.upper() != "ADMIN" and user.role == "ADMIN") or (new_is_active is False and user.role == "ADMIN"):
+        active_admins = db.query(User).filter(User.role == "ADMIN", User.is_active == True, User.id != user_id).count()
+        if active_admins == 0:
+            raise HTTPException(status_code=400, detail="Cannot demote or deactivate the only remaining active Administrator.")
+
+    if new_role and new_role.upper() in ["ADMIN", "USER"]:
+        user.role = new_role.upper()
+
+    if new_is_active is not None:
+        user.is_active = bool(new_is_active)
+
+    if "full_name" in payload:
+        user.full_name = str(payload.get("full_name", "")).strip()
+
+    if "email" in payload:
+        user.email = str(payload.get("email", "")).strip()
+
+    password = payload.get("password")
+    if password and str(password).strip():
+        pwd_str = str(password).strip()
+        if len(pwd_str) < 4:
+            raise HTTPException(status_code=400, detail="Password must be at least 4 characters.")
+        user.password_hash = hash_user_password(pwd_str)
+
+    user.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "success": True,
+        "message": f"User '{user.username}' updated successfully.",
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "email": user.email,
+            "role": user.role,
+            "is_active": user.is_active,
+            "created_at": user.created_at.strftime("%Y-%m-%d %H:%M:%S") if user.created_at else "-"
+        }
+    }
+
+@app.delete("/api/users/{user_id}")
+async def delete_user(user_id: int, db: Session = Depends(get_db)):
+    """Delete a user account"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    # Guard: prevent deleting the last active ADMIN
+    if user.role == "ADMIN":
+        active_admins = db.query(User).filter(User.role == "ADMIN", User.is_active == True, User.id != user_id).count()
+        if active_admins == 0:
+            raise HTTPException(status_code=400, detail="Cannot delete the sole remaining active Administrator.")
+
+    username = user.username
+    db.delete(user)
+    db.add(SystemLog(
+        category="BROKER_API",
+        level="WARNING",
+        symbol="USER_MGMT",
+        message=f"User deleted: '{username}' (ID: {user_id})"
+    ))
+    db.commit()
+
+    return {
+        "success": True,
+        "message": f"User '{username}' deleted successfully."
     }

@@ -251,3 +251,18 @@ class TradeReport(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
+
+
+class User(Base):
+    """System users with role-based access control (ADMIN vs USER)"""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(80), unique=True, nullable=False, index=True)
+    full_name = Column(String(150), default="")
+    email = Column(String(150), nullable=True)
+    password_hash = Column(String(200), nullable=False)
+    role = Column(String(20), default="USER", nullable=False)  # "ADMIN" or "USER"
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)

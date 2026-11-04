@@ -36,6 +36,9 @@
                 <button class="nav-btn" data-view="reports" id="nav-reports">
                     <span>📑</span> Reports
                 </button>
+                <button class="nav-btn admin-only" data-action="users" id="nav-users" onclick="window.userManager.openUsersModal()" title="User & Role Management (Admin)">
+                    <span>👥</span> Users <span class="brand-tag" style="font-size: 0.6rem; margin-left: 2px;">ADMIN</span>
+                </button>
             </nav>
 
             <!-- Consolidated PnL Widget (Short U: R: T:) -->
@@ -67,6 +70,11 @@
                 <!-- Dark / Light Theme Toggle -->
                 <button class="icon-btn" id="btn-theme-toggle" title="Toggle Dark/Light Theme">
                     🌓
+                </button>
+
+                <!-- User Management (Admin Only) -->
+                <button class="icon-btn admin-only" id="btn-open-users" title="User Management (Create Admin / Normal Users)" onclick="window.userManager.openUsersModal()">
+                    👥
                 </button>
 
                 <!-- Broker & Feed Settings -->
@@ -975,6 +983,140 @@
         </div>
     </div>
 
+
+    <!-- ===================================================================
+         MODAL 9: MANAGE USERS & ROLES (Admin Only)
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-manage-users">
+        <div class="modal-box" style="width: 820px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <div>
+                    <h3>👥 User & Role Management</h3>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">Manage system administrators and normal user accounts</span>
+                </div>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button class="action-btn-sm" onclick="window.userManager.openUserFormModal()" style="background: var(--accent-green, #10b981); color: white; padding: 0.4rem 0.85rem; font-weight: 600; cursor: pointer; border: none; border-radius: 6px;">
+                        + Add User
+                    </button>
+                    <button class="icon-btn modal-close-btn">&times;</button>
+                </div>
+            </div>
+
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 1rem;">
+                <!-- Filter Bar -->
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap;">
+                    <div style="display: flex; gap: 0.5rem; align-items: center; flex: 1;">
+                        <input type="text" id="users-search-input" placeholder="Search by username, name, or email..." style="flex: 1; min-width: 200px; padding: 0.45rem 0.75rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-size: 0.8rem;">
+                        <select id="users-role-filter" style="padding: 0.45rem 0.75rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-size: 0.8rem; cursor: pointer;">
+                            <option value="">All Roles</option>
+                            <option value="ADMIN">Admin Only</option>
+                            <option value="USER">Normal User Only</option>
+                        </select>
+                    </div>
+                    <span class="rep-badge" id="users-total-count" style="font-size: 0.75rem;">Loading...</span>
+                </div>
+
+                <!-- Users Table -->
+                <div class="table-card" style="box-shadow: none; border: 1px solid var(--border-color);">
+                    <div class="table-responsive">
+                        <table class="data-table" id="users-table">
+                            <thead>
+                                <tr>
+                                    <th>Username</th>
+                                    <th>Display Name</th>
+                                    <th>Email</th>
+                                    <th>Role</th>
+                                    <th>Status</th>
+                                    <th style="text-align: right;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="users-table-tbody">
+                                <!-- Dynamically populated by userManager -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div style="font-size: 0.72rem; color: var(--text-muted); background: rgba(59, 130, 246, 0.08); padding: 0.65rem 0.85rem; border-radius: 6px; border-left: 3px solid var(--accent-blue); line-height: 1.4;">
+                    💡 <strong>Role Capabilities:</strong> <strong>ADMIN</strong> users have complete authority to manage broker credentials, deploy/duplicate strategy instances, and create/manage users. <strong>USER</strong> (Normal) accounts view clean, un-slugged strategy names, live tickers, trade audit reports, and execution logs without access to broker API keys or system configuration.
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button class="action-btn-sm modal-close-btn" type="button">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================
+         MODAL 10: ADD / EDIT USER FORM MODAL
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-user-form">
+        <div class="modal-box" style="width: 520px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <div>
+                    <h3 id="user-form-title">Add New User</h3>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">Configure user credentials and permission level</span>
+                </div>
+                <button class="icon-btn modal-close-btn">&times;</button>
+            </div>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 0.85rem;">
+                <input type="hidden" id="user-form-id" value="">
+
+                <div>
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Username *</label>
+                    <input type="text" id="user-form-username" placeholder="e.g. trader_rahul" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-family: var(--font-mono); font-size: 0.85rem;" required>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Full / Display Name</label>
+                        <input type="text" id="user-form-fullname" placeholder="e.g. Rahul Sharma" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-size: 0.85rem;">
+                    </div>
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Role *</label>
+                        <select id="user-form-role" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-weight: 600; font-size: 0.82rem;">
+                            <option value="USER" selected>USER (Normal Trader)</option>
+                            <option value="ADMIN">ADMIN (System Administrator)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Email Address</label>
+                    <input type="email" id="user-form-email" placeholder="e.g. rahul@quantzen.com" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-size: 0.85rem;">
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Password *</label>
+                        <input type="password" id="user-form-password" placeholder="Min 4 characters" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-size: 0.85rem;">
+                    </div>
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Confirm Password *</label>
+                        <input type="password" id="user-form-confirm-password" placeholder="Re-enter password" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-size: 0.85rem;">
+                    </div>
+                </div>
+
+                <div style="display: flex; align-items: center; gap: 0.6rem; margin-top: 4px;">
+                    <input type="checkbox" id="user-form-active" checked style="width: 16px; height: 16px; accent-color: var(--accent-blue); cursor: pointer;">
+                    <label for="user-form-active" style="font-size: 0.8rem; color: var(--text-secondary); cursor: pointer;">
+                        Active Account (Allow login & trading dashboard access)
+                    </label>
+                </div>
+
+                <div id="user-form-error" style="display: none; padding: 0.55rem 0.75rem; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.35); color: #ef4444; border-radius: 6px; font-size: 0.8rem;"></div>
+            </div>
+
+            <div class="modal-footer">
+                <button class="action-btn-sm modal-close-btn" type="button">Cancel</button>
+                <button class="action-btn-sm" id="btn-submit-user-form" type="button" onclick="window.userManager.submitUserForm()" style="background: var(--accent-blue, #2563eb); color: white; font-weight: 700; padding: 0.5rem 1.25rem;">
+                    💾 Save User
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts with Cache Busting -->
     <script src="js/ticker.js?v=3.0"></script>
     <script src="js/client_cards.js?v=3.0"></script>
@@ -982,6 +1124,7 @@
     <script src="js/status_page.js?v=3.0"></script>
     <script src="js/logs_page.js?v=3.0"></script>
     <script src="js/reports.js?v=3.0"></script>
+    <script src="js/users.js?v=3.0"></script>
     <script src="js/app.js?v=3.0"></script>
 </body>
 </html>
