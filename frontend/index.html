@@ -11,6 +11,58 @@
 <body>
 
     <!-- ===================================================================
+         AUTHENTICATION GATEWAY (LOGIN VIEW)
+         Blocks unauthenticated / incognito access completely
+         =================================================================== -->
+    <div id="view-login" class="login-overlay">
+        <div class="login-card">
+            <div class="login-header">
+                <div class="login-logo">⚡</div>
+                <h1 class="login-title">FRESH TRADE ENGINE</h1>
+                <div class="login-subtitle">Multi-Broker Algorithmic Execution Platform</div>
+            </div>
+
+            <div class="login-error-alert" id="login-error-alert"></div>
+
+            <form id="form-login" autocomplete="off">
+                <div class="login-form-group">
+                    <label for="login-username">Username</label>
+                    <div class="login-input-wrap">
+                        <span class="login-input-icon">👤</span>
+                        <input type="text" id="login-username" class="login-input" placeholder="Enter your username" required autofocus>
+                    </div>
+                </div>
+
+                <div class="login-form-group">
+                    <label for="login-password">Password</label>
+                    <div class="login-input-wrap">
+                        <span class="login-input-icon">🔒</span>
+                        <input type="password" id="login-password" class="login-input" placeholder="Enter your password" required>
+                    </div>
+                </div>
+
+                <button type="submit" id="btn-login-submit" class="btn-login-submit">
+                    Sign In to Terminal
+                </button>
+            </form>
+
+            <div class="quick-signin-section">
+                <span class="quick-signin-label">⚡ Fast Access Demo Credentials</span>
+                <div class="quick-signin-chips">
+                    <button type="button" class="quick-chip" id="chip-login-admin" title="Log in with System Administrator role">
+                        🛡️ <strong>Admin</strong> (admin123)
+                    </button>
+                    <button type="button" class="quick-chip" id="chip-login-trader" title="Log in with Normal Trader role">
+                        👤 <strong>Trader</strong> (trader123)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN APP SHELL (Hidden until authenticated) -->
+    <div id="app-shell" style="display: none;">
+    <!-- ===================================================================
          APP HEADER
          =================================================================== -->
     <header class="app-header">
@@ -75,6 +127,18 @@
                 <!-- User Management (Admin Only) -->
                 <button class="icon-btn admin-only" id="btn-open-users" title="User Management (Create Admin / Normal Users)" onclick="window.userManager.openUsersModal()">
                     👥
+                </button>
+
+                <!-- User Profile Display -->
+                <div class="header-user-profile" id="header-user-profile" title="Logged-in User Account">
+                    <span class="header-user-avatar" id="header-user-avatar">👤</span>
+                    <span class="header-user-name" id="header-user-name">User</span>
+                    <span class="header-user-role-badge header-role-user" id="header-user-role-badge">USER</span>
+                </div>
+
+                <!-- Sign Out Button -->
+                <button class="btn-logout" id="btn-logout" title="Sign Out / Lock Terminal" onclick="window.authManager.logout()">
+                    <span>🚪</span> Sign Out
                 </button>
 
                 <!-- Broker & Feed Settings -->
@@ -1117,7 +1181,10 @@
         </div>
     </div>
 
+    </div>
+
     <!-- Scripts with Cache Busting -->
+    <script src="js/auth.js?v=3.0"></script>
     <script src="js/ticker.js?v=3.0"></script>
     <script src="js/client_cards.js?v=3.0"></script>
     <script src="js/strategies.js?v=3.0"></script>

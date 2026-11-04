@@ -281,6 +281,10 @@ class ClientCardsManager {
             const pnlCls = isPos ? "pnl-positive" : "pnl-negative";
             const brokerCls = `broker-${acc.broker.toLowerCase()}`;
 
+            const ownerBadge = (window.app && window.app.currentRole === "ADMIN" && acc.owner_username)
+                ? `<span class="brand-tag" style="font-size: 0.65rem; background: rgba(139, 92, 246, 0.15); color: #a78bfa; border: 1px solid rgba(139, 92, 246, 0.3);" title="Account owner: ${acc.owner_username}">👤 ${acc.owner_username}</span>`
+                : '';
+
             const tokenBadge = acc.broker === 'XTS' ? (
                 acc.has_token_today 
                 ? `<span style="font-size: 0.68rem; padding: 1px 6px; border-radius: 4px; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 600; cursor: pointer;" onclick="clientCardsManager.openDrawer('${acc.client_id}', '${acc.client_name.replace(/'/g, "\\'")}', 'credentials')" title="Token active for today (${acc.token_date}). Click to view or regenerate.">🔑 Token Active</span>`
@@ -294,6 +298,7 @@ class ClientCardsManager {
                             <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
                                 <h3>${acc.client_name}</h3>
                                 <span class="broker-tag ${brokerCls}">${acc.broker}</span>
+                                ${ownerBadge}
                                 ${tokenBadge}
                             </div>
                             <span class="client-id">${acc.client_id} &bull; ${acc.running_strategies_count} Strategies</span>

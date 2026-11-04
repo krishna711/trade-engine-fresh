@@ -118,3 +118,4 @@ flowchart LR
    Transition strategy workers from emitting `{"type": "ORDER_REQUEST"}` to `{"type": "ORDER_INTENT"}`, letting the Order Manager validate account risk and RMS translation centrally.
 4. **Step 4: Portfolio Net Position Layer**  
    Maintain account-level net exposure while attaching strategy attribution tags to each execution report.
+

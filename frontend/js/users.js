@@ -322,3 +322,4 @@ class UserManager {
 
 // Global instance
 window.userManager = new UserManager();
+

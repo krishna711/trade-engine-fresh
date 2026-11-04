@@ -19,6 +19,10 @@ from backend.order_manager.manager import order_manager
 from backend.strategy_manager.manager import strategy_supervisor
 from backend.core.events import event_bus
 from backend.core.symbol_mapper import symbol_mapper
+from backend.core.auth import (
+    create_access_token, decode_access_token, get_current_user,
+    get_optional_user, require_admin, hash_user_password, verify_user_password
+)
 
 app = FastAPI(title="Fresh Trade Engine API", version="1.0.0")
 
@@ -116,8 +120,26 @@ def get_effective_feed_status(db: Optional[Session] = None) -> Dict[str, Any]:
         if close_db:
             db.close()
 
+
+def check_strategy_owner_or_admin(instance: StrategyInstance, current_user: User, db: Session):
+    """Ensures that a normal user can only control strategies mapped to their own accounts or created by them."""
+    if current_user.role == "ADMIN":
+        return True
+    if instance.user_id == current_user.id:
+        return True
+    user_cids = {a.client_id for a in db.query(Account).filter(Account.user_id == current_user.id).all()}
+    if any(cid in user_cids for cid in (instance.client_ids or [])):
+        return True
+    raise HTTPException(status_code=403, detail="You do not have permission to manage this strategy instance.")
+
 @app.websocket("/ws/live")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(None)):
+    # Validate session token if provided; reject if completely invalid
+    if token:
+        user_info = decode_access_token(token)
+        if not user_info:
+            await websocket.close(code=4001, reason="Authentication required")
+            return
     await ws_manager.connect(websocket)
     try:
         # Send initial snapshot
@@ -137,12 +159,71 @@ async def websocket_endpoint(websocket: WebSocket):
         ws_manager.disconnect(websocket)
 
 
+
+# ==============================================================================
+# AUTHENTICATION & SESSION ENDPOINTS
+# ==============================================================================
+
+@app.post("/api/auth/login")
+def login_endpoint(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """Authenticate user credentials and return signed access token"""
+    username = str(payload.get("username", "")).strip()
+    password = str(payload.get("password", "")).strip()
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required.")
+
+    user = db.query(User).filter(User.username.ilike(username)).first()
+    if not user or not verify_user_password(password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="User account is deactivated. Contact Administrator.")
+
+    token = create_access_token(user)
+    return {
+        "success": True,
+        "token": token,
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "full_name": user.full_name or user.username,
+            "email": user.email or "",
+            "role": user.role
+        }
+    }
+
+@app.get("/api/auth/me")
+def me_endpoint(current_user: User = Depends(get_current_user)):
+    """Return profile of currently authenticated session"""
+    return {
+        "success": True,
+        "user": {
+            "id": current_user.id,
+            "username": current_user.username,
+            "full_name": current_user.full_name or current_user.username,
+            "email": current_user.email or "",
+            "role": current_user.role
+        }
+    }
+
+@app.post("/api/auth/logout")
+def logout_endpoint():
+    """Sign out user session"""
+    return {"success": True, "message": "Signed out successfully."}
+
 # ----------------- DASHBOARD & SUMMARY -----------------
 @app.get("/api/dashboard")
-def get_dashboard_summary(db: Session = Depends(get_db)):
-    accounts = db.query(Account).all()
-    instances = db.query(StrategyInstance).all()
-    all_positions = db.query(Position).all()
+def get_dashboard_summary(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role == "ADMIN":
+        accounts = db.query(Account).all()
+        instances = db.query(StrategyInstance).all()
+        all_positions = db.query(Position).all()
+    else:
+        accounts = db.query(Account).filter(Account.user_id == current_user.id).all()
+        user_cids = {a.client_id for a in accounts}
+        all_instances = db.query(StrategyInstance).all()
+        instances = [i for i in all_instances if i.user_id == current_user.id or any(c in user_cids for c in (i.client_ids or []))]
+        all_positions = db.query(Position).filter(Position.client_id.in_(user_cids)).all() if user_cids else []
 
     # Calculate strategy PnL
     inst_unrealized = sum(inst.unrealized_pnl for inst in instances if inst.last_trade_status != "CLOSED")
@@ -176,8 +257,13 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
 
 # ----------------- CLIENT / BROKER ACCOUNTS -----------------
 @app.get("/api/accounts")
-def list_accounts(db: Session = Depends(get_db)):
-    accounts = db.query(Account).all()
+def list_accounts(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    if current_user.role == "ADMIN":
+        accounts = db.query(Account).all()
+    else:
+        accounts = db.query(Account).filter(Account.user_id == current_user.id).all()
+
+    users_map = {u.id: u.username for u in db.query(User).all()}
     result = []
     for acc in accounts:
         # Calculate account PnL across active strategies running in this account
@@ -224,24 +310,30 @@ def list_accounts(db: Session = Depends(get_db)):
                 "interactive_url": creds.get("interactive_url", "https://ttblaze.iifl.com/interactive"),
                 "is_valid_today": has_token_today
             },
-            "last_login_at": acc.last_login_at.isoformat() if acc.last_login_at else None
+            "last_login_at": acc.last_login_at.isoformat() if acc.last_login_at else None,
+            "user_id": acc.user_id,
+            "owner_username": users_map.get(acc.user_id, "admin")
         })
     return result
 
 @app.post("/api/accounts/{client_id}/toggle-mode")
-def toggle_account_paper_mode(client_id: str, db: Session = Depends(get_db)):
+def toggle_account_paper_mode(client_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     acc = db.query(Account).filter(Account.client_id == client_id).first()
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
+    if current_user.role != "ADMIN" and acc.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not have permission to manage this account.")
     acc.paper_mode = not acc.paper_mode
     db.commit()
     return {"success": True, "client_id": client_id, "paper_mode": acc.paper_mode}
 
 @app.post("/api/accounts/{client_id}/login")
-def toggle_account_login(client_id: str, db: Session = Depends(get_db)):
+def toggle_account_login(client_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     acc = db.query(Account).filter(Account.client_id == client_id).first()
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
+    if current_user.role != "ADMIN" and acc.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not have permission to manage this account.")
     acc.is_logged_in = not acc.is_logged_in
     acc.last_login_at = datetime.datetime.utcnow()
     db.commit()
@@ -372,12 +464,17 @@ async def generate_xts_token_endpoint(payload: Dict[str, Any] = Body(...), db: S
         }
 
 @app.post("/api/accounts/{client_id}/square-off")
-async def square_off_account_positions(client_id: str):
+async def square_off_account_positions(client_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    acc = db.query(Account).filter(Account.client_id == client_id).first()
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if current_user.role != "ADMIN" and acc.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not have permission to square off this account.")
     res = await order_manager.square_off_account(client_id)
     return res
 
 @app.post("/api/accounts")
-def create_account(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+def create_account(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     client_id = payload.get("client_id", "").strip()
     client_name = payload.get("client_name", "").strip()
     broker = payload.get("broker", "XTS").strip().upper()
@@ -397,8 +494,16 @@ def create_account(payload: Dict[str, Any] = Body(...), db: Session = Depends(ge
         if not credentials.get("token_date"):
             credentials["token_date"] = datetime.date.today().isoformat()
 
+    target_user_id = current_user.id
+    if current_user.role == "ADMIN" and payload.get("user_id"):
+        try:
+            target_user_id = int(payload.get("user_id"))
+        except Exception:
+            pass
+
     acc = Account(
         broker=broker,
+        user_id=target_user_id,
         client_id=client_id,
         client_name=client_name,
         paper_mode=bool(paper_mode),
@@ -411,13 +516,15 @@ def create_account(payload: Dict[str, Any] = Body(...), db: Session = Depends(ge
     )
     db.add(acc)
     db.commit()
-    return {"success": True, "account": {"client_id": acc.client_id, "client_name": acc.client_name, "broker": acc.broker}}
+    return {"success": True, "account": {"client_id": acc.client_id, "client_name": acc.client_name, "broker": acc.broker, "user_id": acc.user_id}}
 
 @app.put("/api/accounts/{client_id}")
-def update_account(client_id: str, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+def update_account(client_id: str, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     acc = db.query(Account).filter(Account.client_id == client_id).first()
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
+    if current_user.role != "ADMIN" and acc.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not have permission to modify this account.")
     if "client_name" in payload:
         acc.client_name = payload["client_name"].strip()
     if "broker" in payload:
@@ -444,10 +551,12 @@ def update_account(client_id: str, payload: Dict[str, Any] = Body(...), db: Sess
     return {"success": True, "client_id": client_id}
 
 @app.delete("/api/accounts/{client_id}")
-def delete_account(client_id: str, db: Session = Depends(get_db)):
+def delete_account(client_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     acc = db.query(Account).filter(Account.client_id == client_id).first()
     if not acc:
         raise HTTPException(status_code=404, detail="Account not found")
+    if current_user.role != "ADMIN" and acc.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You do not have permission to delete this account.")
 
     # Remove client_id from all mapped strategy instances
     instances = db.query(StrategyInstance).all()
@@ -661,7 +770,7 @@ async def sync_account_with_broker(client_id: str, db: Session = Depends(get_db)
 
 # ----------------- STRATEGIES (DASHBOARD & ADMIN CATALOG) -----------------
 @app.post("/api/strategies/deploy")
-async def deploy_strategy(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+async def deploy_strategy(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Deploys a new strategy instance from a registered template and maps client accounts"""
     template_key = payload.get("template_key")
     if not template_key:
@@ -672,6 +781,12 @@ async def deploy_strategy(payload: Dict[str, Any] = Body(...), db: Session = Dep
         raise HTTPException(status_code=404, detail=f"Strategy template '{template_key}' not found")
 
     client_ids = payload.get("client_ids", [])
+    if current_user.role != "ADMIN":
+        user_cids = {a.client_id for a in db.query(Account).filter(Account.user_id == current_user.id).all()}
+        for cid in client_ids:
+            if cid not in user_cids:
+                raise HTTPException(status_code=403, detail=f"Trading account '{cid}' does not belong to your user profile.")
+
     config = payload.get("config") or template.default_config or {}
     name_admin = payload.get("name_admin") or f"{template.name_admin} [{', '.join(client_ids) if client_ids else 'UNMAPPED'}]"
     name_user = payload.get("name_user") or template.name_user
@@ -681,6 +796,7 @@ async def deploy_strategy(payload: Dict[str, Any] = Body(...), db: Session = Dep
 
     instance = StrategyInstance(
         template_key=template_key,
+        user_id=current_user.id,
         instance_name_admin=name_admin,
         instance_name_user=name_user,
         client_ids=list(client_ids),
@@ -727,10 +843,20 @@ def list_strategy_templates(db: Session = Depends(get_db)):
     ]
 
 @app.get("/api/strategies/instances")
-def list_strategy_instances(db: Session = Depends(get_db)):
+def list_strategy_instances(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Strategy lists for dashboard table with Admin & Non-Admin representation"""
-    instances = db.query(StrategyInstance).all()
-    accounts = {a.client_id: a for a in db.query(Account).all()}
+    if current_user.role == "ADMIN":
+        instances = db.query(StrategyInstance).all()
+        accounts = {a.client_id: a for a in db.query(Account).all()}
+    else:
+        user_accs = db.query(Account).filter(Account.user_id == current_user.id).all()
+        user_cids = {a.client_id for a in user_accs}
+        accounts = {a.client_id: a for a in user_accs}
+        all_insts = db.query(StrategyInstance).all()
+        instances = [
+            inst for inst in all_insts
+            if inst.user_id == current_user.id or any(cid in user_cids for cid in (inst.client_ids or []))
+        ]
 
     result = []
     for inst in instances:
@@ -893,7 +1019,9 @@ async def duplicate_strategy_instance(
     return {"success": True, "cloned_strategy_id": clone_id}
 
 @app.delete("/api/strategies/{id}")
-async def delete_strategy_instance(id: int, db: Session = Depends(get_db)):
+async def delete_strategy_instance(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()
+    if inst: check_strategy_owner_or_admin(inst, current_user, db)
     await strategy_supervisor.stop_strategy(id)
     inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()
     if inst:
@@ -1402,12 +1530,15 @@ def sync_real_engine_data_to_reports(db: Session):
         print(f"[Reports] Error syncing real data to reports: {e}")
 
 @app.get("/api/reports/filters")
-async def get_reports_filters(db: Session = Depends(get_db)):
+async def get_reports_filters(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Returns REAL connected clients and strategies for reports filter panes"""
     sync_real_engine_data_to_reports(db)
 
     # 1. Real Client Accounts strictly from database
-    accounts = db.query(Account).all()
+    if current_user.role == "ADMIN":
+        accounts = db.query(Account).all()
+    else:
+        accounts = db.query(Account).filter(Account.user_id == current_user.id).all()
     clients = []
     seen_clients = set()
     for acc in accounts:
@@ -1497,12 +1628,16 @@ async def get_reports_trades(
     status: Optional[str] = Query("ALL"),
     order: Optional[str] = Query("newest"),
     search: Optional[str] = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """Fetches real filtered trades with aggregated metrics (total trades, total MTM)"""
     sync_real_engine_data_to_reports(db)
 
     query = db.query(TradeReport)
+    if current_user.role != "ADMIN":
+        user_cids = [a.client_id for a in db.query(Account).filter(Account.user_id == current_user.id).all()]
+        query = query.filter(TradeReport.client_id.in_(user_cids))
 
     if client_ids and isinstance(client_ids, str):
         c_list = [c.strip() for c in client_ids.split(",") if c.strip() and c.strip().lower() != "all"]
@@ -1605,7 +1740,7 @@ def verify_user_password(password: str, hashed: str) -> bool:
     return hashlib.sha256(password.encode('utf-8')).hexdigest() == hashed
 
 @app.get("/api/users")
-async def list_users(db: Session = Depends(get_db)):
+async def list_users(db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
     """List all registered users with their roles and status"""
     users = db.query(User).order_by(User.id.asc()).all()
     user_list = []
@@ -1626,7 +1761,7 @@ async def list_users(db: Session = Depends(get_db)):
     }
 
 @app.post("/api/users")
-async def create_user(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+async def create_user(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
     """Create a new user (ADMIN or USER)"""
     username = str(payload.get("username", "")).strip()
     password = str(payload.get("password", "")).strip()
@@ -1688,7 +1823,7 @@ async def create_user(payload: Dict[str, Any] = Body(...), db: Session = Depends
     }
 
 @app.put("/api/users/{user_id}")
-async def update_user(user_id: int, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+async def update_user(user_id: int, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
     """Update user details, role, status, or password"""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
@@ -1741,7 +1876,7 @@ async def update_user(user_id: int, payload: Dict[str, Any] = Body(...), db: Ses
     }
 
 @app.delete("/api/users/{user_id}")
-async def delete_user(user_id: int, db: Session = Depends(get_db)):
+async def delete_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_admin)):
     """Delete a user account"""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:

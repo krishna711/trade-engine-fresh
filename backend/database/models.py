@@ -10,6 +10,7 @@ class Account(Base):
     __tablename__ = "accounts"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     broker = Column(String(50), nullable=False) # XTS, KOTAKNEO, SHOONYA, ZERODHA, DHAN, FYERS
     client_id = Column(String(100), unique=True, nullable=False)
     client_name = Column(String(150), nullable=False)
@@ -23,6 +24,7 @@ class Account(Base):
     last_login_at = Column(DateTime, default=datetime.datetime.utcnow)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+    user = relationship("User", back_populates="accounts")
     orders = relationship("Order", back_populates="account", cascade="all, delete-orphan")
     positions = relationship("Position", back_populates="account", cascade="all, delete-orphan")
 
@@ -74,6 +76,9 @@ class StrategyInstance(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
+    user = relationship("User", back_populates="strategy_instances")
     template = relationship("StrategyTemplate", back_populates="instances")
     orders = relationship("Order", back_populates="strategy_instance")
 
@@ -266,3 +271,6 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    accounts = relationship("Account", back_populates="user")
+    strategy_instances = relationship("StrategyInstance", back_populates="user")

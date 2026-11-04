@@ -24,14 +24,28 @@ class App {
         // Setup event listeners
         this.initEventListeners();
 
-        // Connect WebSocket
+        const token = localStorage.getItem("fresh_trade_auth_token");
+        if (token) {
+            // Connect WebSocket
+            this.connectWebSocket();
+
+            // Initial data fetch
+            this.refreshAll();
+        }
+
+        // Periodic summary refresh (only when authenticated)
+        setInterval(() => {
+            if (localStorage.getItem("fresh_trade_auth_token")) {
+                this.fetchDashboardSummary();
+            }
+        }, 3000);
+    }
+
+    onAuthSuccess() {
+        this.currentRole = localStorage.getItem("fresh_trade_role") || "USER";
+        this.applyRole(this.currentRole);
         this.connectWebSocket();
-
-        // Initial data fetch
         this.refreshAll();
-
-        // Periodic summary refresh
-        setInterval(() => this.fetchDashboardSummary(), 3000);
     }
 
     initEventListeners() {
@@ -123,12 +137,18 @@ class App {
     }
 
     connectWebSocket() {
+        const token = localStorage.getItem("fresh_trade_auth_token");
+        if (!token) return;
+
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const wsUrl = `${protocol}//${window.location.host}/ws/live`;
+        const wsUrl = `${protocol}//${window.location.host}/ws/live?token=${encodeURIComponent(token)}`;
         const badgeText = document.getElementById("ws-status-text");
         const badgePill = document.getElementById("ws-status-badge");
 
         try {
+            if (this.ws) {
+                try { this.ws.close(); } catch (e) {}
+            }
             this.ws = new WebSocket(wsUrl);
 
             this.ws.onopen = () => {

@@ -35,7 +35,27 @@ def get_db():
     finally:
         db.close()
 
+from sqlalchemy import text
+
+def check_and_migrate_db():
+    try:
+        with engine.begin() as conn:
+            # Check accounts table columns
+            acc_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(accounts)")).fetchall()]
+            if acc_cols and "user_id" not in acc_cols:
+                conn.execute(text("ALTER TABLE accounts ADD COLUMN user_id INTEGER;"))
+                print("[DB Migration] Added user_id column to accounts table.")
+            
+            # Check strategy_instances table columns
+            strat_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(strategy_instances)")).fetchall()]
+            if strat_cols and "user_id" not in strat_cols:
+                conn.execute(text("ALTER TABLE strategy_instances ADD COLUMN user_id INTEGER;"))
+                print("[DB Migration] Added user_id column to strategy_instances table.")
+    except Exception as e:
+        print(f"[DB Migration Warning] {e}")
+
 def init_db():
+    check_and_migrate_db()
     Base.metadata.create_all(bind=engine)
     seed_initial_data()
 
@@ -737,11 +757,12 @@ def seed_initial_data():
 
 
         # 7. Seed Default Users (Admin and Normal User) if empty
-        if db.query(User).count() == 0:
-            import hashlib
-            def _quick_hash(pwd):
-                return hashlib.sha256(pwd.encode('utf-8')).hexdigest()
+        import hashlib
+        def _quick_hash(pwd):
+            return hashlib.sha256(pwd.encode('utf-8')).hexdigest()
 
+        admin_user = db.query(User).filter(User.username == "admin").first()
+        if not admin_user:
             admin_user = User(
                 username="admin",
                 full_name="System Administrator",
@@ -750,6 +771,11 @@ def seed_initial_data():
                 role="ADMIN",
                 is_active=True
             )
+            db.add(admin_user)
+            db.flush()
+
+        trader_user = db.query(User).filter(User.username == "trader").first()
+        if not trader_user:
             trader_user = User(
                 username="trader",
                 full_name="Standard Trader",
@@ -758,8 +784,49 @@ def seed_initial_data():
                 role="USER",
                 is_active=True
             )
-            db.add(admin_user)
             db.add(trader_user)
+            db.flush()
+
+        # Link any existing accounts without user_id to admin
+        if admin_user:
+            db.query(Account).filter(Account.user_id == None).update({Account.user_id: admin_user.id})
+            db.query(StrategyInstance).filter(StrategyInstance.user_id == None).update({StrategyInstance.user_id: admin_user.id})
+
+            admin_acc = db.query(Account).filter(Account.user_id == admin_user.id).first()
+            if not admin_acc:
+                admin_acc = Account(
+                    broker="XTS",
+                    client_id="QUANTZEN",
+                    client_name="QuantZen Master Desk",
+                    paper_mode=False,
+                    is_active=True,
+                    is_logged_in=True,
+                    user_id=admin_user.id,
+                    margin_available=1000000.0,
+                    margin_used=0.0,
+                    total_balance=1000000.0,
+                    credentials_json={"interactive_url": "https://ttblaze.iifl.com/interactive"}
+                )
+                db.add(admin_acc)
+
+        # Ensure trader has an initial demo trading account so they can immediately map & run strategies
+        if trader_user:
+            trader_acc = db.query(Account).filter(Account.user_id == trader_user.id).first()
+            if not trader_acc:
+                trader_acc = Account(
+                    broker="XTS",
+                    client_id="TRADER_DESK_1",
+                    client_name="Trader Desk Alpha",
+                    paper_mode=True,
+                    is_active=True,
+                    is_logged_in=True,
+                    user_id=trader_user.id,
+                    margin_available=500000.0,
+                    margin_used=0.0,
+                    total_balance=500000.0,
+                    credentials_json={}
+                )
+                db.add(trader_acc)
 
         db.commit()
 
