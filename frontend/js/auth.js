@@ -272,6 +272,104 @@ class AuthManager {
         fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
     }
 
+    openChangePasswordModal() {
+        const modal = document.getElementById("modal-change-password");
+        const alertBox = document.getElementById("change-pwd-alert");
+        const currInp = document.getElementById("change-pwd-current");
+        const newInp = document.getElementById("change-pwd-new");
+        const confInp = document.getElementById("change-pwd-confirm");
+
+        if (alertBox) {
+            alertBox.style.display = "none";
+            alertBox.innerText = "";
+        }
+        if (currInp) currInp.value = "";
+        if (newInp) newInp.value = "";
+        if (confInp) confInp.value = "";
+
+        if (modal) modal.classList.add("active");
+    }
+
+    closeChangePasswordModal() {
+        const modal = document.getElementById("modal-change-password");
+        if (modal) modal.classList.remove("active");
+    }
+
+    async handleChangePasswordSubmit() {
+        const alertBox = document.getElementById("change-pwd-alert");
+        const currInp = document.getElementById("change-pwd-current");
+        const newInp = document.getElementById("change-pwd-new");
+        const confInp = document.getElementById("change-pwd-confirm");
+        const submitBtn = document.getElementById("btn-submit-change-pwd");
+
+        const currentPassword = currInp ? currInp.value.trim() : "";
+        const newPassword = newInp ? newInp.value.trim() : "";
+        const confirmPassword = confInp ? confInp.value.trim() : "";
+
+        const showAlert = (msg, isSuccess = false) => {
+            if (!alertBox) return;
+            alertBox.style.display = "block";
+            alertBox.innerText = isSuccess ? `✅ ${msg}` : `⚠️ ${msg}`;
+            alertBox.style.background = isSuccess ? "rgba(16, 185, 129, 0.15)" : "rgba(239, 68, 68, 0.15)";
+            alertBox.style.color = isSuccess ? "#10b981" : "#ef4444";
+            alertBox.style.border = `1px solid ${isSuccess ? "rgba(16, 185, 129, 0.35)" : "rgba(239, 68, 68, 0.35)"}`;
+        };
+
+        if (!currentPassword) {
+            showAlert("Please enter your current password.");
+            return;
+        }
+        if (!newPassword || newPassword.length < 6) {
+            showAlert("New password must be at least 6 characters long.");
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            showAlert("New password and confirmation do not match.");
+            return;
+        }
+        if (currentPassword === newPassword) {
+            showAlert("New password must be different from current password.");
+            return;
+        }
+
+        if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.innerText = "Updating...";
+        }
+
+        try {
+            const resp = await fetch("/api/auth/change-password", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    current_password: currentPassword,
+                    new_password: newPassword
+                })
+            });
+
+            const data = await resp.json();
+
+            if (resp.ok && data.success) {
+                showAlert("Password updated successfully! You can continue using your account.", true);
+                if (currInp) currInp.value = "";
+                if (newInp) newInp.value = "";
+                if (confInp) confInp.value = "";
+                setTimeout(() => {
+                    this.closeChangePasswordModal();
+                }, 1800);
+            } else {
+                showAlert(data.detail || data.message || "Failed to update password.");
+            }
+        } catch (err) {
+            showAlert(`Network error: ${err.message}`);
+        } finally {
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.innerText = "Update Password";
+            }
+        }
+    }
+
     handleUnauthorized(msg = "Session expired or authentication required.") {
         this.token = null;
         this.user = null;

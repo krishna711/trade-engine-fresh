@@ -231,17 +231,23 @@ class App {
             const rEl = document.getElementById("header-realized-pnl");
             const tEl = document.getElementById("header-total-pnl");
 
+            const formatHeaderPnl = (val) => {
+                const isNeg = val < 0;
+                const sign = isNeg ? "-₹" : "+₹";
+                return `${sign}${Math.abs(val).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            };
+
             if (uEl) {
                 uEl.className = `pnl-val ${pnl.unrealized_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}`;
-                uEl.innerText = `${pnl.unrealized_pnl >= 0 ? '+' : ''}₹${pnl.unrealized_pnl.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                uEl.innerText = formatHeaderPnl(pnl.unrealized_pnl);
             }
             if (rEl) {
                 rEl.className = `pnl-val ${pnl.realized_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}`;
-                rEl.innerText = `${pnl.realized_pnl >= 0 ? '+' : ''}₹${pnl.realized_pnl.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                rEl.innerText = formatHeaderPnl(pnl.realized_pnl);
             }
             if (tEl) {
                 tEl.className = `pnl-val ${pnl.total_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}`;
-                tEl.innerText = `${pnl.total_pnl >= 0 ? '+' : ''}₹${pnl.total_pnl.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                tEl.innerText = formatHeaderPnl(pnl.total_pnl);
             }
 
             // Keep dashboard tables and client cards refreshed with latest PnL & trade states

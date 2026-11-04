@@ -280,13 +280,15 @@ class ClientCardsManager {
             const rPos = acc.realized_pnl >= 0;
             const tPos = acc.total_pnl >= 0;
 
-            const uSign = uPos ? "+" : "";
-            const rSign = rPos ? "+" : "";
-            const tSign = tPos ? "+" : "";
-
             const uCls = uPos ? "pos" : "neg";
             const rCls = rPos ? "pos" : "neg";
             const tCls = tPos ? "pos" : "neg";
+
+            const formatPnl = (val) => {
+                const isNeg = val < 0;
+                const sign = isNeg ? "-₹" : "+₹";
+                return `${sign}${Math.abs(val).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+            };
 
             const brokerDisplay = acc.broker ? acc.broker.toUpperCase() : "XTS";
             const isActive = Boolean(acc.is_active);
@@ -320,9 +322,9 @@ class ClientCardsManager {
                     <div class="card-broker-text">${brokerDisplay}</div>
 
                     <div class="card-pnl-line">
-                        <span class="pnl-lbl">U:</span> <span class="pnl-val ${uCls}">${uSign}₹${acc.unrealized_pnl.toFixed(2)}</span>
-                        <span class="pnl-lbl">R:</span> <span class="pnl-val ${rCls}">${rSign}₹${acc.realized_pnl.toFixed(2)}</span>
-                        <span class="pnl-lbl">T:</span> <span class="pnl-val ${tCls}">${tSign}₹${acc.total_pnl.toFixed(2)}</span>
+                        <span class="pnl-chip"><span class="pnl-lbl">U:</span> <span class="pnl-val ${uCls}">${formatPnl(acc.unrealized_pnl)}</span></span>
+                        <span class="pnl-chip"><span class="pnl-lbl">R:</span> <span class="pnl-val ${rCls}">${formatPnl(acc.realized_pnl)}</span></span>
+                        <span class="pnl-chip"><span class="pnl-lbl">T:</span> <span class="pnl-val ${tCls}">${formatPnl(acc.total_pnl)}</span></span>
                     </div>
 
                     <div class="card-toolbar">

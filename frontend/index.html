@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fresh Trade Engine | Fault-Proof Algorithmic Trading Architecture</title>
-    <link rel="stylesheet" href="css/style.css?v=3.0">
+    <link rel="stylesheet" href="css/style.css?v=3.1">
     <!-- Chart.js for high performance strategy charting -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -67,67 +67,76 @@
          =================================================================== -->
     <header class="app-header">
         <div class="header-container">
-            <div class="brand-section">
-                <div class="logo-badge" title="Fresh Trade Engine">⚡</div>
-            </div>
-
-            <!-- Navigation Links (Clean Minimalist Nav - Screenshot 3 Style) -->
-            <nav class="nav-menu">
-                <button class="nav-link-btn active" data-view="dashboard" id="nav-dashboard">
-                    Clients
-                </button>
-                <button class="nav-link-btn" data-view="strategies" id="nav-strategies">
-                    Strategies
-                </button>
-                <button class="nav-link-btn" data-view="reports" id="nav-reports">
-                    Reports
-                </button>
-                <button class="nav-link-btn" data-view="logs" id="nav-logs">
-                    Logs & Events
-                </button>
-                <button class="nav-link-btn" data-view="status" id="nav-status">
-                    Status
-                </button>
-                <button class="nav-link-btn admin-only" data-action="users" id="nav-users" onclick="window.userManager.openUsersModal()" title="User Management (Admin)">
-                    Users
-                </button>
-            </nav>
-
-            <!-- Consolidated PnL Widget (Clean Inline PnL - Screenshot 3 Style) -->
-            <div class="header-pnl-widget">
-                <span class="pnl-header-label">PnL</span>
-                <span class="pnl-tag">U:</span>
-                <span class="pnl-val pnl-positive" id="header-unrealized-pnl">+₹0.00</span>
-                <span class="pnl-tag" style="margin-left: 6px;">R:</span>
-                <span class="pnl-val pnl-positive" id="header-realized-pnl">+₹0.00</span>
-                <span class="pnl-tag" style="margin-left: 6px;">T:</span>
-                <span class="pnl-val pnl-positive" id="header-total-pnl">+₹0.00</span>
-            </div>
-
-            <!-- Header Controls & User Menu -->
-            <div class="header-controls">
-                <!-- WebSocket Live Stream Dot -->
-                <div class="status-pill status-running" id="ws-status-badge" title="WebSocket Live Stream">
-                    <span class="status-dot"></span> <span id="ws-status-text">LIVE</span>
+            <!-- Left Group: Logo + Navigation Links (Clients, Strategies, Reports, etc.) -->
+            <div class="header-left">
+                <div class="brand-section">
+                    <div class="logo-badge" title="Fresh Trade Engine">⚡</div>
                 </div>
 
-                <!-- Dark / Light Theme Toggle -->
-                <button class="icon-btn-clean" id="btn-theme-toggle" title="Toggle Dark/Light Theme">
-                    🌓
-                </button>
-
-                <!-- Broker Feed & API Credentials Settings -->
-                <button class="icon-btn-clean" id="btn-open-settings" title="Broker Feed & API Credentials">
-                    ⚙️
-                </button>
-
-                <!-- User Profile & Sign Out (Compact) -->
-                <div class="header-user-profile" id="header-user-profile" title="Logged-in Account">
-                    <span class="header-user-avatar" id="header-user-avatar">👤</span>
-                    <span class="header-user-name" id="header-user-name">User</span>
-                    <button class="btn-logout-mini" id="btn-logout" title="Sign Out / Lock Terminal" onclick="window.authManager.logout()">
-                        🚪
+                <!-- Navigation Links (Clean Minimalist Nav - Screenshot 3 Style) -->
+                <nav class="nav-menu">
+                    <button class="nav-link-btn active" data-view="dashboard" id="nav-dashboard">
+                        Clients
                     </button>
+                    <button class="nav-link-btn" data-view="strategies" id="nav-strategies">
+                        Strategies
+                    </button>
+                    <button class="nav-link-btn" data-view="reports" id="nav-reports">
+                        Reports
+                    </button>
+                    <button class="nav-link-btn" data-view="logs" id="nav-logs">
+                        Logs & Events
+                    </button>
+                    <button class="nav-link-btn" data-view="status" id="nav-status">
+                        Status
+                    </button>
+                    <button class="nav-link-btn admin-only" data-action="users" id="nav-users" onclick="window.userManager.openUsersModal()" title="User Management (Admin)">
+                        Users
+                    </button>
+                </nav>
+            </div>
+
+            <!-- Right Group: PnL Widget + Controls + User Profile -->
+            <div class="header-right">
+                <!-- Consolidated PnL Widget (Clean Inline PnL - Screenshot 3 Style) -->
+                <div class="header-pnl-widget">
+                    <span class="pnl-header-label">PnL</span>
+                    <span class="pnl-tag">U:</span>
+                    <span class="pnl-val pnl-positive" id="header-unrealized-pnl">+₹0.00</span>
+                    <span class="pnl-tag" style="margin-left: 6px;">R:</span>
+                    <span class="pnl-val pnl-positive" id="header-realized-pnl">+₹0.00</span>
+                    <span class="pnl-tag" style="margin-left: 6px;">T:</span>
+                    <span class="pnl-val pnl-positive" id="header-total-pnl">+₹0.00</span>
+                </div>
+
+                <!-- Header Controls & User Menu -->
+                <div class="header-controls">
+                    <!-- WebSocket Live Stream Dot -->
+                    <div class="status-pill status-running" id="ws-status-badge" title="WebSocket Live Stream">
+                        <span class="status-dot"></span> <span id="ws-status-text">LIVE</span>
+                    </div>
+
+                    <!-- Dark / Light Theme Toggle -->
+                    <button class="icon-btn-clean" id="btn-theme-toggle" title="Toggle Dark/Light Theme">
+                        🌓
+                    </button>
+
+                    <!-- Broker Feed & API Credentials Settings -->
+                    <button class="icon-btn-clean" id="btn-open-settings" title="Broker Feed & API Credentials">
+                        ⚙️
+                    </button>
+
+                    <!-- User Profile & Quick Actions (Change Password 🔑 & Sign Out 🚪) -->
+                    <div class="header-user-profile" id="header-user-profile" title="Logged-in Account: Click to change password" onclick="window.authManager.openChangePasswordModal()">
+                        <span class="header-user-avatar" id="header-user-avatar">👤</span>
+                        <span class="header-user-name" id="header-user-name">User</span>
+                        <button class="btn-change-pwd-mini" id="btn-change-password" title="Change your password" onclick="event.stopPropagation(); window.authManager.openChangePasswordModal()">
+                            🔑
+                        </button>
+                        <button class="btn-logout-mini" id="btn-logout" title="Sign Out / Lock Terminal" onclick="event.stopPropagation(); window.authManager.logout()">
+                            🚪
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1161,17 +1170,61 @@
         </div>
     </div>
 
+    <!-- ===================================================================
+         MODAL: USER CHANGE OWN PASSWORD
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-change-password">
+        <div class="modal-box" style="width: 440px; max-width: 95vw;">
+            <div class="modal-header">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.1rem;">🔑</span>
+                    <div>
+                        <h3 style="font-size: 1rem; font-weight: 700; margin: 0;">Change Password</h3>
+                        <span style="font-size: 0.72rem; color: var(--text-muted);">Update your personal login password</span>
+                    </div>
+                </div>
+                <button class="icon-btn" onclick="window.authManager.closeChangePasswordModal()">&times;</button>
+            </div>
+
+            <div class="modal-body" style="padding: 1.25rem; display: flex; flex-direction: column; gap: 0.85rem;">
+                <div id="change-pwd-alert" style="display: none; padding: 0.6rem 0.85rem; border-radius: 6px; font-size: 0.8rem;"></div>
+
+                <div>
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); display: block; margin-bottom: 4px;">Current Password *</label>
+                    <input type="password" id="change-pwd-current" placeholder="Enter current password" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-size: 0.85rem;" required>
+                </div>
+
+                <div>
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); display: block; margin-bottom: 4px;">New Password * (min 6 characters)</label>
+                    <input type="password" id="change-pwd-new" placeholder="Enter new password" minlength="6" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-size: 0.85rem;" required>
+                </div>
+
+                <div>
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); display: block; margin-bottom: 4px;">Confirm New Password *</label>
+                    <input type="password" id="change-pwd-confirm" placeholder="Re-enter new password" minlength="6" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-size: 0.85rem;" required>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button class="action-btn-sm" type="button" onclick="window.authManager.closeChangePasswordModal()">Cancel</button>
+                <button class="action-btn-sm" id="btn-submit-change-pwd" type="button" onclick="window.authManager.handleChangePasswordSubmit()" style="background: var(--accent-blue, #2563eb); color: white; font-weight: 700; padding: 0.5rem 1.25rem;">
+                    Update Password
+                </button>
+            </div>
+        </div>
+    </div>
+
     </div>
 
     <!-- Scripts with Cache Busting -->
-    <script src="js/auth.js?v=3.0"></script>
-    <script src="js/ticker.js?v=3.0"></script>
-    <script src="js/client_cards.js?v=3.0"></script>
-    <script src="js/strategies.js?v=3.0"></script>
-    <script src="js/status_page.js?v=3.0"></script>
-    <script src="js/logs_page.js?v=3.0"></script>
-    <script src="js/reports.js?v=3.0"></script>
-    <script src="js/users.js?v=3.0"></script>
-    <script src="js/app.js?v=3.0"></script>
+    <script src="js/auth.js?v=3.1"></script>
+    <script src="js/ticker.js?v=3.1"></script>
+    <script src="js/client_cards.js?v=3.1"></script>
+    <script src="js/strategies.js?v=3.1"></script>
+    <script src="js/status_page.js?v=3.1"></script>
+    <script src="js/logs_page.js?v=3.1"></script>
+    <script src="js/reports.js?v=3.1"></script>
+    <script src="js/users.js?v=3.1"></script>
+    <script src="js/app.js?v=3.1"></script>
 </body>
 </html>

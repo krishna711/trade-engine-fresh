@@ -254,6 +254,29 @@ def logout_endpoint():
     """Sign out user session"""
     return {"success": True, "message": "Signed out successfully."}
 
+@app.post("/api/auth/change-password")
+def change_password_endpoint(
+    payload: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Allows any authenticated user to change their own password"""
+    current_password = str(payload.get("current_password", "")).strip()
+    new_password = str(payload.get("new_password", "")).strip()
+
+    if not current_password:
+        raise HTTPException(status_code=400, detail="Current password is required.")
+    if not verify_user_password(current_password, current_user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect.")
+    if not new_password or len(new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters long.")
+    if current_password == new_password:
+        raise HTTPException(status_code=400, detail="New password must be different from current password.")
+
+    current_user.password_hash = hash_user_password(new_password)
+    db.commit()
+    return {"success": True, "message": "Password updated successfully."}
+
 # ----------------- DASHBOARD & SUMMARY -----------------
 @app.get("/api/dashboard")
 def get_dashboard_summary(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
