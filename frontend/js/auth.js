@@ -290,3 +290,4 @@ class AuthManager {
 
 // Instantiate immediately so fetch interceptor is live before any other script runs
 window.authManager = new AuthManager();
+

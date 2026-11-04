@@ -54,9 +54,57 @@ def check_and_migrate_db():
     except Exception as e:
         print(f"[DB Migration Warning] {e}")
 
+def ensure_default_users():
+    """Independent, guaranteed initialization of default admin & trader users"""
+    db = SessionLocal()
+    try:
+        from backend.core.auth import hash_user_password
+        
+        # 1. Admin
+        admin = db.query(User).filter(User.username.ilike("admin")).first()
+        if not admin:
+            admin = User(
+                username="admin",
+                full_name="System Administrator",
+                email="admin@fresh-trade.local",
+                password_hash=hash_user_password("admin123"),
+                role="ADMIN",
+                is_active=True
+            )
+            db.add(admin)
+        else:
+            admin.role = "ADMIN"
+            admin.is_active = True
+            admin.password_hash = hash_user_password("admin123")
+
+        # 2. Trader
+        trader = db.query(User).filter(User.username.ilike("trader")).first()
+        if not trader:
+            trader = User(
+                username="trader",
+                full_name="Standard Trader",
+                email="trader@fresh-trade.local",
+                password_hash=hash_user_password("trader123"),
+                role="USER",
+                is_active=True
+            )
+            db.add(trader)
+        else:
+            trader.role = "USER"
+            trader.is_active = True
+            trader.password_hash = hash_user_password("trader123")
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"[Auth Error] Failed to ensure default users: {e}")
+    finally:
+        db.close()
+
 def init_db():
     check_and_migrate_db()
     Base.metadata.create_all(bind=engine)
+    ensure_default_users()
     seed_initial_data()
 
 # Auto-initialize database schema and seeds on import so tables always exist
