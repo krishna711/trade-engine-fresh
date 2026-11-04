@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fresh Trade Engine | Fault-Proof Algorithmic Trading Architecture</title>
-    <link rel="stylesheet" href="css/style.css?v=3.1">
+    <link rel="stylesheet" href="css/style.css?v=3.2">
     <!-- Chart.js for high performance strategy charting -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -126,16 +126,31 @@
                         ⚙️
                     </button>
 
-                    <!-- User Profile & Quick Actions (Change Password 🔑 & Sign Out 🚪) -->
-                    <div class="header-user-profile" id="header-user-profile" title="Logged-in Account: Click to change password" onclick="window.authManager.openChangePasswordModal()">
-                        <span class="header-user-avatar" id="header-user-avatar">👤</span>
-                        <span class="header-user-name" id="header-user-name">User</span>
-                        <button class="btn-change-pwd-mini" id="btn-change-password" title="Change your password" onclick="event.stopPropagation(); window.authManager.openChangePasswordModal()">
-                            🔑
+                    <!-- User Profile Menu (Dropdown with Password & Safe Sign Out) -->
+                    <div class="user-menu-container" style="position: relative;">
+                        <button class="header-user-profile" id="header-user-profile" onclick="window.authManager.toggleUserDropdown(event)" title="User Account Menu">
+                            <span class="header-user-avatar" id="header-user-avatar">👤</span>
+                            <span class="header-user-name" id="header-user-name">User</span>
+                            <span class="header-user-caret">▾</span>
                         </button>
-                        <button class="btn-logout-mini" id="btn-logout" title="Sign Out / Lock Terminal" onclick="event.stopPropagation(); window.authManager.logout()">
-                            🚪
-                        </button>
+
+                        <div class="user-dropdown-menu" id="user-dropdown-menu" style="display: none;">
+                            <div class="user-dropdown-header">
+                                <div class="user-dropdown-name" id="dropdown-user-fullname">User</div>
+                                <div class="user-dropdown-meta">
+                                    <span class="dropdown-role-badge" id="dropdown-user-role">USER</span>
+                                    <span id="dropdown-user-handle" style="color: var(--text-muted); font-size: 0.72rem; font-family: var(--font-mono);"></span>
+                                </div>
+                            </div>
+                            <div class="user-dropdown-divider"></div>
+                            <button class="user-dropdown-item" onclick="window.authManager.openChangePasswordModal()">
+                                <span style="font-size: 0.95rem;">🔑</span> Change Password
+                            </button>
+                            <div class="user-dropdown-divider"></div>
+                            <button class="user-dropdown-item item-logout" onclick="window.authManager.promptLogout()">
+                                <span style="font-size: 0.95rem; color: #ef4444;">🚪</span> Sign Out
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1214,17 +1229,44 @@
         </div>
     </div>
 
+    <!-- ===================================================================
+         MODAL: CONFIRM LOGOUT (Prevents accidental sign out)
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-confirm-logout">
+        <div class="modal-box" style="width: 400px; max-width: 92vw;">
+            <div class="modal-header">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 1.1rem; color: #ef4444;">🚪</span>
+                    <h3 style="font-size: 1rem; font-weight: 700; margin: 0;">Sign Out of Terminal?</h3>
+                </div>
+                <button class="icon-btn" onclick="window.authManager.closeLogoutModal()">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 1.25rem; font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;">
+                <p>Are you sure you want to end your session?</p>
+                <p style="margin-top: 0.5rem; font-size: 0.78rem; color: var(--text-muted); background: rgba(255, 255, 255, 0.03); padding: 0.5rem 0.75rem; border-radius: 6px; border: 1px solid var(--border-color);">
+                    ℹ️ Any running strategies and broker order reconciliations will continue executing safely in the background.
+                </p>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+                <button class="action-btn-sm" type="button" onclick="window.authManager.closeLogoutModal()">Cancel</button>
+                <button class="action-btn-sm" type="button" onclick="window.authManager.executeLogout()" style="background: #dc2626; color: white; font-weight: 700; padding: 0.5rem 1.25rem;">
+                    Yes, Sign Out
+                </button>
+            </div>
+        </div>
+    </div>
+
     </div>
 
     <!-- Scripts with Cache Busting -->
-    <script src="js/auth.js?v=3.1"></script>
-    <script src="js/ticker.js?v=3.1"></script>
-    <script src="js/client_cards.js?v=3.1"></script>
-    <script src="js/strategies.js?v=3.1"></script>
-    <script src="js/status_page.js?v=3.1"></script>
-    <script src="js/logs_page.js?v=3.1"></script>
-    <script src="js/reports.js?v=3.1"></script>
-    <script src="js/users.js?v=3.1"></script>
-    <script src="js/app.js?v=3.1"></script>
+    <script src="js/auth.js?v=3.2"></script>
+    <script src="js/ticker.js?v=3.2"></script>
+    <script src="js/client_cards.js?v=3.2"></script>
+    <script src="js/strategies.js?v=3.2"></script>
+    <script src="js/status_page.js?v=3.2"></script>
+    <script src="js/logs_page.js?v=3.2"></script>
+    <script src="js/reports.js?v=3.2"></script>
+    <script src="js/users.js?v=3.2"></script>
+    <script src="js/app.js?v=3.2"></script>
 </body>
 </html>

@@ -106,6 +106,14 @@ class AuthManager {
                 this.handleLoginSubmit();
             };
         }
+
+        // Close user dropdown menu when clicking anywhere outside
+        document.addEventListener("click", (e) => {
+            const container = document.querySelector(".user-menu-container");
+            if (container && !container.contains(e.target)) {
+                this.closeUserDropdown();
+            }
+        });
     }
 
     async checkInitialAuthState() {
@@ -247,6 +255,45 @@ class AuthManager {
         if (roleSwitcher) {
             roleSwitcher.style.display = this.user.role === "ADMIN" ? "inline-flex" : "none";
         }
+
+        const dropName = document.getElementById("dropdown-user-fullname");
+        const dropRole = document.getElementById("dropdown-user-role");
+        const dropHandle = document.getElementById("dropdown-user-handle");
+        if (dropName) dropName.innerText = this.user.full_name || this.user.username;
+        if (dropRole) {
+            dropRole.innerText = this.user.role;
+            dropRole.className = `dropdown-role-badge ${this.user.role === 'ADMIN' ? 'role-admin' : 'role-user'}`;
+        }
+        if (dropHandle) dropHandle.innerText = `@${this.user.username}`;
+    }
+
+    toggleUserDropdown(e) {
+        if (e) e.stopPropagation();
+        const menu = document.getElementById("user-dropdown-menu");
+        if (!menu) return;
+        const isHidden = menu.style.display === "none" || !menu.style.display;
+        menu.style.display = isHidden ? "block" : "none";
+    }
+
+    closeUserDropdown() {
+        const menu = document.getElementById("user-dropdown-menu");
+        if (menu) menu.style.display = "none";
+    }
+
+    promptLogout() {
+        this.closeUserDropdown();
+        const modal = document.getElementById("modal-confirm-logout");
+        if (modal) modal.classList.add("active");
+    }
+
+    closeLogoutModal() {
+        const modal = document.getElementById("modal-confirm-logout");
+        if (modal) modal.classList.remove("active");
+    }
+
+    executeLogout() {
+        this.closeLogoutModal();
+        this.logout();
     }
 
     logout() {
@@ -273,6 +320,7 @@ class AuthManager {
     }
 
     openChangePasswordModal() {
+        this.closeUserDropdown();
         const modal = document.getElementById("modal-change-password");
         const alertBox = document.getElementById("change-pwd-alert");
         const currInp = document.getElementById("change-pwd-current");

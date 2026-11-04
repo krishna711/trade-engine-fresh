@@ -8,6 +8,20 @@
  * Also handles Re-mapping clients, Charting, Trades, Logs, Duplication, and Admin Templates.
  */
 
+const STRAT_ICONS = {
+    start: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>`,
+    stop: `<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>`,
+    squareoff: `<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>`,
+    remap: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`,
+    edit: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`,
+    chart: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>`,
+    trades: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="4" cy="6" r="1.5" fill="currentColor"/><circle cx="4" cy="12" r="1.5" fill="currentColor"/><circle cx="4" cy="18" r="1.5" fill="currentColor"/></svg>`,
+    log: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>`,
+    dup: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+    del: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`,
+    unmap: `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.8 4L4 18.8M4 4l14.8 14.8"/></svg>`
+};
+
 class StrategiesManager {
     constructor() {
         this.instancesTableBody = document.getElementById("strategy-instances-tbody");
@@ -211,31 +225,31 @@ class StrategiesManager {
                     <td style="text-align: right;">
                         <div class="table-actions" style="justify-content: flex-end; gap: 0.35rem;">
                             <button class="action-btn-icon ${isRunning ? 'btn-action-stop' : 'btn-action-start'}" onclick="strategiesManager.toggleStartStop(${inst.id}, ${isRunning})" title="${isRunning ? 'Stop Strategy' : 'Start Strategy'}">
-                                ${isRunning ? '⏹' : '▶'}
+                                ${isRunning ? STRAT_ICONS.stop : STRAT_ICONS.start}
                             </button>
                             <button class="action-btn-icon btn-action-squareoff" onclick="strategiesManager.squareOff(${inst.id})" title="Emergency Square Off Strategy">
-                                ⚡
+                                ${STRAT_ICONS.squareoff}
                             </button>
                             <button class="action-btn-icon btn-action-remap" onclick="strategiesManager.openRemapClientsModal(${inst.id}, '${userNameEsc}')" title="Re-map Accounts">
-                                👥
+                                ${STRAT_ICONS.remap}
                             </button>
                             <button class="action-btn-icon btn-action-edit" onclick="strategiesManager.openEditModal(${inst.id})" title="Edit Strategy Parameters">
-                                ✏️
+                                ${STRAT_ICONS.edit}
                             </button>
                             <button class="action-btn-icon btn-action-chart" onclick="strategiesManager.openChart(${inst.id}, '${userNameEsc}')" title="Performance Chart">
-                                📈
+                                ${STRAT_ICONS.chart}
                             </button>
                             <button class="action-btn-icon btn-action-trades" onclick="strategiesManager.openTrades(${inst.id}, '${userNameEsc}')" title="Recent Trades List (All Legs)">
-                                📋
+                                ${STRAT_ICONS.trades}
                             </button>
                             <button class="action-btn-icon btn-action-log" onclick="strategiesManager.openLogs(${inst.id}, '${userNameEsc}')" title="Chronological Decision Audit Log">
-                                📜
+                                ${STRAT_ICONS.log}
                             </button>
                             <button class="action-btn-icon btn-action-dup" onclick="strategiesManager.openDuplicateModal(${inst.id}, '${adminNameEsc}', '${userNameEsc}', '${JSON.stringify(inst.config).replace(/"/g, '&quot;')}')" title="Duplicate Strategy">
-                                📑
+                                ${STRAT_ICONS.dup}
                             </button>
-                            <button class="action-btn-icon btn-action-delete" onclick="strategiesManager.deleteStrategy(${inst.id}, '${userNameEsc}')" title="Delete Strategy" style="color: var(--accent-red);">
-                                🗑️
+                            <button class="action-btn-icon btn-action-delete" onclick="strategiesManager.deleteStrategy(${inst.id}, '${userNameEsc}')" title="Delete Strategy">
+                                ${STRAT_ICONS.del}
                             </button>
                         </div>
                     </td>
@@ -308,8 +322,8 @@ class StrategiesManager {
                         </td>
                         <td style="text-align: right;">
                             <div class="table-actions" style="justify-content: flex-end; gap: 0.35rem;">
-                                <button class="action-btn-icon btn-action-remap" onclick="strategiesManager.openRemapClientsModal(${inst.id}, '${userNameEsc}')" title="Map Accounts">👥</button>
-                                <button class="action-btn-icon btn-action-delete" onclick="strategiesManager.deleteStrategy(${inst.id}, '${userNameEsc}')" title="Delete Strategy" style="color: var(--accent-red);">🗑️</button>
+                                <button class="action-btn-icon btn-action-remap" onclick="strategiesManager.openRemapClientsModal(${inst.id}, '${userNameEsc}')" title="Map Accounts">${STRAT_ICONS.remap}</button>
+                                <button class="action-btn-icon btn-action-delete" onclick="strategiesManager.deleteStrategy(${inst.id}, '${userNameEsc}')" title="Delete Strategy">${STRAT_ICONS.del}</button>
                             </div>
                         </td>
                     </tr>
@@ -368,22 +382,22 @@ class StrategiesManager {
                         <td style="text-align: right;">
                             <div class="table-actions" style="justify-content: flex-end; gap: 0.35rem;">
                                 <button class="action-btn-icon ${isRunning ? 'btn-action-stop' : 'btn-action-start'}" onclick="strategiesManager.toggleStartStop(${inst.id}, ${isRunning})" title="${isRunning ? 'Stop Strategy' : 'Start Strategy'}">
-                                    ${isRunning ? '⏹' : '▶'}
+                                    ${isRunning ? STRAT_ICONS.stop : STRAT_ICONS.start}
                                 </button>
                                 <button class="action-btn-icon btn-action-squareoff" onclick="strategiesManager.squareOffAccountStrategy('${client.client_id}', ${inst.id})" title="Emergency Square Off positions for ${clientNameEsc} on this strategy">
-                                    ⚡
+                                    ${STRAT_ICONS.squareoff}
                                 </button>
-                                <button class="action-btn-icon btn-action-unmap" onclick="strategiesManager.unmapClient(${inst.id}, '${client.client_id}', '${clientNameEsc}')" title="Unmap ${clientNameEsc} from this strategy" style="color: var(--accent-amber);">
-                                    🔗❌
+                                <button class="action-btn-icon btn-action-unmap" onclick="strategiesManager.unmapClient(${inst.id}, '${client.client_id}', '${clientNameEsc}')" title="Unmap ${clientNameEsc} from this strategy">
+                                    ${STRAT_ICONS.unmap}
                                 </button>
                                 <button class="action-btn-icon btn-action-edit" onclick="strategiesManager.openEditModal(${inst.id})" title="Edit Strategy Parameters">
-                                    ✏️
+                                    ${STRAT_ICONS.edit}
                                 </button>
                                 <button class="action-btn-icon btn-action-chart" onclick="strategiesManager.openChart(${inst.id}, '${userNameEsc}')" title="Performance Chart">
-                                    📈
+                                    ${STRAT_ICONS.chart}
                                 </button>
                                 <button class="action-btn-icon btn-action-log" onclick="strategiesManager.openLogs(${inst.id}, '${userNameEsc}')" title="Chronological Decision Audit Log">
-                                    📜
+                                    ${STRAT_ICONS.log}
                                 </button>
                             </div>
                         </td>
@@ -463,22 +477,23 @@ class StrategiesManager {
                         <td style="padding: 0.6rem 0.75rem; text-align: right;">
                             <div class="table-actions" style="justify-content: flex-end; gap: 0.35rem;">
                                 <button class="action-btn-icon ${isRunning ? 'btn-action-stop' : 'btn-action-start'}" onclick="strategiesManager.toggleStartStop(${inst.id}, ${isRunning})" title="${isRunning ? 'Stop Strategy' : 'Start Strategy'}">
-                                    ${isRunning ? '⏹' : '▶'}
+                                    ${isRunning ? STRAT_ICONS.stop : STRAT_ICONS.start}
                                 </button>
                                 <button class="action-btn-icon btn-action-squareoff" onclick="strategiesManager.squareOffAccountStrategy('${acc.client_id}', ${inst.id})" title="Emergency Square Off positions for this strategy">
-                                    ⚡
+                                    ${STRAT_ICONS.squareoff}
                                 </button>
-                                <button class="action-btn-icon btn-action-unmap" onclick="strategiesManager.unmapClient(${inst.id}, '${acc.client_id}', '${clientNameEsc}')" title="Unmap strategy from this account" style="color: var(--accent-amber);">
-                                    🔗❌
+                                <button class="action-btn-icon btn-action-unmap" onclick="strategiesManager.unmapClient(${inst.id}, '${acc.client_id}', '${clientNameEsc}')" title="Unmap strategy from this account">
+                                    ${STRAT_ICONS.unmap}
                                 </button>
                                 <button class="action-btn-icon btn-action-edit" onclick="strategiesManager.openEditModal(${inst.id})" title="Edit Strategy Parameters">
-                                    ✏️
+                                    ${STRAT_ICONS.edit}
                                 </button>
                                 <button class="action-btn-icon btn-action-chart" onclick="strategiesManager.openChart(${inst.id}, '${userNameEsc}')" title="Performance Chart">
-                                    📈
+                                    ${STRAT_ICONS.chart}
                                 </button>
                                 <button class="action-btn-icon btn-action-log" onclick="strategiesManager.openLogs(${inst.id}, '${userNameEsc}')" title="Chronological Decision Audit Log">
-                                    📜
+                                    ${STRAT_ICONS.log}
+                                </button>
                                 </button>
                             </div>
                         </td>
