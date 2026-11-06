@@ -42,7 +42,9 @@ DEFAULT_SUBSCRIPTIONS = [
     {"symbol": "CRUDEOIL MINI FUT", "canonical": "MCX:CRUDEOILM", "segment": "MCX", "exchange": "MCX", "is_commodity_future": True},
     {"symbol": "NATURALGAS FUT", "canonical": "MCX:NATURALGAS", "segment": "MCX", "exchange": "MCX", "is_commodity_future": True},
     {"symbol": "GOLD FUT", "canonical": "MCX:GOLD", "segment": "MCX", "exchange": "MCX", "is_commodity_future": True},
-    {"symbol": "SILVER FUT", "canonical": "MCX:SILVER", "segment": "MCX", "exchange": "MCX", "is_commodity_future": True}
+    {"symbol": "SILVER FUT", "canonical": "MCX:SILVER", "segment": "MCX", "exchange": "MCX", "is_commodity_future": True},
+    {"symbol": "RELIANCE", "canonical": "NSE:RELIANCE", "segment": "NSE", "exchange": "NSE"},
+    {"symbol": "RELIANCE FUT", "canonical": "NFO:RELIANCE", "segment": "NFO", "exchange": "NSE"}
 ]
 
 # Supported Segments
@@ -61,6 +63,7 @@ DEFAULT_LOT_SIZES = {
     "NATURALGAS": int(os.getenv("LOT_SIZE_NATURALGAS", 1250)),
     "GOLD": int(os.getenv("LOT_SIZE_GOLD", 100)),
     "SILVER": int(os.getenv("LOT_SIZE_SILVER", 30)),
+    "RELIANCE": int(os.getenv("LOT_SIZE_RELIANCE", 250)),
 }
 
 def get_default_lot_size(symbol: str) -> int:

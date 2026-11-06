@@ -145,85 +145,123 @@ def seed_initial_data():
             db.commit()
 
         # 2. Seed Registered Strategy Templates (Admin catalog - definitions only, no running instances)
-        if db.query(StrategyTemplate).count() == 0 or not db.query(StrategyTemplate).filter(StrategyTemplate.key == "strat_time_atm_seller_v1").first():
-            templates = [
-                StrategyTemplate(
-                    key="strat_time_atm_seller_v1",
-                    name_admin="MCX Time-Based ATM Strike Seller (CrudeOilM)",
-                    name_user="MCX Automated ATM Seller",
-                    description="Intraday ATM Straddle/Strike selling engine. Enters at 15:45, exits at 23:18 with 750 INR/lot stoploss. Universal for MCX, NIFTY, and SENSEX.",
-                    default_config={
-                        "symbol": "MCX:CRUDEOILM",
-                        "strike_step": 50,
-                        "entry_time": "15:45:00",
-                        "exit_time": "23:18:00",
-                        "legs": ["CE", "PE"],
-                        "lots": 1,
-                        "lot_size": 10,
-                        "stop_loss_per_lot": 750.0,
-                        "allow_entry_in_window": True,
-                        "product": "NRML",
-                        "order_type": "LIMIT",
-                        "limit_buffer_pct": 0.015,
-                        "auto_chase": True
-                    },
-                    python_module="backend.strategy_manager.registered.time_atm_seller"
-                ),
-                StrategyTemplate(
-                    key="strat_ema_cross_v1",
-                    name_admin="EMA Crossover 9-21 Alpha",
-                    name_user="Trend Momentum Alpha",
-                    description="High probability exponential moving average 9/21 crossover strategy with ATR dynamic stop-loss.",
-                    default_config={
-                        "symbol": "NSE:NIFTY",
-                        "timeframe": "5m",
-                        "fast_ema": 9,
-                        "slow_ema": 21,
-                        "quantity": DEFAULT_LOT_SIZES.get("NIFTY", 65),
-                        "stop_loss_pct": 0.5,
-
-                        "target_pct": 1.2,
-                        "max_trades_per_day": 3
-                    },
-                    python_module="backend.strategy_manager.registered.ema_crossover"
-                ),
-                StrategyTemplate(
-                    key="strat_short_straddle_v2",
-                    name_admin="0DTE Short Straddle Delta Hedged",
-                    name_user="Index Neutral Income",
-                    description="Non-directional automated intraday short straddle with leg-by-leg stop loss and re-entry.",
-                    default_config={
-                        "symbol": "NSE:BANKNIFTY",
-                        "underlying": "NSE:BANKNIFTY",
-                        "strike_offset": 0,
-                        "lots": 2,
-                        "sl_percentage": 25.0,
-                        "trailing_sl": True,
-                        "entry_time": "09:25:00",
-                        "exit_time": "15:10:00"
-                    },
-                    python_module="backend.strategy_manager.registered.short_straddle"
-                ),
-                StrategyTemplate(
-                    key="strat_supertrend_mcx_v1",
-                    name_admin="MCX Energy Supertrend Breakout",
-                    name_user="Commodity Trend Pro",
-                    description="Commodity futures trend-following engine tuned for CrudeOil and NaturalGas volatility.",
-                    default_config={
-                        "symbol": "MCX:CRUDEOIL",
-                        "atr_period": 10,
-                        "multiplier": 3.0,
-                        "lots": 1,
-                        "stop_loss_pts": 35.0,
-                        "target_pts": 70.0
-                    },
-                    python_module="backend.strategy_manager.registered.supertrend_mcx"
-                )
-            ]
-            for tpl in templates:
-                if not db.query(StrategyTemplate).filter(StrategyTemplate.key == tpl.key).first():
-                    db.add(tpl)
-            db.commit()
+        templates = [
+            StrategyTemplate(
+                key="strat_ac_srv2_future_v1",
+                name_admin="AC SRv2 Reliance Future (Alpha System)",
+                name_user="Reliance Futures Trend Pro",
+                description="Reliance Industries algorithmic trend-following engine with Wilder ATR bands, volatility expansion filter (vCheck), dynamic trailing stop loss, and monthly expiry auto-roll.",
+                default_config={
+                    "symbol": "NSE:RELIANCE",
+                    "trade_instrument": "FUTURE",
+                    "timeframe": "3m",
+                    "timeframe_min": 3,
+                    "atr_multiplier": 4.4,
+                    "atr_period": 28,
+                    "sensitivity": 1.0,
+                    "use_close_extremums": True,
+                    "volatility_filter": False,
+                    "target_long_per_mille": 48,
+                    "target_short_per_mille": 18,
+                    "first_trade_time": "09:15:00",
+                    "last_trade_time": "10:51:00",
+                    "square_off_time": "14:27:00",
+                    "strategy_version": "1.2",
+                    "position_sizing_mode": "fixed",
+                    "quantity_lots": 1,
+                    "lot_size": 250,
+                    "risk_amount": 20000.0,
+                    "max_lots": 8,
+                    "fut_roll_next_month_from_last_friday": True,
+                    "opt_strike_step": 10,
+                    "opt_strike_mode": "ATM",
+                    "opt_strike_offset_steps": 0,
+                    "opt_quantity_lots": 1,
+                    "opt_lot_size": 250,
+                    "product": "NRML",
+                    "order_type": "LIMIT",
+                    "limit_buffer_pct": 0.015,
+                    "auto_chase": True
+                },
+                python_module="backend.strategy_manager.registered.ac_srv2_future"
+            ),
+            StrategyTemplate(
+                key="strat_time_atm_seller_v1",
+                name_admin="MCX Time-Based ATM Strike Seller (CrudeOilM)",
+                name_user="MCX Automated ATM Seller",
+                description="Intraday ATM Straddle/Strike selling engine. Enters at 15:45, exits at 23:18 with 750 INR/lot stoploss. Universal for MCX, NIFTY, and SENSEX.",
+                default_config={
+                    "symbol": "MCX:CRUDEOILM",
+                    "strike_step": 50,
+                    "entry_time": "15:45:00",
+                    "exit_time": "23:18:00",
+                    "legs": ["CE", "PE"],
+                    "lots": 1,
+                    "lot_size": 10,
+                    "stop_loss_per_lot": 750.0,
+                    "allow_entry_in_window": True,
+                    "product": "NRML",
+                    "order_type": "LIMIT",
+                    "limit_buffer_pct": 0.015,
+                    "auto_chase": True
+                },
+                python_module="backend.strategy_manager.registered.time_atm_seller"
+            ),
+            StrategyTemplate(
+                key="strat_ema_cross_v1",
+                name_admin="EMA Crossover 9-21 Alpha",
+                name_user="Trend Momentum Alpha",
+                description="High probability exponential moving average 9/21 crossover strategy with ATR dynamic stop-loss.",
+                default_config={
+                    "symbol": "NSE:NIFTY",
+                    "timeframe": "5m",
+                    "fast_ema": 9,
+                    "slow_ema": 21,
+                    "quantity": DEFAULT_LOT_SIZES.get("NIFTY", 65),
+                    "stop_loss_pct": 0.5,
+                    "target_pct": 1.2,
+                    "max_trades_per_day": 3
+                },
+                python_module="backend.strategy_manager.registered.ema_crossover"
+            ),
+            StrategyTemplate(
+                key="strat_short_straddle_v2",
+                name_admin="0DTE Short Straddle Delta Hedged",
+                name_user="Index Neutral Income",
+                description="Non-directional automated intraday short straddle with leg-by-leg stop loss and re-entry.",
+                default_config={
+                    "symbol": "NSE:BANKNIFTY",
+                    "underlying": "NSE:BANKNIFTY",
+                    "strike_offset": 0,
+                    "lots": 2,
+                    "sl_percentage": 25.0,
+                    "trailing_sl": True,
+                    "entry_time": "09:25:00",
+                    "exit_time": "15:10:00"
+                },
+                python_module="backend.strategy_manager.registered.short_straddle"
+            ),
+            StrategyTemplate(
+                key="strat_supertrend_mcx_v1",
+                name_admin="MCX Energy Supertrend Breakout",
+                name_user="Commodity Trend Pro",
+                description="Commodity futures trend-following engine tuned for CrudeOil and NaturalGas volatility.",
+                default_config={
+                    "symbol": "MCX:CRUDEOIL",
+                    "atr_period": 10,
+                    "multiplier": 3.0,
+                    "lots": 1,
+                    "stop_loss_pts": 35.0,
+                    "target_pts": 70.0
+                },
+                python_module="backend.strategy_manager.registered.supertrend_mcx"
+            )
+        ]
+        for tpl in templates:
+            existing = db.query(StrategyTemplate).filter(StrategyTemplate.key == tpl.key).first()
+            if not existing:
+                db.add(tpl)
+        db.commit()
 
         # 3. Strategy Instances: Clean state by default (no dummy instances seeded).
         # Users configure and deploy instances explicitly.

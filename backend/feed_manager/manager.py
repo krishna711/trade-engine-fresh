@@ -30,10 +30,10 @@ class OHLCBuilder:
         now = datetime.datetime.utcnow()
 
         if symbol not in self.candles:
-            self.candles[symbol] = {"1m": [], "5m": [], "15m": [], "1h": []}
+            self.candles[symbol] = {"1m": [], "3m": [], "5m": [], "15m": [], "1h": []}
             self.current_bars[symbol] = {}
 
-        for res, step_minutes in [("1m", 1), ("5m", 5), ("15m", 15), ("1h", 60)]:
+        for res, step_minutes in [("1m", 1), ("3m", 3), ("5m", 5), ("15m", 15), ("1h", 60)]:
             curr = self.current_bars[symbol].get(res)
             # Candle bucket time
             minute_bucket = (now.minute // step_minutes) * step_minutes

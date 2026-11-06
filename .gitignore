@@ -60,6 +60,7 @@ data/*.sqlite3
 .DS_Store
 Thumbs.db
 desktop.ini
+node-system-strategies-reference
 
 # Logs & temporary runtime files
 *.log

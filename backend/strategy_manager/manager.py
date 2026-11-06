@@ -12,6 +12,7 @@ from backend.order_manager.manager import order_manager
 
 MODULE_CLASS_MAP = {
     "strat_time_atm_seller_v1": ("backend.strategy_manager.registered.time_atm_seller", "TimeBasedATMSellerStrategy"),
+    "strat_ac_srv2_future_v1": ("backend.strategy_manager.registered.ac_srv2_future", "ACSRv2FutureStrategy"),
     "strat_ema_cross_v1": ("backend.strategy_manager.registered.ema_crossover", "EMACrossoverStrategy"),
     "strat_short_straddle_v2": ("backend.strategy_manager.registered.short_straddle", "ShortStraddleStrategy"),
     "strat_supertrend_mcx_v1": ("backend.strategy_manager.registered.supertrend_mcx", "SupertrendMCXStrategy")
@@ -115,10 +116,11 @@ class StrategySupervisor:
                 "process": proc,
                 "in_queue": in_q,
                 "out_queue": out_q,
-                "symbol": (inst.config or {}).get("symbol", "MCX:CRUDEOILM"),
+                "symbol": (inst.config or {}).get("symbol", "NSE:RELIANCE" if "ac_srv2" in inst.template_key else "MCX:CRUDEOILM"),
                 "extra_symbols": set(),
                 "client_ids": inst.client_ids or [],
-                "template_key": inst.template_key
+                "template_key": inst.template_key,
+                "config": inst.config or {}
             }
 
 
@@ -636,10 +638,18 @@ class StrategySupervisor:
         from backend.feed_manager.manager import feed_manager
         while self._is_running:
             try:
-                await asyncio.sleep(10.0)
+                await asyncio.sleep(5.0)
                 for inst_id, worker in list(self.active_workers.items()):
+                    cfg = worker.get("config", {})
                     sym = worker.get("symbol", "MCX:CRUDEOILM")
-                    bars = feed_manager.ohlc_builder.get_bars(sym, resolution="5m", count=20)
+                    # Support 1m, 3m, 5m, 15m, 1h
+                    tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or "5m").strip().lower()
+                    if tf.isdigit():
+                        tf = f"{tf}m"
+                    if tf not in ["1m", "3m", "5m", "15m", "1h"]:
+                        tf = "3m" if "ac_srv2" in str(worker.get("template_key", "")) else "5m"
+                    count = int(cfg.get("candle_count", 60))
+                    bars = feed_manager.ohlc_builder.get_bars(sym, resolution=tf, count=count)
                     if bars:
                         latest_bar = bars[-1]
                         history = bars[:-1]
