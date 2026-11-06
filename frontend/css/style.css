@@ -2047,44 +2047,6 @@ body.light-theme .date-input-group input[type="date"] {
     transform: none;
 }
 
-.quick-signin-section {
-    margin-top: 1.75rem;
-    padding-top: 1.25rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.quick-signin-label {
-    font-size: 0.72rem;
-    color: var(--text-muted, #94a3b8);
-    margin-bottom: 0.6rem;
-    display: block;
-    text-align: center;
-}
-
-.quick-signin-chips {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.6rem;
-}
-
-.quick-chip {
-    padding: 0.5rem 0.65rem;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 6px;
-    font-size: 0.74rem;
-    color: var(--text-secondary, #cbd5e1);
-    cursor: pointer;
-    text-align: center;
-    transition: all 0.15s ease;
-}
-
-.quick-chip:hover {
-    background: rgba(59, 130, 246, 0.12);
-    border-color: rgba(59, 130, 246, 0.3);
-    color: #ffffff;
-}
-
 /* Header User Profile Badge & Logout Button */
 .header-user-profile {
     display: inline-flex;

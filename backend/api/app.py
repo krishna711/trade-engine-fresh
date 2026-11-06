@@ -204,23 +204,12 @@ def login_endpoint(payload: Dict[str, Any] = Body(...), db: Session = Depends(ge
     if not user:
         raise HTTPException(status_code=401, detail="Invalid username or password.")
 
-    # Self-healing fallback: If default credentials used, synchronize password hash and activate account
+    # Strict password verification: never overwrite user-configured passwords
     if not verify_user_password(password, user.password_hash):
-        if (username.lower() == "admin" and password == "admin123") or (username.lower() == "trader" and password == "trader123"):
-            user.password_hash = hash_user_password(password)
-            user.is_active = True
-            db.commit()
-            db.refresh(user)
-        else:
-            raise HTTPException(status_code=401, detail="Invalid username or password.")
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
 
     if not user.is_active:
-        if username.lower() in ["admin", "trader"]:
-            user.is_active = True
-            db.commit()
-            db.refresh(user)
-        else:
-            raise HTTPException(status_code=403, detail="User account is deactivated. Contact Administrator.")
+        raise HTTPException(status_code=403, detail="User account is deactivated. Contact Administrator.")
 
     token = create_access_token(user)
     return {
@@ -266,16 +255,32 @@ def change_password_endpoint(
 
     if not current_password:
         raise HTTPException(status_code=400, detail="Current password is required.")
-    if not verify_user_password(current_password, current_user.password_hash):
+
+    # Query active user record directly in this session to guarantee transaction persistence
+    db_user = db.query(User).filter(User.id == current_user.id).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    if not verify_user_password(current_password, db_user.password_hash):
         raise HTTPException(status_code=400, detail="Current password is incorrect.")
     if not new_password or len(new_password) < 6:
         raise HTTPException(status_code=400, detail="New password must be at least 6 characters long.")
     if current_password == new_password:
         raise HTTPException(status_code=400, detail="New password must be different from current password.")
 
-    current_user.password_hash = hash_user_password(new_password)
+    db_user.password_hash = hash_user_password(new_password)
+    db_user.updated_at = datetime.datetime.utcnow()
     db.commit()
-    return {"success": True, "message": "Password updated successfully."}
+    db.refresh(db_user)
+
+    # Issue updated session token for the user
+    new_token = create_access_token(db_user)
+
+    return {
+        "success": True,
+        "message": "Password updated successfully.",
+        "token": new_token
+    }
 
 # ----------------- DASHBOARD & SUMMARY -----------------
 @app.get("/api/dashboard")
@@ -1810,22 +1815,6 @@ async def get_reports_trades(
 # ==============================================================================
 # USER & ROLE MANAGEMENT API
 # ==============================================================================
-
-import hashlib
-import secrets
-
-def hash_user_password(password: str) -> str:
-    salt = secrets.token_hex(8)
-    h = hashlib.sha256((salt + password).encode('utf-8')).hexdigest()
-    return f"{salt}${h}"
-
-def verify_user_password(password: str, hashed: str) -> bool:
-    if not hashed:
-        return False
-    if "$" in hashed:
-        salt, h = hashed.split("$", 1)
-        return hashlib.sha256((salt + password).encode('utf-8')).hexdigest() == h
-    return hashlib.sha256(password.encode('utf-8')).hexdigest() == hashed
 
 @app.get("/api/users")
 async def list_users(db: Session = Depends(get_db), current_user: User = Depends(require_admin)):

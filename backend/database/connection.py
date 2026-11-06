@@ -75,7 +75,9 @@ def ensure_default_users():
         else:
             admin.role = "ADMIN"
             admin.is_active = True
-            admin.password_hash = hash_user_password("admin123")
+            # Preserve user's updated password; only seed if missing
+            if not admin.password_hash:
+                admin.password_hash = hash_user_password("admin123")
 
         # 2. Trader
         trader = db.query(User).filter(User.username.ilike("trader")).first()
@@ -92,7 +94,9 @@ def ensure_default_users():
         else:
             trader.role = "USER"
             trader.is_active = True
-            trader.password_hash = hash_user_password("trader123")
+            # Preserve user's updated password; only seed if missing
+            if not trader.password_hash:
+                trader.password_hash = hash_user_password("trader123")
 
         db.commit()
     except Exception as e:

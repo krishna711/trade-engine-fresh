@@ -363,9 +363,14 @@ class AuthManager {
         }
 
         try {
+            const headers = { "Content-Type": "application/json" };
+            if (this.token) {
+                headers["Authorization"] = `Bearer ${this.token}`;
+            }
+
             const resp = await fetch("/api/auth/change-password", {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: headers,
                 body: JSON.stringify({
                     current_password: currentPassword,
                     new_password: newPassword
@@ -375,6 +380,10 @@ class AuthManager {
             const data = await resp.json();
 
             if (resp.ok && data.success) {
+                if (data.token) {
+                    this.token = data.token;
+                    localStorage.setItem("fresh_trade_auth_token", this.token);
+                }
                 showAlert("Password updated successfully! You can continue using your account.", true);
                 if (currInp) currInp.value = "";
                 if (newInp) newInp.value = "";
