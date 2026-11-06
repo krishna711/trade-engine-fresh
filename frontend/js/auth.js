@@ -84,29 +84,6 @@ class AuthManager {
             };
         }
 
-        // Quick sign-in chips
-        const chipAdmin = document.getElementById("chip-login-admin");
-        if (chipAdmin) {
-            chipAdmin.onclick = () => {
-                const u = document.getElementById("login-username");
-                const p = document.getElementById("login-password");
-                if (u) u.value = "admin";
-                if (p) p.value = "admin123";
-                this.handleLoginSubmit();
-            };
-        }
-
-        const chipTrader = document.getElementById("chip-login-trader");
-        if (chipTrader) {
-            chipTrader.onclick = () => {
-                const u = document.getElementById("login-username");
-                const p = document.getElementById("login-password");
-                if (u) u.value = "trader";
-                if (p) p.value = "trader123";
-                this.handleLoginSubmit();
-            };
-        }
-
         // Close user dropdown menu when clicking anywhere outside
         document.addEventListener("click", (e) => {
             const container = document.querySelector(".user-menu-container");
