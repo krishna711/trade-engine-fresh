@@ -34,6 +34,10 @@ class StrategiesManager {
         this.latestInstances = [];
         this.latestAccounts = [];
 
+        this.deployModalIsPaper = true;
+        this.editModalIsPaper = true;
+        this.dupModalIsPaper = true;
+
         this.viewMode = localStorage.getItem("fresh_trade_strat_view_mode") || "by-strategy";
 
         this.initEventListeners();
@@ -203,9 +207,17 @@ class StrategiesManager {
                         ${isAdmin ? `<div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">${inst.template_key}</div>` : ''}
                     </td>
                     <td>
-                        <span class="status-pill status-${isRunning ? 'running' : 'stopped'}">
-                            <span class="status-dot"></span> ${inst.status}
-                        </span>
+                        <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
+                            <span class="status-pill status-${isRunning ? 'running' : 'stopped'}">
+                                <span class="status-dot"></span> ${inst.status}
+                            </span>
+                            <div class="mode-pill-group" style="margin-top: 2px;" title="${inst.paper_mode ? 'Strategy is set to PAPER mode' : 'Strategy is set to LIVE mode (requires live account)'}">
+                                <button class="mode-pill ${inst.paper_mode ? 'active' : ''}" 
+                                        onclick="strategiesManager.setMode(${inst.id}, true); event.stopPropagation();">PAPER</button>
+                                <button class="mode-pill ${!inst.paper_mode ? 'active live' : ''}" 
+                                        onclick="strategiesManager.setMode(${inst.id}, false); event.stopPropagation();">LIVE</button>
+                            </div>
+                        </div>
                     </td>
                     <td>
                         <span class="status-pill status-${inst.last_trade_status === 'OPEN' ? 'running' : 'stopped'}">
@@ -306,9 +318,17 @@ class StrategiesManager {
                             ${isAdmin ? `<div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">${inst.template_key}</div>` : ''}
                         </td>
                         <td>
-                            <span class="status-pill status-${isRunning ? 'running' : 'stopped'}">
-                                <span class="status-dot"></span> ${inst.status}
-                            </span>
+                            <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
+                                <span class="status-pill status-${isRunning ? 'running' : 'stopped'}">
+                                    <span class="status-dot"></span> ${inst.status}
+                                </span>
+                                <div class="mode-pill-group" style="margin-top: 2px;" title="${inst.paper_mode ? 'Strategy is set to PAPER mode' : 'Strategy is set to LIVE mode (requires live account)'}">
+                                    <button class="mode-pill ${inst.paper_mode ? 'active' : ''}" 
+                                            onclick="strategiesManager.setMode(${inst.id}, true); event.stopPropagation();">PAPER</button>
+                                    <button class="mode-pill ${!inst.paper_mode ? 'active live' : ''}" 
+                                            onclick="strategiesManager.setMode(${inst.id}, false); event.stopPropagation();">LIVE</button>
+                                </div>
+                            </div>
                         </td>
                         <td>
                             <span class="status-pill status-${inst.last_trade_status === 'OPEN' ? 'running' : 'stopped'}">
@@ -358,9 +378,17 @@ class StrategiesManager {
                             ${isAdmin ? `<div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">${inst.template_key}</div>` : ''}
                         </td>
                         <td>
-                            <span class="status-pill status-${isRunning ? 'running' : 'stopped'}">
-                                <span class="status-dot"></span> ${inst.status}
-                            </span>
+                            <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
+                                <span class="status-pill status-${isRunning ? 'running' : 'stopped'}">
+                                    <span class="status-dot"></span> ${inst.status}
+                                </span>
+                                <div class="mode-pill-group" style="margin-top: 2px;" title="${inst.paper_mode ? 'Strategy is set to PAPER mode' : 'Strategy is set to LIVE mode (requires live account)'}">
+                                    <button class="mode-pill ${inst.paper_mode ? 'active' : ''}" 
+                                            onclick="strategiesManager.setMode(${inst.id}, true); event.stopPropagation();">PAPER</button>
+                                    <button class="mode-pill ${!inst.paper_mode ? 'active live' : ''}" 
+                                            onclick="strategiesManager.setMode(${inst.id}, false); event.stopPropagation();">LIVE</button>
+                                </div>
+                            </div>
                         </td>
                         <td>
                             <span class="status-pill status-${inst.last_trade_status === 'OPEN' ? 'running' : 'stopped'}">
@@ -460,9 +488,17 @@ class StrategiesManager {
                             ${isAdmin ? `<div style="font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono);">${inst.template_key}</div>` : ''}
                         </td>
                         <td style="padding: 0.6rem 0.75rem;">
-                            <span class="status-pill status-${isRunning ? 'running' : 'stopped'}">
-                                <span class="status-dot"></span> ${inst.status}
-                            </span>
+                            <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
+                                <span class="status-pill status-${isRunning ? 'running' : 'stopped'}">
+                                    <span class="status-dot"></span> ${inst.status}
+                                </span>
+                                <div class="mode-pill-group" style="margin-top: 2px;" title="${inst.paper_mode ? 'Strategy is set to PAPER mode' : 'Strategy is set to LIVE mode (requires live account)'}">
+                                    <button class="mode-pill ${inst.paper_mode ? 'active' : ''}" 
+                                            onclick="strategiesManager.setMode(${inst.id}, true); event.stopPropagation();">PAPER</button>
+                                    <button class="mode-pill ${!inst.paper_mode ? 'active live' : ''}" 
+                                            onclick="strategiesManager.setMode(${inst.id}, false); event.stopPropagation();">LIVE</button>
+                                </div>
+                            </div>
                         </td>
                         <td style="padding: 0.6rem 0.75rem; font-family: var(--font-mono); font-size: 0.75rem;">
                             ${inst.start_time} - ${inst.end_time}
@@ -988,6 +1024,8 @@ class StrategiesManager {
         this.currentDuplicateSourceId = id;
         document.getElementById("dup-name-admin").value = `${adminName} (Clone)`;
         document.getElementById("dup-name-user").value = `${userName} (Copy)`;
+        const srcInst = (this.latestInstances || []).find(i => i.id === id);
+        this.setDupModalMode(srcInst ? srcInst.paper_mode !== false : true);
         try {
             const parsed = JSON.parse(configStr);
             document.getElementById("dup-config-json").value = JSON.stringify(parsed, null, 2);
@@ -996,6 +1034,21 @@ class StrategiesManager {
             document.getElementById("dup-config-json").value = "{}";
         }
         document.getElementById("modal-duplicate").classList.add("active");
+    }
+
+    setDupModalMode(isPaper) {
+        this.dupModalIsPaper = !!isPaper;
+        const btnPaper = document.getElementById("dup-mode-paper");
+        const btnLive = document.getElementById("dup-mode-live");
+        if (btnPaper && btnLive) {
+            if (this.dupModalIsPaper) {
+                btnPaper.className = "mode-pill active";
+                btnLive.className = "mode-pill";
+            } else {
+                btnPaper.className = "mode-pill";
+                btnLive.className = "mode-pill active live";
+            }
+        }
     }
 
     async submitDuplicate() {
@@ -1019,7 +1072,8 @@ class StrategiesManager {
                 body: JSON.stringify({
                     name_admin: nameAdmin,
                     name_user: nameUser,
-                    config: config
+                    config: config,
+                    paper_mode: this.dupModalIsPaper
                 })
             });
             const data = await res.json();
@@ -1123,11 +1177,27 @@ class StrategiesManager {
 
             const modal = document.getElementById("modal-deploy-strategy");
             if (modal) {
+                this.setDeployModalMode(true);
                 modal.classList.add("active");
                 modal.style.display = "";
             }
         } catch (e) {
             alert("Error loading deployment wizard: " + e);
+        }
+    }
+
+    setDeployModalMode(isPaper) {
+        this.deployModalIsPaper = !!isPaper;
+        const btnPaper = document.getElementById("deploy-mode-paper");
+        const btnLive = document.getElementById("deploy-mode-live");
+        if (btnPaper && btnLive) {
+            if (this.deployModalIsPaper) {
+                btnPaper.className = "mode-pill active";
+                btnLive.className = "mode-pill";
+            } else {
+                btnPaper.className = "mode-pill";
+                btnLive.className = "mode-pill active live";
+            }
         }
     }
 
@@ -1191,7 +1261,8 @@ class StrategiesManager {
                     name_user: nameUser,
                     client_ids: clientIds,
                     config: parsedConfig,
-                    auto_start: autoStart
+                    auto_start: autoStart,
+                    paper_mode: this.deployModalIsPaper
                 })
             });
 
@@ -1263,8 +1334,24 @@ class StrategiesManager {
 
         const modal = document.getElementById("modal-edit-strategy");
         if (modal) {
+            this.setEditModalMode(inst.paper_mode !== false);
             modal.classList.add("active");
             modal.style.display = "";
+        }
+    }
+
+    setEditModalMode(isPaper) {
+        this.editModalIsPaper = !!isPaper;
+        const btnPaper = document.getElementById("edit-mode-paper");
+        const btnLive = document.getElementById("edit-mode-live");
+        if (btnPaper && btnLive) {
+            if (this.editModalIsPaper) {
+                btnPaper.className = "mode-pill active";
+                btnLive.className = "mode-pill";
+            } else {
+                btnPaper.className = "mode-pill";
+                btnLive.className = "mode-pill active live";
+            }
         }
     }
 
@@ -1310,7 +1397,8 @@ class StrategiesManager {
                     name_user: nameUser,
                     start_time: startTime,
                     end_time: endTime,
-                    config: parsedConfig
+                    config: parsedConfig,
+                    paper_mode: this.editModalIsPaper
                 })
             });
 
@@ -1336,6 +1424,40 @@ class StrategiesManager {
                 submitBtn.disabled = false;
                 submitBtn.innerText = "💾 Save & Apply Parameters";
             }
+        }
+    }
+
+    async setMode(id, isPaper) {
+        try {
+            const res = await fetch(`/api/strategies/${id}/set-mode`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ paper_mode: isPaper })
+            });
+            if (res.ok) {
+                await this.loadInstances();
+            } else {
+                const err = await res.json();
+                alert("Failed to update strategy mode: " + (err.detail || "Error"));
+            }
+        } catch (e) {
+            console.error("Error setting strategy mode:", e);
+        }
+    }
+
+    async toggleMode(id) {
+        try {
+            const res = await fetch(`/api/strategies/${id}/toggle-mode`, {
+                method: "POST"
+            });
+            if (res.ok) {
+                await this.loadInstances();
+            } else {
+                const err = await res.json();
+                alert("Failed to toggle strategy mode: " + (err.detail || "Error"));
+            }
+        } catch (e) {
+            console.error("Error toggling strategy mode:", e);
         }
     }
 }

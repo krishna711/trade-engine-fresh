@@ -683,6 +683,19 @@
                     <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Strategy User Name (Clean, Non-Admin)</label>
                     <input type="text" id="dup-name-user" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px;">
                 </div>
+                <!-- Strategy Mode: Paper vs Live -->
+                <div style="background: var(--bg-tertiary); padding: 0.65rem 0.85rem; border-radius: 6px; border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <div style="font-size: 0.78rem; font-weight: 700; color: var(--text-primary);">Execution Mode</div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">
+                            Account live mode required for Live execution
+                        </div>
+                    </div>
+                    <div class="mode-pill-group">
+                        <button type="button" id="dup-mode-paper" class="mode-pill active" onclick="strategiesManager.setDupModalMode(true)">PAPER</button>
+                        <button type="button" id="dup-mode-live" class="mode-pill" onclick="strategiesManager.setDupModalMode(false)">LIVE</button>
+                    </div>
+                </div>
                 <div>
                     <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Trading Symbol</label>
                     <select id="dup-symbol" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px;">
@@ -958,6 +971,20 @@
                     </div>
                 </div>
 
+                <!-- Strategy Execution Mode -->
+                <div style="background: var(--bg-tertiary); padding: 0.65rem 0.85rem; border-radius: 6px; border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <div style="font-size: 0.78rem; font-weight: 700; color: var(--text-primary);">Execution Mode</div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">
+                            Account must also be Live for orders to route to broker.
+                        </div>
+                    </div>
+                    <div class="mode-pill-group">
+                        <button type="button" id="deploy-mode-paper" class="mode-pill active" onclick="strategiesManager.setDeployModalMode(true)">PAPER</button>
+                        <button type="button" id="deploy-mode-live" class="mode-pill" onclick="strategiesManager.setDeployModalMode(false)">LIVE</button>
+                    </div>
+                </div>
+
                 <!-- Client Accounts Selection (Parallel Order Execution) -->
                 <div>
                     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -1030,6 +1057,20 @@
                     <div>
                         <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">User Name</label>
                         <input type="text" id="edit-strat-name-user" style="width: 100%; padding: 0.5rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-size: 0.82rem;">
+                    </div>
+                </div>
+
+                <!-- Strategy Execution Mode -->
+                <div style="background: var(--bg-tertiary); padding: 0.65rem 0.85rem; border-radius: 6px; border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between;">
+                    <div>
+                        <div style="font-size: 0.78rem; font-weight: 700; color: var(--text-primary);">Execution Mode</div>
+                        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">
+                            Account must also be Live for orders to route to broker.
+                        </div>
+                    </div>
+                    <div class="mode-pill-group">
+                        <button type="button" id="edit-mode-paper" class="mode-pill" onclick="strategiesManager.setEditModalMode(true)">PAPER</button>
+                        <button type="button" id="edit-mode-live" class="mode-pill" onclick="strategiesManager.setEditModalMode(false)">LIVE</button>
                     </div>
                 </div>
 

@@ -217,6 +217,9 @@ class StrategySupervisor:
                 merged_config.update(custom_config)
 
             client_ids = custom_client_ids if custom_client_ids is not None else list(src.client_ids or [])
+            paper_mode = getattr(src, "paper_mode", True)
+            if custom_config and "paper_mode" in custom_config:
+                paper_mode = bool(custom_config["paper_mode"])
 
             clone = StrategyInstance(
                 template_key=src.template_key,
@@ -224,6 +227,7 @@ class StrategySupervisor:
                 instance_name_user=new_name_user,
                 client_ids=client_ids,
                 status="STOPPED",
+                paper_mode=paper_mode,
                 config=merged_config,
                 start_time=src.start_time,
                 end_time=src.end_time,
@@ -402,8 +406,8 @@ class StrategySupervisor:
             rep.segment = "MCX" if "MCX" in sym.upper() else "NSE"
             rep.side = "SELL"
             rep.quantity = sum(abs(l.get("qty", 10)) for l in active_legs) if active_legs else 10
-            rep.is_paper = False
-            rep.mode = "LIVE"
+            rep.is_paper = bool(getattr(inst, "paper_mode", True))
+            rep.mode = "PAPER" if rep.is_paper else "LIVE"
             
             entry_prices = [round(float(l.get("entry") or 0.0), 2) for l in active_legs if l.get("entry")]
             exit_prices = [round(float(l.get("exit") or 0.0), 2) for l in active_legs if l.get("exit")]

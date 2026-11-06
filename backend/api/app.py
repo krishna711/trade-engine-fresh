@@ -949,6 +949,7 @@ async def deploy_strategy(payload: Dict[str, Any] = Body(...), db: Session = Dep
     start_time = str(config.get("entry_time") or config.get("start_time") or "09:15:00")
     end_time = str(config.get("exit_time") or config.get("end_time") or "15:20:00")
     auto_start = bool(payload.get("auto_start", False))
+    paper_mode = bool(payload.get("paper_mode", True))
 
     instance = StrategyInstance(
         template_key=template_key,
@@ -957,6 +958,7 @@ async def deploy_strategy(payload: Dict[str, Any] = Body(...), db: Session = Dep
         instance_name_user=name_user,
         client_ids=list(client_ids),
         status="STOPPED",
+        paper_mode=paper_mode,
         config=config,
         start_time=start_time,
         end_time=end_time,
@@ -1046,6 +1048,7 @@ def list_strategy_instances(db: Session = Depends(get_db), current_user: User = 
             "name_admin": inst.instance_name_admin,
             "name_user": inst.instance_name_user, # Non-admin sees this only without slug
             "status": inst.status,
+            "paper_mode": bool(getattr(inst, "paper_mode", True)),
             "client_ids": inst.client_ids,
             "mapped_clients": mapped_clients,
             "last_trade_status": inst.last_trade_status,
@@ -1081,6 +1084,8 @@ async def update_strategy_instance(
         inst.instance_name_admin = payload["name_admin"]
     if "name_user" in payload and payload["name_user"]:
         inst.instance_name_user = payload["name_user"]
+    if "paper_mode" in payload:
+        inst.paper_mode = bool(payload["paper_mode"])
     new_config = payload.get("config") or {}
     if "start_time" in payload and payload["start_time"]:
         inst.start_time = payload["start_time"]
@@ -1149,6 +1154,28 @@ async def stop_strategy_instance(id: int):
     success = await strategy_supervisor.stop_strategy(id)
     return {"success": success, "strategy_id": id}
 
+@app.post("/api/strategies/{id}/toggle-mode")
+def toggle_strategy_paper_mode(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Toggles strategy paper mode vs live mode"""
+    inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()
+    if not inst:
+        raise HTTPException(status_code=404, detail="Strategy instance not found")
+    check_strategy_owner_or_admin(inst, current_user, db)
+    inst.paper_mode = not bool(getattr(inst, "paper_mode", True))
+    db.commit()
+    return {"success": True, "strategy_id": id, "paper_mode": inst.paper_mode}
+
+@app.post("/api/strategies/{id}/set-mode")
+def set_strategy_paper_mode(id: int, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Sets strategy paper mode or live mode explicitly"""
+    inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()
+    if not inst:
+        raise HTTPException(status_code=404, detail="Strategy instance not found")
+    check_strategy_owner_or_admin(inst, current_user, db)
+    inst.paper_mode = bool(payload.get("paper_mode", True))
+    db.commit()
+    return {"success": True, "strategy_id": id, "paper_mode": inst.paper_mode}
+
 @app.post("/api/strategies/{id}/duplicate")
 async def duplicate_strategy_instance(
     id: int,
@@ -1157,7 +1184,9 @@ async def duplicate_strategy_instance(
     """Duplicates an existing strategy with custom parameters or symbols"""
     new_admin_name = payload.get("name_admin", f"Cloned Strategy #{id}")
     new_user_name = payload.get("name_user", "Alpha Strategy (Copy)")
-    custom_config = payload.get("config")
+    custom_config = dict(payload.get("config") or {})
+    if "paper_mode" in payload:
+        custom_config["paper_mode"] = bool(payload["paper_mode"])
     custom_client_ids = payload.get("client_ids")
 
     clone_id = await strategy_supervisor.duplicate_strategy(

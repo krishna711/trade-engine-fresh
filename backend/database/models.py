@@ -55,6 +55,7 @@ class StrategyInstance(Base):
     instance_name_user = Column(String(150), nullable=False) # e.g. "Trend Momentum Alpha"
     client_ids = Column(JSON, default=list) # List of client_ids mapped to this strategy (parallel execution)
     status = Column(String(20), default="STOPPED") # RUNNING, STOPPED, ERROR
+    paper_mode = Column(Boolean, default=True) # Strategy-level Paper vs Live mode
     config = Column(JSON, default=dict) # Custom parameters for this instance
     
     # Timing

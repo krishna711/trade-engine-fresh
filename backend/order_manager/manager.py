@@ -86,6 +86,19 @@ class OrderManager:
 
             engine_order_id = f"ORD_{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
+            # Strategy-level and Account-level paper mode rule:
+            # 1. If account.paper_mode is True -> ALL orders for this account run in PAPER mode (even if strategy is Live).
+            # 2. If account.paper_mode is False (Live account) -> Strategy-level paper_mode applies:
+            #    - Strategy in Live mode -> order executes in LIVE mode with real broker.
+            #    - Strategy in Paper mode -> order executes in PAPER mode simulation.
+            strategy_paper_mode = True
+            if strategy_instance_id:
+                strat = db.query(StrategyInstance).filter(StrategyInstance.id == strategy_instance_id).first()
+                if strat:
+                    strategy_paper_mode = bool(getattr(strat, "paper_mode", True))
+
+            effective_is_paper = bool(account.paper_mode) or bool(strategy_paper_mode)
+
             order = Order(
                 order_id=engine_order_id,
                 client_id=client_id,
@@ -100,7 +113,7 @@ class OrderManager:
                 price=price,
                 trigger_price=trigger_price,
                 status="NEW",
-                is_paper=account.paper_mode,
+                is_paper=effective_is_paper,
                 leg_id=leg_id
             )
             db.add(order)
@@ -118,7 +131,7 @@ class OrderManager:
                 "price": price,
                 "trigger_price": trigger_price,
                 "product": prod_upper,
-                "is_paper": bool(account.paper_mode),
+                "is_paper": effective_is_paper,
                 "buffer_pct": float(buffer_pct),
                 "auto_chase": bool(auto_chase),
                 "ltp": price or (mapping.tick_size if mapping else 100.0)

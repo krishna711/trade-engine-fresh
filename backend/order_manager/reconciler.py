@@ -239,6 +239,8 @@ class OrderReconciler:
                     pass
 
                 for ord_rec in ord_list:
+                    if getattr(ord_rec, "is_paper", False):
+                        continue
                     if ord_rec.status in ["NEW", "PENDING", "OPEN"]:
                         st_info = await adapter.get_order_status(ord_rec.broker_order_id)
                         current_st = str(st_info.get("status") or "").upper()
