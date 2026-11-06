@@ -115,7 +115,7 @@ Because this is an active project that is not yet 100% complete, any agent worki
 | **Strategy Supervisor** | ✅ Complete | Spawns isolated `multiprocessing.Process` per strategy, polls worker queues, captures crashes, auto-restarts saved running strategies. | Add CPU affinity / core pinning for extreme high frequency strategies. |
 | **Strategy Decision Logs** | ✅ Complete | Chronological audit steps (`Candle Fetch Success`, `ENTRY CONDITION MATCH`, `ORDER SENT`, `ORDER FILLED`, `TRADE ACTIVE`, `TRACKING SL/TARGET`). | Persist raw tick snapshots alongside decision logs for replay. |
 | **Strategy Duplication** | ✅ Complete | POST `/api/strategies/{id}/duplicate` clones parameters and creates independent instance. | UI modal form pre-filling custom leg strikes on duplication. |
-| **Registered Strategies** | ✅ Complete | 3 templates registered: EMA Crossover, 0DTE Short Straddle (multi-leg CE/PE), Supertrend MCX. | Add more algorithmic templates (Iron Condor, VWAP Mean Reversion, Breakout). |
+| **Registered Strategies** | ✅ Complete | Templates registered: FTX Paper Research (Nifty Structural Alpha), AC SRv2 Reliance Future, Time-Based ATM Seller, EMA Crossover, 0DTE Short Straddle, Supertrend MCX. | Add more algorithmic templates (Iron Condor, VWAP Mean Reversion, Breakout). |
 | **Broker Order Manager** | ✅ Complete | Multi-client parallel dispatch, order tracking, universal symbol translation. | Connect live REST endpoints for Zerodha Kite, Kotak Neo, Dhan, Fyers. |
 | **Paper Trading Simulation** | ✅ Complete | Realistic fill prices, slippage simulation, mark-to-market position PnL calculations. | Configurable simulated slippage and latency parameters. |
 | **Order Reconciler** | ✅ Complete | WebSocket/Webhook execution report handler, trade creation, position mark-to-market sync. | Add automated broker orderbook polling reconciler fallback every 30s. |
@@ -189,6 +189,9 @@ trade-engine-fresh\
 │       ├── base_strategy.py          # BaseStrategy: lifecycle, on_candle, on_tick, log_decision
 │       └── registered/               # Registered strategy algorithm implementations
 │           ├── __init__.py
+│           ├── ftx_paper_research.py # Nifty Structural Trend & Cell Alpha strategy (FTX)
+│           ├── ac_srv2_future.py     # AC SRv2 Reliance Futures Trend Pro strategy
+│           ├── time_atm_seller.py    # MCX Automated ATM Seller strategy
 │           ├── ema_crossover.py      # Trend following EMA 9/21 strategy
 │           ├── short_straddle.py     # 0DTE Short Straddle multi-leg CE+PE strategy
 │           └── supertrend_mcx.py     # MCX Commodity Supertrend strategy

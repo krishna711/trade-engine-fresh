@@ -11,6 +11,7 @@ from backend.core.symbol_mapper import symbol_mapper
 from backend.order_manager.manager import order_manager
 
 MODULE_CLASS_MAP = {
+    "strat_ftx_paper_v1": ("backend.strategy_manager.registered.ftx_paper_research", "FTXPaperResearchStrategy"),
     "strat_time_atm_seller_v1": ("backend.strategy_manager.registered.time_atm_seller", "TimeBasedATMSellerStrategy"),
     "strat_ac_srv2_future_v1": ("backend.strategy_manager.registered.ac_srv2_future", "ACSRv2FutureStrategy"),
     "strat_ema_cross_v1": ("backend.strategy_manager.registered.ema_crossover", "EMACrossoverStrategy"),

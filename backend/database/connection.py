@@ -147,6 +147,34 @@ def seed_initial_data():
         # 2. Seed Registered Strategy Templates (Admin catalog - definitions only, no running instances)
         templates = [
             StrategyTemplate(
+                key="strat_ftx_paper_v1",
+                name_admin="FTX Paper Research Strategy",
+                name_user="Nifty Structural Trend & Cell Alpha",
+                description="Nifty 50 Index Futures structural location and composite cell alpha engine with causal admission predicates, adaptive ATR/VIX defensive stops, and dynamic trailing exit.",
+                default_config={
+                    "symbol": "NSE:NIFTY",
+                    "trade_instrument": "FUTURE",
+                    "timeframe": "1m",
+                    "initial_capital": 2500000.0,
+                    "risk_per_trade": 0.03,
+                    "max_lots": 8,
+                    "max_net_directional_lots": 12,
+                    "lot_size": 65,
+                    "margin_per_lot": 175000.0,
+                    "max_daily_loss": 0.05,
+                    "max_drawdown_fraction": 0.15,
+                    "vix_open": 15.0,
+                    "vix_at_event": 15.0,
+                    "pcr": 1.0,
+                    "is_expiry_day": False,
+                    "product": "NRML",
+                    "order_type": "LIMIT",
+                    "limit_buffer_pct": 0.015,
+                    "auto_chase": True
+                },
+                python_module="backend.strategy_manager.registered.ftx_paper_research"
+            ),
+            StrategyTemplate(
                 key="strat_ac_srv2_future_v1",
                 name_admin="AC SRv2 Reliance Future (Alpha System)",
                 name_user="Reliance Futures Trend Pro",

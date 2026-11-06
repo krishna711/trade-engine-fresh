@@ -794,3 +794,4 @@ class ACSRv2FutureStrategy(BaseStrategy):
                         f"Broker execution filled @ ₹{fill_p:.2f}. Trailing SL & Target active.",
                         level="SUCCESS"
                     )
+
