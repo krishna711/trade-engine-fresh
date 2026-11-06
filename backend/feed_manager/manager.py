@@ -328,9 +328,18 @@ class FeedManager:
 
     async def get_ohlc(self, canonical_symbol: str, resolution: str = "5m", count: int = 50) -> List[Dict[str, Any]]:
         bars = self.ohlc_builder.get_bars(canonical_symbol, resolution, count)
-        if len(bars) < 10 and self.active_broker:
+        broker = self.active_broker or self.brokers.get("XTS") or (list(self.brokers.values())[0] if self.brokers else None)
+        if len(bars) < 10 and broker:
             # Fallback to broker history generator if building buffer is still small
-            broker_bars = await self.active_broker.fetch_ohlc(canonical_symbol, resolution, count)
+            broker_bars = await broker.fetch_ohlc(canonical_symbol, resolution, count)
+            if broker_bars:
+                if canonical_symbol not in self.ohlc_builder.candles:
+                    self.ohlc_builder.candles[canonical_symbol] = {"1m": [], "3m": [], "5m": [], "15m": [], "1h": []}
+                existing = self.ohlc_builder.candles[canonical_symbol].get(resolution, [])
+                if not existing:
+                    self.ohlc_builder.candles[canonical_symbol][resolution] = [dict(b) for b in broker_bars[:-1]]
+                    if broker_bars:
+                        self.ohlc_builder.current_bars.setdefault(canonical_symbol, {})[resolution] = dict(broker_bars[-1])
             return broker_bars
         return bars
 

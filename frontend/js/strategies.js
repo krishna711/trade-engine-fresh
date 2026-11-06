@@ -719,28 +719,148 @@ class StrategiesManager {
 
     // Modal: Interactive Strategy Chart
     async openChart(id, name) {
-        document.getElementById("chart-strategy-title").innerText = `${name} - Intraday Performance`;
+        document.getElementById("chart-strategy-title").innerText = name || "Strategy Chart";
         document.getElementById("modal-chart").classList.add("active");
+        this.currentChartTab = 'pnl';
 
         try {
             const res = await fetch(`/api/strategies/${id}/chart`);
             const data = await res.json();
-            document.getElementById("chart-symbol-subtitle").innerText = `Symbol: ${data.symbol} | Resolution: 5m`;
+            this.currentChartData = data;
 
-            const ctx = document.getElementById("strategy-chart-canvas").getContext("2d");
-            if (this.chartInstance) {
-                this.chartInstance.destroy();
+            // Update Header Information
+            const sym = data.symbol || "NSE:NIFTY";
+            const symLabel = document.getElementById("chart-tab-symbol-label");
+            if (symLabel) symLabel.innerText = sym;
+            document.getElementById("chart-symbol-subtitle").innerText = `Symbol: ${sym} | Timeframe: ${data.resolution || '5m'} | Status: ${data.status || 'IDLE'}`;
+
+            const badge = document.getElementById("chart-status-badge");
+            if (badge) {
+                const isRun = data.status === "RUNNING";
+                badge.innerText = data.status || "IDLE";
+                badge.style.background = isRun ? "rgba(16, 185, 129, 0.15)" : "rgba(148, 163, 184, 0.15)";
+                badge.style.color = isRun ? "#10b981" : "#94a3b8";
+                badge.style.border = isRun ? "1px solid rgba(16, 185, 129, 0.3)" : "1px solid rgba(148, 163, 184, 0.3)";
             }
 
-            const labels = data.ohlc.map(b => b.time ? b.time.split("T")[1]?.slice(0, 5) || b.time : "");
-            const prices = data.ohlc.map(b => b.close);
+            const pnlVal = document.getElementById("chart-pnl-values");
+            if (pnlVal) {
+                const uPnl = Number(data.unrealized_pnl || 0);
+                const rPnl = Number(data.realized_pnl || 0);
+                const tPnl = Number(data.total_pnl || 0);
+
+                const fmt = (v) => `${v >= 0 ? '+' : '-'}₹${Math.abs(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                const color = (v) => v > 0 ? '#10b981' : (v < 0 ? '#ef4444' : 'var(--text-muted)');
+
+                pnlVal.innerHTML = `U: <span style="color: ${color(uPnl)};">${fmt(uPnl)}</span> | R: <span style="color: ${color(rPnl)};">${fmt(rPnl)}</span> | T: <span style="color: ${color(tPnl)}; font-weight: 700;">${fmt(tPnl)}</span>`;
+            }
+
+            this.switchChartTab('pnl');
+        } catch (e) {
+            console.error("Failed to load chart:", e);
+        }
+    }
+
+    switchChartTab(tab) {
+        this.currentChartTab = tab;
+        const btnPnl = document.getElementById("chart-tab-pnl");
+        const btnMarket = document.getElementById("chart-tab-market");
+        if (btnPnl && btnMarket) {
+            if (tab === 'pnl') {
+                btnPnl.classList.add("active");
+                btnMarket.classList.remove("active");
+            } else {
+                btnMarket.classList.add("active");
+                btnPnl.classList.remove("active");
+            }
+        }
+        this.renderChart();
+    }
+
+    renderChart() {
+        if (!this.currentChartData) return;
+        const data = this.currentChartData;
+        const ctx = document.getElementById("strategy-chart-canvas").getContext("2d");
+        if (this.chartInstance) {
+            this.chartInstance.destroy();
+        }
+
+        const noTradesOverlay = document.getElementById("chart-no-trades-overlay");
+        const modeDesc = document.getElementById("chart-tab-mode-desc");
+
+        if (this.currentChartTab === 'pnl') {
+            if (modeDesc) modeDesc.innerText = "Cumulative Intraday PnL (₹)";
+            const pnlSeries = data.pnl_series || [];
+            const hasTrades = Boolean(data.has_trades);
+
+            if (noTradesOverlay) {
+                noTradesOverlay.style.display = hasTrades ? "none" : "block";
+            }
+
+            const labels = pnlSeries.map(p => p.time || "");
+            const values = pnlSeries.map(p => p.pnl || 0);
+            const lastVal = values.length > 0 ? values[values.length - 1] : 0;
+            const lineColor = lastVal > 0 ? '#10b981' : (lastVal < 0 ? '#ef4444' : '#60a5fa');
+            const bgGradient = lastVal > 0 ? 'rgba(16, 185, 129, 0.12)' : (lastVal < 0 ? 'rgba(239, 68, 68, 0.12)' : 'rgba(96, 165, 250, 0.08)');
 
             this.chartInstance = new Chart(ctx, {
                 type: 'line',
                 data: {
                     labels: labels,
                     datasets: [{
-                        label: `${data.symbol} Close Price`,
+                        label: 'Cumulative PnL (₹)',
+                        data: values,
+                        borderColor: lineColor,
+                        backgroundColor: bgGradient,
+                        fill: true,
+                        tension: 0.15,
+                        pointRadius: hasTrades ? 3 : 2,
+                        pointHoverRadius: 5
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: { grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y: {
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: {
+                                callback: function(value) {
+                                    return (value >= 0 ? '+₹' : '-₹') + Math.abs(value);
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    const val = context.parsed.y;
+                                    return `PnL: ${val >= 0 ? '+' : '-'}₹${Math.abs(val).toFixed(2)}`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        } else {
+            // Market Price View
+            if (noTradesOverlay) noTradesOverlay.style.display = "none";
+            const sym = data.symbol || "NSE:NIFTY";
+            if (modeDesc) modeDesc.innerText = `${sym} (${data.resolution || '5m'} Close Price)`;
+
+            const ohlc = data.ohlc || [];
+            const labels = ohlc.map(b => b.time ? (b.time.split("T")[1]?.slice(0, 5) || b.time) : "");
+            const prices = ohlc.map(b => b.close);
+
+            this.chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: `${sym} Close Price`,
                         data: prices,
                         borderColor: '#3b82f6',
                         backgroundColor: 'rgba(59, 130, 246, 0.1)',
@@ -754,15 +874,27 @@ class StrategiesManager {
                     maintainAspectRatio: false,
                     scales: {
                         x: { grid: { color: 'rgba(255,255,255,0.05)' } },
-                        y: { grid: { color: 'rgba(255,255,255,0.05)' } }
+                        y: {
+                            grid: { color: 'rgba(255,255,255,0.05)' },
+                            ticks: {
+                                callback: function(value) {
+                                    return '₹' + Number(value).toLocaleString('en-IN');
+                                }
+                            }
+                        }
                     },
                     plugins: {
-                        legend: { display: false }
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `Price: ₹${Number(context.parsed.y).toFixed(2)}`;
+                                }
+                            }
+                        }
                     }
                 }
             });
-        } catch (e) {
-            console.error("Failed to load chart:", e);
         }
     }
 

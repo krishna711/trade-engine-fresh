@@ -578,15 +578,45 @@
          MODAL 1: STRATEGY INTERACTIVE CHART
          =================================================================== -->
     <div class="modal-overlay" id="modal-chart">
-        <div class="modal-box" style="width: 800px;">
-            <div class="modal-header">
+        <div class="modal-box" style="width: 840px; max-width: 95vw;">
+            <div class="modal-header" style="display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 0.75rem;">
                 <div>
-                    <h3 id="chart-strategy-title">Strategy Chart</h3>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <h3 id="chart-strategy-title" style="margin: 0; font-size: 1.15rem;">Strategy Chart</h3>
+                        <span id="chart-status-badge" class="badge" style="font-size: 0.7rem; padding: 2px 8px; border-radius: 4px; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3);">RUNNING</span>
+                    </div>
+                    <div id="chart-pnl-summary" style="margin-top: 4px; font-size: 0.8rem; font-family: var(--font-mono); color: var(--text-muted);">
+                        Today's PnL: <span id="chart-pnl-values">U: ₹0.00 | R: ₹0.00 | T: ₹0.00</span>
+                    </div>
                     <span id="chart-symbol-subtitle" style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);"></span>
                 </div>
                 <button class="icon-btn modal-close-btn">&times;</button>
             </div>
-            <div class="modal-body" style="height: 380px;">
+
+            <!-- View Switcher Tabs -->
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 16px; background: rgba(0,0,0,0.2); border-top: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color);">
+                <div class="view-mode-selector" style="display: flex; gap: 4px;">
+                    <button id="chart-tab-pnl" class="view-mode-btn active" onclick="strategiesManager.switchChartTab('pnl')">
+                        📈 Strategy PnL Performance
+                    </button>
+                    <button id="chart-tab-market" class="view-mode-btn" onclick="strategiesManager.switchChartTab('market')">
+                        🕯️ Market Price Chart (<span id="chart-tab-symbol-label">NSE:RELIANCE</span>)
+                    </button>
+                </div>
+                <span id="chart-tab-mode-desc" style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);">
+                    Cumulative Intraday PnL (₹)
+                </span>
+            </div>
+
+            <div class="modal-body" style="height: 360px; position: relative;">
+                <div id="chart-no-trades-overlay" style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(59, 130, 246, 0.35); padding: 14px 24px; border-radius: 8px; text-align: center; pointer-events: none; z-index: 10; box-shadow: 0 4px 14px rgba(0,0,0,0.6);">
+                    <div style="font-size: 0.88rem; font-weight: 700; color: #60a5fa; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                        <span>ℹ️</span> No Trades Opened Yet Today
+                    </div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
+                        Strategy is actively monitoring market signals. Cumulative PnL is flat ₹0.00.
+                    </div>
+                </div>
                 <canvas id="strategy-chart-canvas"></canvas>
             </div>
         </div>

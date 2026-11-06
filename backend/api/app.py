@@ -1192,9 +1192,82 @@ async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
     inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()
     if not inst:
         raise HTTPException(status_code=404, detail="Strategy not found")
-    symbol = (inst.config or {}).get("symbol", "NSE:NIFTY")
-    ohlc = await feed_manager.get_ohlc(symbol, resolution="5m", count=40)
-    return {"strategy_id": id, "symbol": symbol, "ohlc": ohlc}
+    
+    cfg = inst.config or {}
+    symbol = cfg.get("symbol", "NSE:NIFTY")
+    tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or "5m").strip().lower()
+    if tf.isdigit():
+        tf = f"{tf}m"
+    if tf not in ["1m", "3m", "5m", "15m", "1h"]:
+        tf = "3m" if "ac_srv2" in str(inst.template_key) else "5m"
+
+    ohlc = await feed_manager.get_ohlc(symbol, resolution=tf, count=40)
+    
+    # Calculate strategy intraday PnL series
+    today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # Check trade reports for this strategy today
+    reports = db.query(TradeReport).filter(
+        TradeReport.strategy_instance_id == id,
+        TradeReport.created_at >= today_start
+    ).order_by(TradeReport.created_at.asc()).all()
+    
+    # Also check trades table
+    trades = db.query(Trade).filter(
+        Trade.strategy_instance_id == id,
+        Trade.timestamp >= today_start
+    ).order_by(Trade.timestamp.asc()).all()
+    
+    has_active_legs = any(
+        float(l.get("entry", 0.0) or 0.0) > 0 and "5850" not in str(l.get("symbol", ""))
+        for l in (inst.legs_info or [])
+    )
+    has_trades = bool(reports or trades or has_active_legs)
+    
+    total_pnl = float(inst.total_pnl or 0.0)
+    realized_pnl = float(inst.realized_pnl or 0.0)
+    unrealized_pnl = float(inst.unrealized_pnl or 0.0)
+    
+    # Build PnL progression
+    ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    now_ist = datetime.datetime.now(ist_tz)
+    
+    if not has_trades or (total_pnl == 0.0 and not reports):
+        # Flat 0.00 curve for today when no trade has occurred
+        pnl_series = [
+            {"time": "09:15", "pnl": 0.0},
+            {"time": "11:00", "pnl": 0.0},
+            {"time": "13:00", "pnl": 0.0},
+            {"time": now_ist.strftime("%H:%M"), "pnl": 0.0}
+        ]
+        has_trades = False
+    else:
+        cum_pnl = 0.0
+        pnl_series = [{"time": "09:15", "pnl": 0.0}]
+        for rep in reports:
+            cum_pnl += float(rep.mtm or 0.0)
+            rep_time = rep.closed_at or rep.opened_at or rep.created_at
+            if rep_time:
+                rep_ist = rep_time.replace(tzinfo=datetime.timezone.utc).astimezone(ist_tz)
+                pnl_series.append({"time": rep_ist.strftime("%H:%M"), "pnl": round(cum_pnl, 2)})
+        
+        # Current point with live total PnL
+        pnl_series.append({"time": now_ist.strftime("%H:%M"), "pnl": round(total_pnl, 2)})
+
+    return {
+        "strategy_id": id,
+        "strategy_name": inst.instance_name_user or inst.instance_name_admin,
+        "symbol": symbol,
+        "resolution": tf,
+        "status": inst.status,
+        "last_trade_status": inst.last_trade_status,
+        "has_trades": has_trades,
+        "total_pnl": total_pnl,
+        "realized_pnl": realized_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "pnl_series": pnl_series,
+        "ohlc": ohlc
+    }
 
 @app.get("/api/strategies/{id}/trades")
 def get_strategy_recent_trades(id: int, db: Session = Depends(get_db)):

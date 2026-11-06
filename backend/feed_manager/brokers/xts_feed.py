@@ -6,7 +6,8 @@ import sys
 import zlib
 import struct
 import json
-from typing import Dict, Any, List, Optional
+import hashlib
+from typing import Dict, Any, List, Optional, Tuple
 from backend.feed_manager.brokers.base_feed import BaseFeedBroker
 from backend.core.symbol_mapper import symbol_mapper
 
@@ -79,6 +80,7 @@ class XTSFeedBroker(BaseFeedBroker):
         self._sio_thread: Optional[threading.Thread] = None
         self._sub_lock = threading.Lock()
         self._current_prices: Dict[str, float] = dict(BASE_PRICES)
+        self._cached_ohlc: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         self.latency_ms = 1.2
         # Automatically clean up subscriptions on process exit
         atexit.register(self._clean_unsubscribe_all)
@@ -677,20 +679,37 @@ class XTSFeedBroker(BaseFeedBroker):
         resolution: str = "5m",
         count: int = 50
     ) -> List[Dict[str, Any]]:
-        base_price = self._current_prices.get(canonical_symbol, BASE_PRICES.get(canonical_symbol, 1000.0))
+        cache_key = (canonical_symbol, resolution)
+        curr_price = float(self._current_prices.get(canonical_symbol, BASE_PRICES.get(canonical_symbol, 1000.0)))
+
+        if cache_key in self._cached_ohlc:
+            bars = self._cached_ohlc[cache_key]
+            # Update latest bar with current live price so chart tracks real-time ticks
+            if bars and curr_price > 0:
+                last_bar = bars[-1]
+                last_bar["close"] = curr_price
+                last_bar["high"] = max(last_bar["high"], curr_price)
+                last_bar["low"] = min(last_bar["low"], curr_price)
+            return [dict(b) for b in bars[-count:]]
+
         now = datetime.datetime.utcnow()
         bars = []
-        step_min = 5 if "5" in resolution else (60 if "1h" in resolution or "60" in resolution else 1)
+        step_min = 3 if "3" in resolution else (5 if "5" in resolution else (60 if "1h" in resolution or "60" in resolution else 1))
 
-        p = base_price * 0.98
+        # Deterministic seeded generation based on symbol, date, and resolution for stable, persistent curves
+        seed_src = f"{canonical_symbol}_{now.strftime('%Y%m%d')}_{resolution}"
+        seed_int = int(hashlib.md5(seed_src.encode()).hexdigest()[:8], 16)
+        rng = random.Random(seed_int)
+
+        p = curr_price * 0.99
         for i in range(count, 0, -1):
             bar_time = now - datetime.timedelta(minutes=i * step_min)
-            delta = (random.random() - 0.48) * (base_price * 0.005)
+            delta = (rng.random() - 0.49) * (curr_price * 0.003)
             open_p = p
             close_p = round(open_p + delta, 2)
-            high_p = round(max(open_p, close_p) + abs(random.random() * (base_price * 0.002)), 2)
-            low_p = round(min(open_p, close_p) - abs(random.random() * (base_price * 0.002)), 2)
-            vol = random.randint(1000, 50000)
+            high_p = round(max(open_p, close_p) + abs(rng.random() * (curr_price * 0.0015)), 2)
+            low_p = round(min(open_p, close_p) - abs(rng.random() * (curr_price * 0.0015)), 2)
+            vol = rng.randint(1000, 50000)
 
             bars.append({
                 "symbol": canonical_symbol,
@@ -703,4 +722,11 @@ class XTSFeedBroker(BaseFeedBroker):
             })
             p = close_p
 
-        return bars
+        # Anchor final bar to current price
+        if bars and curr_price > 0:
+            bars[-1]["close"] = curr_price
+            bars[-1]["high"] = max(bars[-1]["high"], curr_price)
+            bars[-1]["low"] = min(bars[-1]["low"], curr_price)
+
+        self._cached_ohlc[cache_key] = bars
+        return [dict(b) for b in bars[-count:]]

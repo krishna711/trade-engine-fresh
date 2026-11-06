@@ -1,7 +1,8 @@
 import asyncio
 import random
 import datetime
-from typing import Dict, Any, List, Optional
+import hashlib
+from typing import Dict, Any, List, Optional, Tuple
 from backend.feed_manager.brokers.base_feed import BaseFeedBroker
 from backend.core.symbol_mapper import symbol_mapper
 from backend.feed_manager.brokers.xts_feed import BASE_PRICES
@@ -21,6 +22,7 @@ class ShoonyaFeedBroker(BaseFeedBroker):
         self.api_secret = self.config.get("api_secret", "")
         self._streaming_task: Optional[asyncio.Task] = None
         self._current_prices: Dict[str, float] = dict(BASE_PRICES)
+        self._cached_ohlc: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         self.latency_ms = 18.2
 
     async def connect(self) -> bool:
@@ -113,20 +115,35 @@ class ShoonyaFeedBroker(BaseFeedBroker):
         resolution: str = "5m",
         count: int = 50
     ) -> List[Dict[str, Any]]:
-        base_price = self._current_prices.get(canonical_symbol, BASE_PRICES.get(canonical_symbol, 1000.0))
+        cache_key = (canonical_symbol, resolution)
+        curr_price = float(self._current_prices.get(canonical_symbol, BASE_PRICES.get(canonical_symbol, 1000.0)))
+
+        if cache_key in self._cached_ohlc:
+            bars = self._cached_ohlc[cache_key]
+            if bars and curr_price > 0:
+                last_bar = bars[-1]
+                last_bar["close"] = curr_price
+                last_bar["high"] = max(last_bar["high"], curr_price)
+                last_bar["low"] = min(last_bar["low"], curr_price)
+            return [dict(b) for b in bars[-count:]]
+
         now = datetime.datetime.utcnow()
         bars = []
-        step_min = 5 if "5" in resolution else (60 if "1h" in resolution or "60" in resolution else 1)
+        step_min = 3 if "3" in resolution else (5 if "5" in resolution else (60 if "1h" in resolution or "60" in resolution else 1))
 
-        p = base_price * 0.98
+        seed_src = f"{canonical_symbol}_{now.strftime('%Y%m%d')}_{resolution}"
+        seed_int = int(hashlib.md5(seed_src.encode()).hexdigest()[:8], 16)
+        rng = random.Random(seed_int)
+
+        p = curr_price * 0.99
         for i in range(count, 0, -1):
             bar_time = now - datetime.timedelta(minutes=i * step_min)
-            delta = (random.random() - 0.48) * (base_price * 0.005)
+            delta = (rng.random() - 0.49) * (curr_price * 0.003)
             open_p = p
             close_p = round(open_p + delta, 2)
-            high_p = round(max(open_p, close_p) + abs(random.random() * (base_price * 0.002)), 2)
-            low_p = round(min(open_p, close_p) - abs(random.random() * (base_price * 0.002)), 2)
-            vol = random.randint(1000, 50000)
+            high_p = round(max(open_p, close_p) + abs(rng.random() * (curr_price * 0.0015)), 2)
+            low_p = round(min(open_p, close_p) - abs(rng.random() * (curr_price * 0.0015)), 2)
+            vol = rng.randint(1000, 50000)
 
             bars.append({
                 "symbol": canonical_symbol,
@@ -139,4 +156,10 @@ class ShoonyaFeedBroker(BaseFeedBroker):
             })
             p = close_p
 
-        return bars
+        if bars and curr_price > 0:
+            bars[-1]["close"] = curr_price
+            bars[-1]["high"] = max(bars[-1]["high"], curr_price)
+            bars[-1]["low"] = min(bars[-1]["low"], curr_price)
+
+        self._cached_ohlc[cache_key] = bars
+        return [dict(b) for b in bars[-count:]]
