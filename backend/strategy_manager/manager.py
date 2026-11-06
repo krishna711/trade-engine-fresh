@@ -4,7 +4,7 @@ import datetime
 from typing import Dict, Any, List, Optional
 from sqlalchemy.orm.attributes import flag_modified
 from backend.database.connection import SessionLocal
-from backend.database.models import StrategyInstance, StrategyTemplate, SystemLog, Account, TradeReport
+from backend.database.models import StrategyInstance, StrategyTemplate, SystemLog, Account, TradeReport, Position
 from backend.strategy_manager.worker import strategy_process_entrypoint
 from backend.core.events import event_bus
 from backend.core.symbol_mapper import symbol_mapper
@@ -526,6 +526,11 @@ class StrategySupervisor:
                     inst.realized_pnl = closed_pnl
                     inst.unrealized_pnl = 0.0
                     inst.total_pnl = inst.realized_pnl
+                    # Zero out any position records for this strategy instance so no stale MTM runs
+                    db.query(Position).filter(Position.strategy_instance_id == instance_id).update({
+                        Position.net_quantity: 0,
+                        Position.unrealized_pnl: 0.0
+                    })
 
             flag_modified(inst, "legs_info")
             db.commit()
@@ -583,6 +588,10 @@ class StrategySupervisor:
                         inst.unrealized_pnl = 0.0
                         inst.total_pnl = inst.realized_pnl
                         self._record_trade_report(db, inst, active_legs, reason="EXIT_TIME")
+                        db.query(Position).filter(Position.strategy_instance_id == inst_id).update({
+                            Position.net_quantity: 0,
+                            Position.unrealized_pnl: 0.0
+                        })
 
                 inst.legs_info = legs
                 flag_modified(inst, "legs_info")
@@ -704,6 +713,10 @@ class StrategySupervisor:
                         is_all_closed = all(l.get("status") == "CLOSED" or l.get("exit") is not None for l in legs if "5850" not in str(l.get("symbol", "")))
                         if is_all_closed or inst.last_trade_status == "CLOSED":
                             tot_unrealized = 0.0
+                            db.query(Position).filter(Position.strategy_instance_id == inst.id).update({
+                                Position.net_quantity: 0,
+                                Position.unrealized_pnl: 0.0
+                            })
 
                         if updated or abs(inst.unrealized_pnl - tot_unrealized) > 0.01:
                             inst.legs_info = legs

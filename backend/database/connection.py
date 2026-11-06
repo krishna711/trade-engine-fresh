@@ -51,6 +51,15 @@ def check_and_migrate_db():
             if strat_cols and "user_id" not in strat_cols:
                 conn.execute(text("ALTER TABLE strategy_instances ADD COLUMN user_id INTEGER;"))
                 print("[DB Migration] Added user_id column to strategy_instances table.")
+
+            # Zero out stale positions where strategy is already CLOSED so past records do not tick
+            conn.execute(text("""
+                UPDATE positions
+                SET net_quantity = 0, unrealized_pnl = 0.0
+                WHERE strategy_instance_id IN (
+                    SELECT id FROM strategy_instances WHERE last_trade_status = 'CLOSED'
+                );
+            """))
     except Exception as e:
         print(f"[DB Migration Warning] {e}")
 

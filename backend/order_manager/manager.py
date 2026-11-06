@@ -318,6 +318,15 @@ class OrderManager:
 
             for pos in positions:
                 pos.ltp = ltp
+
+                # If position is associated with a strategy that is closed, force net_quantity=0 and unrealized_pnl=0.0
+                if pos.strategy_instance_id:
+                    strat = db.query(StrategyInstance).filter(StrategyInstance.id == pos.strategy_instance_id).first()
+                    if not strat or strat.last_trade_status == "CLOSED":
+                        pos.net_quantity = 0
+                        pos.unrealized_pnl = 0.0
+                        continue
+
                 if pos.net_quantity == 0:
                     pos.unrealized_pnl = 0.0
                     continue

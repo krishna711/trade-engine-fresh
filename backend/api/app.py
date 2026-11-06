@@ -282,34 +282,74 @@ def change_password_endpoint(
         "token": new_token
     }
 
+# ----------------- TODAY PNL & DATE HELPERS -----------------
+def get_ist_today_range():
+    """Returns (today_start_utc, today_end_utc) based on Indian Standard Time (IST, UTC+5:30)"""
+    ist_now = datetime.datetime.utcnow() + datetime.timedelta(hours=5, minutes=30)
+    today_start_ist = ist_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_start_utc = today_start_ist - datetime.timedelta(hours=5, minutes=30)
+    today_end_utc = today_start_utc + datetime.timedelta(days=1)
+    return today_start_utc, today_end_utc
+
+def is_strategy_traded_today(inst: StrategyInstance, today_start_utc: datetime.datetime, db: Session) -> bool:
+    """Returns True if the strategy is currently open or has executed trades today (IST)"""
+    # 1. Any currently active trade is active today
+    if inst.last_trade_status in ["OPEN", "IN_TRADE", "ENTRY_SENT"]:
+        return True
+
+    # 2. Check last_trade_at timestamp
+    if inst.last_trade_at and inst.last_trade_at >= today_start_utc:
+        return True
+
+    # 3. Check if any trade occurred in Trade table today for this instance
+    has_trade = db.query(Trade).filter(
+        Trade.strategy_instance_id == inst.id,
+        Trade.timestamp >= today_start_utc
+    ).first()
+    if has_trade:
+        return True
+
+    return False
+
+
 # ----------------- DASHBOARD & SUMMARY -----------------
 @app.get("/api/dashboard")
 def get_dashboard_summary(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Computes TODAY's consolidated PnL strictly.
+    - If trade is CLOSED, unrealized PnL is 0.00 (no running with LTP).
+    - R and T reflect today's trading only (all-time & historical belong in Reports).
+    """
+    today_start_utc, _ = get_ist_today_range()
+
     if current_user.role == "ADMIN":
         accounts = db.query(Account).all()
         instances = db.query(StrategyInstance).all()
-        all_positions = db.query(Position).all()
     else:
         accounts = db.query(Account).filter(Account.user_id == current_user.id).all()
         user_cids = {a.client_id for a in accounts}
         all_instances = db.query(StrategyInstance).all()
         instances = [i for i in all_instances if i.user_id == current_user.id or any(c in user_cids for c in (i.client_ids or []))]
-        all_positions = db.query(Position).filter(Position.client_id.in_(user_cids)).all() if user_cids else []
 
-    # Calculate strategy PnL
-    inst_unrealized = sum(inst.unrealized_pnl for inst in instances if inst.last_trade_status != "CLOSED")
-    inst_realized = sum(inst.realized_pnl for inst in instances)
+    total_unrealized = 0.0
+    total_realized = 0.0
 
-    # Calculate position PnL (from broker executed positions with active contracts)
-    pos_unrealized = sum(p.unrealized_pnl for p in all_positions if p.net_quantity != 0)
-    pos_realized = sum(p.realized_pnl for p in all_positions)
+    for inst in instances:
+        if is_strategy_traded_today(inst, today_start_utc, db):
+            if inst.last_trade_status in ["OPEN", "IN_TRADE", "ENTRY_SENT"]:
+                total_unrealized += float(inst.unrealized_pnl or 0.0)
+                total_realized += float(inst.realized_pnl or 0.0)
+            else: # CLOSED
+                total_realized += float(inst.realized_pnl or 0.0)
 
-    has_open_trades = any(inst.last_trade_status in ["OPEN", "ENTRY_SENT", "IN_TRADE"] for inst in instances) or any(p.net_quantity != 0 for p in all_positions)
-    if not has_open_trades:
+    # If no strategy currently has an open trade, unrealized PnL is STRICTLY 0.0!
+    has_any_open = any(
+        inst.last_trade_status in ["OPEN", "IN_TRADE", "ENTRY_SENT"]
+        for inst in instances
+    )
+    if not has_any_open:
         total_unrealized = 0.0
-    else:
-        total_unrealized = inst_unrealized if abs(inst_unrealized) > 0.01 else pos_unrealized
-    total_realized = inst_realized if abs(inst_realized) > 0.01 else pos_realized
+
     total_pnl = total_unrealized + total_realized
 
     ticks = feed_manager.get_all_ticks()
@@ -329,26 +369,49 @@ def get_dashboard_summary(db: Session = Depends(get_db), current_user: User = De
 # ----------------- CLIENT / BROKER ACCOUNTS -----------------
 @app.get("/api/accounts")
 def list_accounts(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Returns client accounts with TODAY-only PnL.
+    - U is 0.00 if no active trade is open in the mapped strategy today.
+    - R & T reflect today's realized profit/loss only.
+    """
+    today_start_utc, _ = get_ist_today_range()
+
     if current_user.role == "ADMIN":
         accounts = db.query(Account).all()
     else:
         accounts = db.query(Account).filter(Account.user_id == current_user.id).all()
 
     users_map = {u.id: u.username for u in db.query(User).all()}
+    all_strats = db.query(StrategyInstance).all()
     result = []
-    for acc in accounts:
-        # Calculate account PnL across active strategies running in this account
-        acc_positions = db.query(Position).filter(Position.client_id == acc.client_id).all()
-        u_pnl = sum(p.unrealized_pnl for p in acc_positions if p.net_quantity != 0)
-        r_pnl = sum(p.realized_pnl for p in acc_positions)
-        t_pnl = u_pnl + r_pnl
 
-        # Count strategies running on this account
+    for acc in accounts:
+        # Calculate TODAY's account PnL across strategies mapped to this account
+        acc_strats = [s for s in all_strats if acc.client_id in (s.client_ids or [])]
+        u_pnl = 0.0
+        r_pnl = 0.0
         running_strats = 0
-        all_strats = db.query(StrategyInstance).all()
-        for s in all_strats:
-            if acc.client_id in (s.client_ids or []) and s.status == "RUNNING":
+
+        for inst in acc_strats:
+            if inst.status == "RUNNING":
                 running_strats += 1
+
+            if is_strategy_traded_today(inst, today_start_utc, db):
+                if inst.last_trade_status in ["OPEN", "IN_TRADE", "ENTRY_SENT"]:
+                    u_pnl += float(inst.unrealized_pnl or 0.0)
+                    r_pnl += float(inst.realized_pnl or 0.0)
+                else: # CLOSED
+                    r_pnl += float(inst.realized_pnl or 0.0)
+
+        # If no open trade in any strategy mapped to this account, unrealized PnL is STRICTLY 0.0!
+        has_acc_open = any(
+            inst.last_trade_status in ["OPEN", "IN_TRADE", "ENTRY_SENT"]
+            for inst in acc_strats
+        )
+        if not has_acc_open:
+            u_pnl = 0.0
+
+        t_pnl = u_pnl + r_pnl
 
         # Check if today's session token is active
         creds = acc.credentials_json or {}
@@ -954,16 +1017,13 @@ def list_strategy_instances(db: Session = Depends(get_db), current_user: User = 
     result = []
     for inst in instances:
         mapped_clients = []
+        is_inst_open = inst.last_trade_status in ["OPEN", "IN_TRADE", "ENTRY_SENT"]
+        inst_u = float(inst.unrealized_pnl or 0.0) if is_inst_open else 0.0
+        inst_r = float(inst.realized_pnl or 0.0)
+        inst_t = round(inst_u + inst_r, 2)
+
         for cid in (inst.client_ids or []):
             acc = accounts.get(cid)
-            acc_positions = db.query(Position).filter(
-                Position.client_id == cid,
-                Position.strategy_instance_id == inst.id
-            ).all()
-            u_pnl = sum(p.unrealized_pnl for p in acc_positions if p.net_quantity != 0)
-            r_pnl = sum(p.realized_pnl for p in acc_positions)
-            t_pnl = u_pnl + r_pnl
-
             mapped_clients.append({
                 "client_id": cid,
                 "name": acc.client_name if acc else cid,
@@ -971,9 +1031,9 @@ def list_strategy_instances(db: Session = Depends(get_db), current_user: User = 
                 "paper_mode": acc.paper_mode if acc else True,
                 "broker": acc.broker if acc else "UNKNOWN",
                 "pnl": {
-                    "unrealized": round(u_pnl, 2),
-                    "realized": round(r_pnl, 2),
-                    "total": round(t_pnl, 2)
+                    "unrealized": round(inst_u, 2),
+                    "realized": round(inst_r, 2),
+                    "total": round(inst_t, 2)
                 }
             })
 
