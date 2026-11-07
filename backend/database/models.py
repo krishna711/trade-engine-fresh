@@ -275,3 +275,30 @@ class User(Base):
 
     accounts = relationship("Account", back_populates="user")
     strategy_instances = relationship("StrategyInstance", back_populates="user")
+    telegram_setting = relationship("TelegramSetting", back_populates="user", uselist=False, cascade="all, delete-orphan")
+
+
+class TelegramSetting(Base):
+    """User-specific Telegram notification credentials and preferences"""
+    __tablename__ = "telegram_settings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False, index=True)
+    enabled = Column(Boolean, default=False)
+    bot_token = Column(String(200), default="")
+    chat_id = Column(String(100), default="")
+    
+    # 3-level notification category filters
+    notify_critical = Column(Boolean, default=True) # System critical alerts, feed drops, crashes
+    notify_warning = Column(Boolean, default=True)  # Token expiry, 1-hr pre-start reminders
+    notify_info = Column(Boolean, default=True)     # Orders placed/filled, trade closed with PnL
+
+    # Admin only: List of user IDs that Admin mutes from their own Telegram feed
+    # e.g. [2, 5] -> Admin will NOT receive notifications generated for user 2 and 5
+    admin_muted_user_ids = Column(JSON, default=list)
+
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    user = relationship("User", back_populates="telegram_setting")
+

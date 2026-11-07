@@ -372,6 +372,21 @@ class StrategySupervisor:
                                 if inst:
                                     inst.status = "ERROR"
                                     db.commit()
+
+                                    # Telegram notification: Strategy Crash (Critical)
+                                    try:
+                                        from backend.core.telegram_notifier import telegram_notifier
+                                        strat_name = inst.instance_name_user or inst.instance_name_admin or f"Strategy #{inst_id}"
+                                        asyncio.create_task(telegram_notifier.notify_critical(
+                                            title=f"Strategy Process Crashed: {strat_name}",
+                                            details=error_text,
+                                            component="Strategy Process Container",
+                                            entity=strat_name,
+                                            user_id=inst.user_id,
+                                            strategy_id=inst_id
+                                        ))
+                                    except Exception as tg_err:
+                                        print(f"[StrategySupervisor] Telegram crash notify error: {tg_err}")
                             finally:
                                 db.close()
 
@@ -417,6 +432,22 @@ class StrategySupervisor:
             rep.reason = reason
             rep.mtm = round(float(inst.realized_pnl or 0.0), 2)
             rep.status = "CLOSED"
+
+            # Telegram notification: Trade cycle closed with PnL (Info)
+            try:
+                from backend.core.telegram_notifier import telegram_notifier
+                asyncio.create_task(telegram_notifier.notify_trade_cycle(
+                    strategy_name=rep.strategy_name,
+                    client_id=client_id,
+                    symbol=rep.symbol,
+                    realized_pnl=rep.mtm,
+                    reason=reason,
+                    mode=rep.mode,
+                    user_id=inst.user_id,
+                    strategy_id=inst.id
+                ))
+            except Exception as tg_err:
+                print(f"[StrategySupervisor] Telegram trade cycle notify error: {tg_err}")
         except Exception as e:
             print(f"[StrategySupervisor] Error recording trade report: {e}")
 

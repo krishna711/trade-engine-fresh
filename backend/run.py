@@ -46,11 +46,19 @@ async def startup_all_services():
     # 4. Start Strategy Supervisor
     await strategy_supervisor.start()
     print("[+] Strategy Supervisor active (Process-isolated containers).")
+
+    # 5. Start Telegram Notification Scheduler
+    from backend.core.telegram_notifier import telegram_notifier
+    telegram_notifier.start_scheduler()
+    print("[+] Telegram Notifier active (Critical, Warning, and Info multi-tier dispatcher).")
+
     print(f"[*] Trade Engine Live Web Dashboard: http://{API_HOST}:{API_PORT}")
     print("=" * 60)
 
 async def shutdown_all_services():
     print("[*] Shutting down Fresh Trade Engine...")
+    from backend.core.telegram_notifier import telegram_notifier
+    telegram_notifier.stop_scheduler()
     await strategy_supervisor.stop()
     await order_manager.stop()
     await feed_manager.stop()

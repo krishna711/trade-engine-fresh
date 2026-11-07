@@ -107,6 +107,11 @@
                         🌓
                     </button>
 
+                    <!-- Telegram Notification Settings -->
+                    <button class="icon-btn-clean" id="btn-open-telegram" onclick="window.telegramManager.openTelegramModal()" title="Telegram Notifications (Critical, Warning, Info)">
+                        📱
+                    </button>
+
                     <!-- Broker Feed & API Credentials Settings -->
                     <button class="icon-btn-clean" id="btn-open-settings" title="Broker Feed & API Credentials">
                         ⚙️
@@ -129,6 +134,9 @@
                                 </div>
                             </div>
                             <div class="user-dropdown-divider"></div>
+                            <button class="user-dropdown-item" onclick="window.telegramManager.openTelegramModal()">
+                                <span style="font-size: 0.95rem;">📱</span> Telegram Notifications
+                            </button>
                             <button class="user-dropdown-item" onclick="window.authManager.openChangePasswordModal()">
                                 <span style="font-size: 0.95rem;">🔑</span> Change Password
                             </button>
@@ -769,11 +777,16 @@
                     💡 <strong>Note:</strong> Credentials can also be placed directly in <code>.env</code> in the project root directory. Saving here updates <code>.env</code> and re-authenticates the feed immediately without restarting.
                 </div>
             </div>
-            <div class="modal-footer">
-                <button class="action-btn-sm modal-close-btn">Cancel</button>
-                <button class="action-btn-sm" id="btn-save-credentials" style="background: var(--accent-green); color: white; font-weight: 700;">
-                    💾 Save & Connect Real XTS Feed
+            <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center;">
+                <button class="action-btn-sm" type="button" onclick="document.getElementById('modal-settings').classList.remove('active'); window.telegramManager.openTelegramModal();" style="background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.35); font-weight: 600;">
+                    📱 Telegram Alerts
                 </button>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="action-btn-sm modal-close-btn">Cancel</button>
+                    <button class="action-btn-sm" id="btn-save-credentials" style="background: var(--accent-green); color: white; font-weight: 700;">
+                        💾 Save & Connect Real XTS Feed
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -1287,6 +1300,160 @@
     </div>
 
     <!-- ===================================================================
+         MODAL 11: TELEGRAM NOTIFICATION CONFIGURATION & PREFERENCES
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-telegram-settings">
+        <div class="modal-box" style="width: 680px; max-width: 95vw; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 1.3rem;">📱</span>
+                    <div>
+                        <h3 style="margin: 0; font-size: 1.05rem;">Telegram Notifications</h3>
+                        <span style="font-size: 0.72rem; color: var(--text-muted);">Real-time multi-tier alerts for Critical, Warning, and Info events</span>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span id="tg-status-badge" class="status-pill status-stopped">
+                        Disabled
+                    </span>
+                    <button class="icon-btn modal-close-btn">&times;</button>
+                </div>
+            </div>
+
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 1.15rem; padding: 1.25rem;">
+                
+                <!-- Card 1: Activation Toggle & Bot/Chat Credentials -->
+                <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.9rem;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-color); padding-bottom: 0.75rem;">
+                        <div>
+                            <strong style="font-size: 0.88rem; color: var(--text-primary);">Enable Telegram Notifications</strong>
+                            <div style="font-size: 0.72rem; color: var(--text-muted);">Receive alerts directly on your personal or group Telegram</div>
+                        </div>
+                        <label class="switch-control" style="cursor: pointer;">
+                            <input type="checkbox" id="tg-enabled-toggle" style="width: 20px; height: 20px; accent-color: var(--accent-blue); cursor: pointer;">
+                        </label>
+                    </div>
+
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); display: flex; justify-content: space-between;">
+                            <span>Telegram Bot Token</span>
+                            <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: 400;">Optional: Leave blank to use System Default Bot Token</span>
+                        </label>
+                        <input type="text" id="tg-bot-token" placeholder="e.g. 7123456789:AAH1234567890abcdefghijklmnopqrstuv" style="width: 100%; padding: 0.55rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-family: var(--font-mono); font-size: 0.8rem;">
+                        <span style="font-size: 0.69rem; color: var(--text-muted); display: block; margin-top: 3px;">
+                            💡 Create your own free bot by messaging <code>@BotFather</code> on Telegram, type <code>/newbot</code>, and paste the API token here.
+                        </span>
+                    </div>
+
+                    <div>
+                        <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">
+                            Telegram Chat ID *
+                        </label>
+                        <input type="text" id="tg-chat-id" placeholder="e.g. 123456789 or group ID -100123456789" style="width: 100%; padding: 0.55rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-family: var(--font-mono); font-size: 0.8rem;" required>
+                        <span style="font-size: 0.69rem; color: var(--text-muted); display: block; margin-top: 3px;">
+                            💡 To find your numeric Chat ID: Open Telegram and message <code>@userinfobot</code> or <code>@getmyid_bot</code> and copy your numeric ID.
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Card 2: 3-Tier Notification Preferences -->
+                <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.75rem;">
+                    <div style="font-size: 0.82rem; font-weight: 700; color: var(--text-primary); margin-bottom: 2px;">
+                        🔔 Subscribed Notification Levels
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr; gap: 0.6rem;">
+                        <!-- Level 1: Critical -->
+                        <label style="display: flex; align-items: flex-start; gap: 10px; padding: 0.6rem 0.8rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;">
+                            <input type="checkbox" id="tg-notify-critical" checked style="width: 17px; height: 17px; accent-color: #ef4444; margin-top: 2px; cursor: pointer;">
+                            <div style="flex: 1;">
+                                <div style="display: flex; align-items: center; gap: 6px;">
+                                    <span style="font-size: 0.8rem; font-weight: 700; color: #ef4444;">🚨 Critical System Alerts</span>
+                                    <span style="font-size: 0.68rem; background: rgba(239, 68, 68, 0.15); color: #ef4444; padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(239, 68, 68, 0.3);">High Priority</span>
+                                </div>
+                                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
+                                    Market feed dropouts/failovers, strategy crashes, order RMS rejections, and unhandled engine faults.
+                                </div>
+                            </div>
+                        </label>
+
+                        <!-- Level 2: Warning -->
+                        <label style="display: flex; align-items: flex-start; gap: 10px; padding: 0.6rem 0.8rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;">
+                            <input type="checkbox" id="tg-notify-warning" checked style="width: 17px; height: 17px; accent-color: #f59e0b; margin-top: 2px; cursor: pointer;">
+                            <div style="flex: 1;">
+                                <div style="display: flex; align-items: center; gap: 6px;">
+                                    <span style="font-size: 0.8rem; font-weight: 700; color: #f59e0b;">⚠️ Warning & Token Reminders</span>
+                                    <span style="font-size: 0.68rem; background: rgba(245, 158, 11, 0.15); color: #f59e0b; padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(245, 158, 11, 0.3);">Action Required</span>
+                                </div>
+                                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
+                                    Sent 1 hour before scheduled strategy start or pre-market if broker account is not logged in / token expired.
+                                </div>
+                            </div>
+                        </label>
+
+                        <!-- Level 3: Info -->
+                        <label style="display: flex; align-items: flex-start; gap: 10px; padding: 0.6rem 0.8rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;">
+                            <input type="checkbox" id="tg-notify-info" checked style="width: 17px; height: 17px; accent-color: #10b981; margin-top: 2px; cursor: pointer;">
+                            <div style="flex: 1;">
+                                <div style="display: flex; align-items: center; gap: 6px;">
+                                    <span style="font-size: 0.8rem; font-weight: 700; color: #10b981;">ℹ️ Info & Trade Cycle PnL</span>
+                                    <span style="font-size: 0.68rem; background: rgba(16, 185, 129, 0.15); color: #10b981; padding: 1px 6px; border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.3);">Execution Reports</span>
+                                </div>
+                                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
+                                    Real-time order execution fills and closed trade cycle summaries with realized PnL (🟢 +₹ / 🔴 -₹).
+                                </div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Card 3: Admin Multi-User Subscription Filter (Visible only for ADMIN) -->
+                <div id="tg-admin-section" style="display: none; background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color);">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px;">
+                        <div style="font-size: 0.84rem; font-weight: 700; color: var(--text-primary);">
+                            🛡️ Admin Multi-User Subscriptions
+                        </div>
+                        <span class="badge role-admin" style="font-size: 0.68rem;">ADMIN ONLY</span>
+                    </div>
+                    <div style="font-size: 0.72rem; color: var(--text-muted); line-height: 1.4; margin-bottom: 0.75rem;">
+                        By default, administrators receive notifications across all users and strategies. Uncheck any user below to mute their alerts in your admin Telegram feed without affecting that user's own notifications.
+                    </div>
+
+                    <div class="table-responsive" style="max-height: 180px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                        <table class="data-table" style="margin: 0;">
+                            <thead>
+                                <tr>
+                                    <th>User</th>
+                                    <th>Telegram Status</th>
+                                    <th style="text-align: right;">Admin Feed</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tg-admin-users-tbody">
+                                <!-- Populated dynamically by telegramManager -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Alert box for feedback / test results -->
+                <div id="tg-alert-box" style="display: none; padding: 0.65rem 0.85rem; border-radius: 6px; font-size: 0.8rem; line-height: 1.4;"></div>
+            </div>
+
+            <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 0.85rem 1.25rem;">
+                <button class="action-btn-sm" id="btn-tg-test" type="button" onclick="window.telegramManager.sendTestNotification()" style="background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.35); font-weight: 600;">
+                    🧪 Send Test Message
+                </button>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button class="action-btn-sm modal-close-btn" type="button">Cancel</button>
+                    <button class="action-btn-sm" id="btn-tg-save" type="button" onclick="window.telegramManager.saveSettings()" style="background: var(--accent-green, #10b981); color: white; font-weight: 700; padding: 0.5rem 1.25rem;">
+                        💾 Save Settings
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===================================================================
          MODAL: CONFIRM LOGOUT (Prevents accidental sign out)
          =================================================================== -->
     <div class="modal-overlay" id="modal-confirm-logout">
@@ -1324,6 +1491,7 @@
     <script src="js/logs_page.js?v=3.3"></script>
     <script src="js/reports.js?v=3.3"></script>
     <script src="js/users.js?v=3.3"></script>
+    <script src="js/telegram.js?v=3.3"></script>
     <script src="js/app.js?v=3.3"></script>
 </body>
 </html>

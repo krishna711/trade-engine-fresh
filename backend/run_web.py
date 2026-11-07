@@ -29,6 +29,12 @@ async def on_startup():
     asyncio.create_task(event_bus.start_ipc_client())
     # Cache live ticks received via IPC into feed_manager.ticks_cache for dashboard REST queries
     event_bus.subscribe("feed.tick", lambda tick: feed_manager.ticks_cache.update({tick["symbol"]: tick}))
+
+    # Start Telegram Notification Scheduler
+    from backend.core.telegram_notifier import telegram_notifier
+    telegram_notifier.start_scheduler()
+    print("[+] Telegram Notifier active (Critical, Warning, and Info multi-tier dispatcher).")
+
     print("=" * 65)
     print(">>> [WEB DASHBOARD & REST API] SERVER ACTIVE <<<")
     print(f"[*] Dashboard URL: http://{API_HOST}:{API_PORT}")

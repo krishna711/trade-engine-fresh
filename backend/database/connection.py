@@ -5,7 +5,7 @@ from sqlalchemy.orm import sessionmaker, scoped_session
 from backend.config import DB_URL, DEFAULT_FEED_PRIORITY, DEFAULT_LOT_SIZES
 from backend.database.models import (
     Base, Account, StrategyTemplate, StrategyInstance,
-    SymbolMapping, FeedBrokerStatus, SystemLog, Position, Order, Trade, TradeReport, User
+    SymbolMapping, FeedBrokerStatus, SystemLog, Position, Order, Trade, TradeReport, User, TelegramSetting
 )
 
 
@@ -39,6 +39,9 @@ from sqlalchemy import text
 
 def check_and_migrate_db():
     try:
+        # Ensure any newly defined tables are created
+        Base.metadata.create_all(bind=engine)
+
         with engine.begin() as conn:
             # Check accounts table columns
             acc_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(accounts)")).fetchall()]

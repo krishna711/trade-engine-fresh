@@ -185,6 +185,7 @@ class FeedManager:
 
     async def failover_to_next(self, reason: str = "Manual failover test"):
         """Triggers immediate failover to the next available broker in priority list"""
+        old_broker_name = self.active_broker_name
         curr_idx = self.priority_list.index(self.active_broker_name) if self.active_broker_name in self.priority_list else -1
         next_idx = (curr_idx + 1) % len(self.priority_list)
         next_broker_name = self.priority_list[next_idx]
@@ -200,6 +201,19 @@ class FeedManager:
         self._update_db_broker_status()
         
         await event_bus.publish("feed.status", self.get_status())
+
+        # Telegram notification: Feed failover event (Critical)
+        try:
+            from backend.core.telegram_notifier import telegram_notifier
+            asyncio.create_task(telegram_notifier.notify_critical(
+                title=f"Market Feed Failover: {old_broker_name} ➔ {next_broker_name}",
+                details=f"Reason: {reason}. All {len(self.subscribed_symbols)} subscriptions migrated to {next_broker_name}.",
+                component="Market Data Feed Manager",
+                entity=f"Primary Feed: {next_broker_name}"
+            ))
+        except Exception as tg_err:
+            pass
+
         return self.active_broker_name
 
     async def set_priority(self, new_priority: List[str]):

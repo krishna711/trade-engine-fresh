@@ -12,7 +12,7 @@ from backend.config import BASE_DIR, DEFAULT_SUBSCRIPTIONS, SUPPORTED_SEGMENTS
 from backend.database.connection import get_db, SessionLocal
 from backend.database.models import (
     Account, StrategyTemplate, StrategyInstance, Order, Trade, Position,
-    SymbolMapping, SystemLog, FeedBrokerStatus, TradeReport, User
+    SymbolMapping, SystemLog, FeedBrokerStatus, TradeReport, User, TelegramSetting
 )
 from backend.feed_manager.manager import feed_manager
 from backend.order_manager.manager import order_manager
@@ -2141,3 +2141,166 @@ async def delete_user(user_id: int, db: Session = Depends(get_db), current_user:
         "success": True,
         "message": f"User '{username}' deleted successfully."
     }
+
+
+# =============================================================================
+# TELEGRAM NOTIFICATION SETTINGS & TEST ENDPOINTS
+# =============================================================================
+
+@app.get("/api/telegram/settings")
+def get_telegram_settings(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Fetches telegram configuration for the authenticated user and admin multi-user controls"""
+    setting = db.query(TelegramSetting).filter(TelegramSetting.user_id == current_user.id).first()
+    
+    from backend.core.telegram_notifier import telegram_notifier
+    system_bot_token = telegram_notifier.get_system_default_bot_token(db)
+
+    resp = {
+        "success": True,
+        "enabled": bool(setting.enabled) if setting else False,
+        "bot_token": setting.bot_token if setting else "",
+        "chat_id": setting.chat_id if setting else "",
+        "notify_critical": bool(setting.notify_critical) if setting else True,
+        "notify_warning": bool(setting.notify_warning) if setting else True,
+        "notify_info": bool(setting.notify_info) if setting else True,
+        "admin_muted_user_ids": (setting.admin_muted_user_ids or []) if setting else [],
+        "system_bot_token_configured": bool(system_bot_token),
+        "is_admin": current_user.role == "ADMIN"
+    }
+
+    # If Admin, attach list of all active users so Admin can selectively mute/unmute users
+    if current_user.role == "ADMIN":
+        all_users = db.query(User).filter(User.is_active == True).order_by(User.id.asc()).all()
+        user_list = []
+        for u in all_users:
+            u_setting = db.query(TelegramSetting).filter(TelegramSetting.user_id == u.id).first()
+            user_list.append({
+                "id": u.id,
+                "username": u.username,
+                "full_name": u.full_name or u.username,
+                "role": u.role,
+                "has_telegram": bool(u_setting and u_setting.enabled and u_setting.chat_id),
+                "is_muted_for_admin": (u.id in (setting.admin_muted_user_ids or [])) if setting else False
+            })
+        resp["users_for_admin"] = user_list
+
+    return resp
+
+
+@app.post("/api/telegram/settings")
+def update_telegram_settings(
+    payload: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Updates Telegram notification settings and admin user filters"""
+    setting = db.query(TelegramSetting).filter(TelegramSetting.user_id == current_user.id).first()
+    if not setting:
+        setting = TelegramSetting(user_id=current_user.id)
+        db.add(setting)
+
+    if "enabled" in payload:
+        setting.enabled = bool(payload["enabled"])
+    if "bot_token" in payload:
+        setting.bot_token = str(payload["bot_token"]).strip()
+    if "chat_id" in payload:
+        setting.chat_id = str(payload["chat_id"]).strip()
+    if "notify_critical" in payload:
+        setting.notify_critical = bool(payload["notify_critical"])
+    if "notify_warning" in payload:
+        setting.notify_warning = bool(payload["notify_warning"])
+    if "notify_info" in payload:
+        setting.notify_info = bool(payload["notify_info"])
+
+    # Admin only: can specify list of user_ids to mute from admin's personal telegram
+    if current_user.role == "ADMIN" and "admin_muted_user_ids" in payload:
+        muted_ids = payload.get("admin_muted_user_ids")
+        if isinstance(muted_ids, list):
+            setting.admin_muted_user_ids = [int(uid) for uid in muted_ids if isinstance(uid, (int, str)) and str(uid).isdigit()]
+
+    setting.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    db.refresh(setting)
+
+    return {
+        "success": True,
+        "message": "Telegram notification settings saved successfully.",
+        "settings": {
+            "enabled": setting.enabled,
+            "bot_token": setting.bot_token,
+            "chat_id": setting.chat_id,
+            "notify_critical": setting.notify_critical,
+            "notify_warning": setting.notify_warning,
+            "notify_info": setting.notify_info,
+            "admin_muted_user_ids": setting.admin_muted_user_ids or []
+        }
+    }
+
+
+@app.post("/api/telegram/test")
+async def test_telegram_notification(
+    payload: Dict[str, Any] = Body(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Sends a sample multi-tier test notification directly to the provided or saved Telegram chat
+    """
+    import html
+    from backend.core.telegram_notifier import telegram_notifier
+
+    # Check payload or fall back to saved user settings
+    bot_token = payload.get("bot_token")
+    chat_id = payload.get("chat_id")
+
+    setting = db.query(TelegramSetting).filter(TelegramSetting.user_id == current_user.id).first()
+
+    if not chat_id and setting:
+        chat_id = setting.chat_id
+
+    if not bot_token and setting and setting.bot_token:
+        bot_token = setting.bot_token
+
+    if not bot_token:
+        bot_token = telegram_notifier.get_system_default_bot_token(db)
+
+    if not bot_token:
+        raise HTTPException(
+            status_code=400,
+            detail="No Telegram Bot Token provided. Please enter your Bot Token or ask Admin to configure System Bot Token."
+        )
+
+    if not chat_id:
+        raise HTTPException(
+            status_code=400,
+            detail="No Telegram Chat ID provided. Please enter your numeric Chat ID (obtainable from @userinfobot)."
+        )
+
+    # Formatted sample test message demonstrating the 3 tiers
+    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    test_msg = (
+        f"⚡ <b>FRESH TRADE ENGINE - TELEGRAM ALERT TEST</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"✅ <b>Connection Status:</b> <b>CONNECTED & VERIFIED</b>\n"
+        f"👤 <b>Recipient:</b> {html.escape(current_user.full_name or current_user.username)} (<code>{current_user.role}</code>)\n"
+        f"⏰ <b>Timestamp:</b> {now_str} IST\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"<b><u>Sample 3-Level Notification Previews:</u></b>\n\n"
+        f"🚨 <b>CRITICAL:</b> System failover, engine crashes, unhandled RMS halts\n"
+        f"⚠️ <b>WARNING:</b> 1-hour pre-strategy token reminders & pre-market login alerts\n"
+        f"ℹ️ <b>INFO:</b> Real-time order fills, position tracking & closed trade cycle PnL (🟢 +₹ / 🔴 -₹)\n\n"
+        f"<i>Your Telegram notification channel is ready and active!</i>"
+    )
+
+    res = await telegram_notifier.send_raw_message(str(bot_token), str(chat_id), test_msg)
+    if res.get("success"):
+        return {
+            "success": True,
+            "message": "Test notification delivered to Telegram successfully! Check your Telegram app."
+        }
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Telegram API delivery failed: {res.get('error', 'Unknown Telegram API error')}"
+        )
+

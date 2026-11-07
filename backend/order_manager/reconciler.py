@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 from typing import Dict, Any, Optional
 from backend.database.connection import SessionLocal
@@ -103,6 +104,30 @@ class OrderReconciler:
                 "filled_qty": order.filled_quantity,
                 "avg_price": order.average_price
             })
+
+            # Telegram notification (Info for fills/orders, Critical for rejections)
+            try:
+                from backend.core.telegram_notifier import telegram_notifier
+                strat_name = ""
+                if order.strategy_instance:
+                    strat_name = order.strategy_instance.instance_name_user or order.strategy_instance.instance_name_admin
+                mode = "PAPER" if getattr(order, "is_paper", True) else "LIVE"
+                user_id = order.account.user_id if order.account else None
+                asyncio.create_task(telegram_notifier.notify_order(
+                    status=order.status,
+                    side=order.side,
+                    quantity=order.filled_quantity if order.filled_quantity > 0 else order.quantity,
+                    symbol=order.symbol,
+                    price=order.average_price if order.average_price > 0 else order.price,
+                    client_id=order.client_id,
+                    strategy_name=strat_name,
+                    mode=mode,
+                    rejection_reason=order.rejection_reason or "",
+                    user_id=user_id,
+                    strategy_id=order.strategy_instance_id
+                ))
+            except Exception as tg_err:
+                print(f"[Reconciler] Telegram notification dispatch error: {tg_err}")
 
             return True
         except Exception as e:
