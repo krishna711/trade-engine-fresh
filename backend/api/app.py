@@ -1223,7 +1223,25 @@ async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Strategy not found")
     
     cfg = inst.config or {}
-    symbol = cfg.get("symbol", "NSE:NIFTY")
+    symbol = cfg.get("symbol")
+    if not symbol and inst.template and inst.template.default_config:
+        symbol = inst.template.default_config.get("symbol")
+    if not symbol:
+        # Check active legs if available
+        legs = inst.legs_info or []
+        if legs and legs[0].get("symbol"):
+            leg_sym = str(legs[0]["symbol"])
+            if "CRUDE" in leg_sym:
+                symbol = "MCX:CRUDEOILM"
+            elif "RELIANCE" in leg_sym:
+                symbol = "NSE:RELIANCE"
+            elif "NIFTY" in leg_sym:
+                symbol = "NSE:NIFTY"
+            else:
+                symbol = leg_sym
+        else:
+            symbol = "NSE:NIFTY"
+
     tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or "5m").strip().lower()
     if tf.isdigit():
         tf = f"{tf}m"

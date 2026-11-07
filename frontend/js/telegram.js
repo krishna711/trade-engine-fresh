@@ -278,3 +278,4 @@ class TelegramManager {
 }
 
 window.telegramManager = new TelegramManager();
+

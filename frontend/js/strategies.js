@@ -831,6 +831,14 @@ class StrategiesManager {
 
             if (noTradesOverlay) {
                 noTradesOverlay.style.display = hasTrades ? "none" : "block";
+                noTradesOverlay.innerHTML = `
+                    <div style="font-size: 0.88rem; font-weight: 700; color: #60a5fa; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                        <span>ℹ️</span> No Trades Opened Yet Today
+                    </div>
+                    <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
+                        Strategy is actively monitoring market signals. Cumulative PnL is flat ₹0.00.
+                    </div>
+                `;
             }
 
             const labels = pnlSeries.map(p => p.time || "");
@@ -883,12 +891,28 @@ class StrategiesManager {
             });
         } else {
             // Market Price View
-            if (noTradesOverlay) noTradesOverlay.style.display = "none";
             const sym = data.symbol || "NSE:NIFTY";
             if (modeDesc) modeDesc.innerText = `${sym} (${data.resolution || '5m'} Close Price)`;
 
             const ohlc = data.ohlc || [];
-            const labels = ohlc.map(b => b.time ? (b.time.split("T")[1]?.slice(0, 5) || b.time) : "");
+            if (!ohlc || ohlc.length === 0) {
+                if (noTradesOverlay) {
+                    noTradesOverlay.style.display = "block";
+                    noTradesOverlay.innerHTML = `
+                        <div style="font-size: 0.88rem; font-weight: 700; color: #f59e0b; display: flex; align-items: center; justify-content: center; gap: 6px;">
+                            <span>⚠️</span> Market Closed / Waiting for Live Feed
+                        </div>
+                        <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
+                            No live candle buffer recorded yet for <strong>${sym}</strong>. Candlestick bars build dynamically as ticks stream in when market is open.
+                        </div>
+                    `;
+                }
+                return;
+            } else {
+                if (noTradesOverlay) noTradesOverlay.style.display = "none";
+            }
+
+            const labels = ohlc.map(b => b.time ? (b.time.includes("T") ? (b.time.split("T")[1]?.slice(0, 5) || b.time) : b.time.slice(0, 5)) : "");
             const prices = ohlc.map(b => b.close);
 
             this.chartInstance = new Chart(ctx, {
