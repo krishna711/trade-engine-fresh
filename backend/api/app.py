@@ -1,12 +1,14 @@
 import asyncio
 import datetime
 import json
+import re
 import requests
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException, Query, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from backend.config import BASE_DIR, DEFAULT_SUBSCRIPTIONS, SUPPORTED_SEGMENTS
 from backend.database.connection import get_db, SessionLocal
@@ -1233,6 +1235,12 @@ async def reset_strategy_trade_state(id: int, db: Session = Depends(get_db)):
     if inst.legs_info:
         closed_legs = []
         for leg in inst.legs_info:
+            leg_str = str(leg.get("symbol") or leg.get("leg") or "")
+            m = re.search(r"(\d+)", leg_str)
+            if m and ("CRUDE" in leg_str.upper() or "MCX" in leg_str.upper()):
+                strike_val = int(m.group(1))
+                if strike_val > 15000 or strike_val < 3000:
+                    continue  # Purge phantom strike from legs
             l_copy = dict(leg)
             l_copy["status"] = "CLOSED"
             if not l_copy.get("exit"):

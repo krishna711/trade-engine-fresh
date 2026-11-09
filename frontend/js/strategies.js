@@ -747,12 +747,18 @@ class StrategiesManager {
         if (!confirm(`Are you sure you want to SQUARE OFF all open positions and close trades for Strategy #${id}?`)) return;
         try {
             const res = await fetch(`/api/strategies/${id}/square-off`, { method: "POST" });
-            const data = await res.json();
-            alert(`✓ Strategy #${id} squared off and closed.`);
-            await this.loadInstances();
-            if (window.clientCardsManager) window.clientCardsManager.loadAccounts();
+            const text = await res.text();
+            let data = null;
+            try { data = JSON.parse(text); } catch (_) {}
+            if (res.ok && (!data || data.success !== false)) {
+                alert(`✓ Strategy #${id} squared off and closed.`);
+                await this.loadInstances();
+                if (window.clientCardsManager) window.clientCardsManager.loadAccounts();
+            } else {
+                alert("Square off failed: " + ((data && (data.detail || data.error)) || text || `HTTP ${res.status}`));
+            }
         } catch (e) {
-            alert("Square off failed: " + e);
+            alert("Square off failed: " + (e.message || e));
         }
     }
 
@@ -760,16 +766,19 @@ class StrategiesManager {
         if (!confirm(`Reset and mark trade status as CLOSED for Strategy #${id}?`)) return;
         try {
             const res = await fetch(`/api/strategies/${id}/reset-trade`, { method: "POST" });
-            const data = await res.json();
-            if (data.success) {
+            const text = await res.text();
+            let data = null;
+            try { data = JSON.parse(text); } catch (_) {}
+            if (res.ok && data && data.success) {
                 await this.loadInstances();
                 if (window.clientCardsManager) window.clientCardsManager.loadAccounts();
                 alert(`✓ Strategy #${id} trade status reset to CLOSED.`);
             } else {
-                alert("Failed to reset trade: " + (data.detail || data.error));
+                const errDetail = data ? (data.detail || data.error) : text;
+                alert("Failed to reset trade: " + (errDetail || `HTTP ${res.status}`));
             }
         } catch (e) {
-            alert("Network error resetting trade: " + e);
+            alert("Network error resetting trade: " + (e.message || e));
         }
     }
 

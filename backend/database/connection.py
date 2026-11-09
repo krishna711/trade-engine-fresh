@@ -2,6 +2,7 @@ import os
 import datetime
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.orm.attributes import flag_modified
 from backend.config import DB_URL, DEFAULT_FEED_PRIORITY, DEFAULT_LOT_SIZES
 from backend.database.models import (
     Base, Account, StrategyTemplate, StrategyInstance,
@@ -631,6 +632,7 @@ def seed_initial_data():
                     clean_legs.append(l)
 
                 inst.legs_info = clean_legs
+                flag_modified(inst, "legs_info")
 
             # If strategy is STOPPED or has no remaining active legs, mark trade CLOSED & unrealized 0.0
             is_all_closed = not inst.legs_info or all(l.get("status") == "CLOSED" or l.get("exit") is not None for l in inst.legs_info)

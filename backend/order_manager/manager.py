@@ -1,7 +1,9 @@
 import asyncio
 import datetime
+import re
 import uuid
 from typing import Dict, Any, List, Optional
+from sqlalchemy.orm.attributes import flag_modified
 from backend.database.connection import SessionLocal
 from backend.database.models import Account, Order, Position, Trade, StrategyInstance, SystemLog
 from backend.order_manager.brokers.broker_adapters import create_broker_order_adapter
@@ -286,6 +288,12 @@ class OrderManager:
                 if strat.legs_info:
                     closed_legs = []
                     for leg in strat.legs_info:
+                        leg_str = str(leg.get("symbol") or leg.get("leg") or "")
+                        m = re.search(r"(\d+)", leg_str)
+                        if m and ("CRUDE" in leg_str.upper() or "MCX" in leg_str.upper()):
+                            strike_val = int(m.group(1))
+                            if strike_val > 15000 or strike_val < 3000:
+                                continue  # Purge phantom strike
                         l_copy = dict(leg)
                         l_copy["status"] = "CLOSED"
                         if not l_copy.get("exit"):
