@@ -1216,6 +1216,54 @@ async def delete_strategy_instance(id: int, db: Session = Depends(get_db), curre
 async def square_off_strategy_positions(id: int):
     return await order_manager.square_off_strategy(id)
 
+@app.post("/api/strategies/{id}/reset-trade")
+async def reset_strategy_trade_state(id: int, db: Session = Depends(get_db)):
+    """
+    Manually resets trade status to CLOSED, zeroes out unrealized PnL,
+    and marks all open legs as CLOSED. Works whether strategy is STOPPED or RUNNING.
+    """
+    inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()
+    if not inst:
+        raise HTTPException(status_code=404, detail="Strategy not found")
+
+    inst.last_trade_status = "CLOSED"
+    inst.unrealized_pnl = 0.0
+    inst.total_pnl = inst.realized_pnl
+
+    if inst.legs_info:
+        closed_legs = []
+        for leg in inst.legs_info:
+            l_copy = dict(leg)
+            l_copy["status"] = "CLOSED"
+            if not l_copy.get("exit"):
+                l_copy["exit"] = l_copy.get("ltp") or l_copy.get("entry") or 0.0
+            l_copy["pnl"] = 0.0
+            closed_legs.append(l_copy)
+        inst.legs_info = closed_legs
+        flag_modified(inst, "legs_info")
+
+    db.query(Position).filter(Position.strategy_instance_id == id).update({
+        Position.net_quantity: 0,
+        Position.unrealized_pnl: 0.0
+    })
+    db.commit()
+    db.refresh(inst)
+
+    # If worker is active, also notify the worker process to reset state
+    worker = strategy_supervisor.active_workers.get(id)
+    if worker and "in_queue" in worker:
+        try:
+            worker["in_queue"].put({"type": "RESET_TRADE"})
+        except Exception:
+            pass
+
+    return {
+        "success": True,
+        "strategy_id": id,
+        "last_trade_status": inst.last_trade_status,
+        "legs_info": inst.legs_info
+    }
+
 @app.get("/api/strategies/{id}/chart")
 async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
     inst = db.query(StrategyInstance).filter(StrategyInstance.id == id).first()

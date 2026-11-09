@@ -276,12 +276,32 @@ class OrderManager:
                 )
                 squared_count += 1
 
-            # Update strategy state to STOPPED and trade status to CLOSED
+            # Update strategy state to STOPPED, trade status to CLOSED, and clear active legs
             strat = db.query(StrategyInstance).filter(StrategyInstance.id == strategy_id).first()
             if strat:
                 strat.status = "STOPPED"
                 strat.last_trade_status = "CLOSED"
+                strat.unrealized_pnl = 0.0
+                strat.total_pnl = strat.realized_pnl
+                if strat.legs_info:
+                    closed_legs = []
+                    for leg in strat.legs_info:
+                        l_copy = dict(leg)
+                        l_copy["status"] = "CLOSED"
+                        if not l_copy.get("exit"):
+                            l_copy["exit"] = l_copy.get("ltp") or l_copy.get("entry") or 0.0
+                        l_copy["pnl"] = 0.0
+                        closed_legs.append(l_copy)
+                    strat.legs_info = closed_legs
+                    flag_modified(strat, "legs_info")
                 db.commit()
+
+            # Zero out any position records for this strategy instance
+            db.query(Position).filter(Position.strategy_instance_id == strategy_id).update({
+                Position.net_quantity: 0,
+                Position.unrealized_pnl: 0.0
+            })
+            db.commit()
 
             return {"success": True, "squared_positions": squared_count, "strategy_id": strategy_id}
         finally:

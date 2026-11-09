@@ -78,6 +78,10 @@ def strategy_process_entrypoint(
                     elif hasattr(instance, "config"):
                         instance.config.update(new_cfg)
 
+                elif msg_type == "RESET_TRADE":
+                    instance.trade_state = "IDLE"
+                    instance.current_trade = None
+
             except multiprocessing.queues.Empty:
                 pass
 

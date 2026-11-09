@@ -220,8 +220,9 @@ class StrategiesManager {
                         </div>
                     </td>
                     <td>
-                        <span class="status-pill status-${inst.last_trade_status === 'OPEN' ? 'running' : 'stopped'}">
-                            ${inst.last_trade_status}
+                        <span class="status-pill status-${inst.last_trade_status === 'OPEN' ? 'running' : 'stopped'}"
+                              ${inst.last_trade_status === 'OPEN' ? `onclick="strategiesManager.resetTrade(${inst.id}); event.stopPropagation();" style="cursor:pointer;" title="Click to reset trade status to CLOSED"` : ''}>
+                            ${inst.last_trade_status}${inst.last_trade_status === 'OPEN' && inst.status === 'STOPPED' ? ' ✕' : ''}
                         </span>
                     </td>
                     <td style="font-family: var(--font-mono); font-size: 0.8rem;">${inst.start_time}</td>
@@ -331,8 +332,9 @@ class StrategiesManager {
                             </div>
                         </td>
                         <td>
-                            <span class="status-pill status-${inst.last_trade_status === 'OPEN' ? 'running' : 'stopped'}">
-                                ${inst.last_trade_status}
+                            <span class="status-pill status-${inst.last_trade_status === 'OPEN' ? 'running' : 'stopped'}"
+                                  ${inst.last_trade_status === 'OPEN' ? `onclick="strategiesManager.resetTrade(${inst.id}); event.stopPropagation();" style="cursor:pointer;" title="Click to reset trade status to CLOSED"` : ''}>
+                                ${inst.last_trade_status}${inst.last_trade_status === 'OPEN' && inst.status === 'STOPPED' ? ' ✕' : ''}
                             </span>
                         </td>
                         <td style="font-family: var(--font-mono); font-size: 0.8rem;">${inst.start_time}</td>
@@ -391,8 +393,9 @@ class StrategiesManager {
                             </div>
                         </td>
                         <td>
-                            <span class="status-pill status-${inst.last_trade_status === 'OPEN' ? 'running' : 'stopped'}">
-                                ${inst.last_trade_status}
+                            <span class="status-pill status-${inst.last_trade_status === 'OPEN' ? 'running' : 'stopped'}"
+                                  ${inst.last_trade_status === 'OPEN' ? `onclick="strategiesManager.resetTrade(${inst.id}); event.stopPropagation();" style="cursor:pointer;" title="Click to reset trade status to CLOSED"` : ''}>
+                                ${inst.last_trade_status}${inst.last_trade_status === 'OPEN' && inst.status === 'STOPPED' ? ' ✕' : ''}
                             </span>
                         </td>
                         <td style="font-family: var(--font-mono); font-size: 0.8rem;">${inst.start_time}</td>
@@ -741,15 +744,32 @@ class StrategiesManager {
     }
 
     async squareOff(id) {
-        if (!confirm(`Are you sure you want to SQUARE OFF all open positions for Strategy #${id}?`)) return;
+        if (!confirm(`Are you sure you want to SQUARE OFF all open positions and close trades for Strategy #${id}?`)) return;
         try {
             const res = await fetch(`/api/strategies/${id}/square-off`, { method: "POST" });
             const data = await res.json();
-            alert(`Square off completed: ${data.squared_positions} positions closed.`);
-            this.loadInstances();
+            alert(`✓ Strategy #${id} squared off and closed.`);
+            await this.loadInstances();
             if (window.clientCardsManager) window.clientCardsManager.loadAccounts();
         } catch (e) {
             alert("Square off failed: " + e);
+        }
+    }
+
+    async resetTrade(id) {
+        if (!confirm(`Reset and mark trade status as CLOSED for Strategy #${id}?`)) return;
+        try {
+            const res = await fetch(`/api/strategies/${id}/reset-trade`, { method: "POST" });
+            const data = await res.json();
+            if (data.success) {
+                await this.loadInstances();
+                if (window.clientCardsManager) window.clientCardsManager.loadAccounts();
+                alert(`✓ Strategy #${id} trade status reset to CLOSED.`);
+            } else {
+                alert("Failed to reset trade: " + (data.detail || data.error));
+            }
+        } catch (e) {
+            alert("Network error resetting trade: " + e);
         }
     }
 

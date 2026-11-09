@@ -166,6 +166,17 @@ class StrategySupervisor:
             inst = db.query(StrategyInstance).filter(StrategyInstance.id == instance_id).first()
             if inst:
                 inst.status = "STOPPED"
+                # If there are no actively filled legs, mark trade status CLOSED and clear unrealized MTM
+                has_filled = any(l.get("status") == "FILLED" and l.get("exit") is None for l in (inst.legs_info or []))
+                if not has_filled:
+                    inst.last_trade_status = "CLOSED"
+                    inst.unrealized_pnl = 0.0
+                    inst.total_pnl = inst.realized_pnl
+                    if inst.legs_info:
+                        for l in inst.legs_info:
+                            if l.get("status") in ["PENDING", "SENT"]:
+                                l["status"] = "CLOSED"
+                        flag_modified(inst, "legs_info")
                 db.commit()
         finally:
             db.close()

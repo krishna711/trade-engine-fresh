@@ -615,21 +615,38 @@ def seed_initial_data():
                 cfg["product"] = "NRML"
                 inst.config = cfg
 
-            # Purge any corrupted 37000 strikes or stale legs
+            # Purge any corrupted phantom strikes (> 15000 for CrudeOil) or stale test legs
             if inst.legs_info:
-                clean_legs = [l for l in inst.legs_info if "37000" not in str(l.get("symbol", "")) and "37000" not in str(l.get("leg", "")) and "5850" not in str(l.get("symbol", ""))]
-                inst.legs_info = clean_legs
-                if not clean_legs or all(l.get("status") == "CLOSED" or l.get("exit") is not None for l in clean_legs):
-                    inst.last_trade_status = "CLOSED"
-                    inst.unrealized_pnl = 0.0
-                    inst.total_pnl = inst.realized_pnl
-                    db.query(Position).filter(Position.strategy_instance_id == inst.id).update({
-                        Position.net_quantity: 0,
-                        Position.unrealized_pnl: 0.0
-                    })
+                clean_legs = []
+                for l in inst.legs_info:
+                    sym_txt = str(l.get("symbol") or "")
+                    leg_txt = str(l.get("leg") or "")
+                    m = re.search(r"(\d+)", sym_txt) or re.search(r"(\d+)", leg_txt)
+                    if m and ("CRUDE" in sym_txt.upper() or "CRUDE" in leg_txt.upper()):
+                        strike_val = int(m.group(1))
+                        if strike_val > 15000 or strike_val < 3000:
+                            continue  # Discard phantom strike (37000, 45100, etc.)
+                    if "5850" in sym_txt:
+                        continue
+                    clean_legs.append(l)
 
-        # Purge / cancel any corrupted 37000 orders
-        db.query(Order).filter(Order.symbol.like("%37000%")).update({"status": "CANCELLED", "rejection_reason": "Strike 37000 was invalid"}, synchronize_session=False)
+                inst.legs_info = clean_legs
+
+            # If strategy is STOPPED or has no remaining active legs, mark trade CLOSED & unrealized 0.0
+            is_all_closed = not inst.legs_info or all(l.get("status") == "CLOSED" or l.get("exit") is not None for l in inst.legs_info)
+            if inst.status == "STOPPED" or is_all_closed:
+                inst.last_trade_status = "CLOSED"
+                inst.unrealized_pnl = 0.0
+                inst.total_pnl = inst.realized_pnl
+                db.query(Position).filter(Position.strategy_instance_id == inst.id).update({
+                    Position.net_quantity: 0,
+                    Position.unrealized_pnl: 0.0
+                })
+
+        # Purge / cancel any corrupted orders with non-existent strikes
+        db.query(Order).filter(
+            (Order.symbol.like("%37000%")) | (Order.symbol.like("%45100%")) | (Order.symbol.like("%45000%"))
+        ).update({"status": "CANCELLED", "rejection_reason": "Phantom strike out of market range"}, synchronize_session=False)
 
         # Clean up any phantom trades that belong to genuinely REJECTED orders
         rej_orders = db.query(Order).filter(
