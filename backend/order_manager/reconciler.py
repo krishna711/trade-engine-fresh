@@ -45,7 +45,11 @@ class OrderReconciler:
 
             new_status = report.get("status", order.status)
             order.status = new_status
-            order.filled_quantity = report.get("filled_quantity", order.filled_quantity)
+            raw_filled = report.get("filled_quantity", order.filled_quantity)
+            eff_filled = int(raw_filled) if raw_filled is not None else 0
+            if order.quantity and order.quantity > 0 and eff_filled > order.quantity:
+                eff_filled = order.quantity
+            order.filled_quantity = eff_filled
             order.average_price = report.get("average_price", order.average_price)
             if report.get("rejection_reason"):
                 order.rejection_reason = report["rejection_reason"]
@@ -273,6 +277,8 @@ class OrderReconciler:
                         if current_st in ["FILLED", "REJECTED", "CANCELLED"] and current_st != ord_rec.status:
                             fill_p = float(st_info.get("average_price") or ord_rec.price)
                             fill_q = int(st_info.get("filled_quantity") or ord_rec.quantity)
+                            if ord_rec.quantity > 0 and fill_q > ord_rec.quantity:
+                                fill_q = ord_rec.quantity
                             print(f"[OrderReconciler] Auto-reconciling open order {ord_rec.order_id} ({ord_rec.symbol}): {ord_rec.status} -> {current_st} ({fill_q} @ {fill_p})")
                             await self.handle_execution_report({
                                 "order_id": ord_rec.order_id,

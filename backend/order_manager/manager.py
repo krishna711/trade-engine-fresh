@@ -145,6 +145,8 @@ class OrderManager:
             is_success = bool(resp.get("success", False))
             order_status = resp.get("status", "FILLED" if is_success else "REJECTED")
             filled_qty = int(resp.get("filled_quantity", quantity if (is_success and order_status == "FILLED") else 0))
+            if quantity > 0 and filled_qty > quantity:
+                filled_qty = quantity
             fill_price = float(resp.get("average_price", price if is_success else 0.0))
             rej_reason = resp.get("rejection_reason")
 

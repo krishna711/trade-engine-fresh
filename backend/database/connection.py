@@ -664,6 +664,31 @@ def seed_initial_data():
             Order.rejection_reason.isnot(None)
         ).update({"rejection_reason": None}, synchronize_session=False)
 
+        # Correct any orders where filled_quantity exceeds order quantity (e.g. duplicate trade matches)
+        bad_qty_orders = db.query(Order).filter(Order.quantity > 0, Order.filled_quantity > Order.quantity).all()
+        for b_ord in bad_qty_orders:
+            b_ord.filled_quantity = b_ord.quantity
+            db.query(Trade).filter(Trade.order_id == b_ord.order_id).update({"quantity": b_ord.quantity}, synchronize_session=False)
+            try:
+                from backend.order_manager.reconciler import reconciler
+                reconciler.recalculate_position_for_symbol(db, b_ord.client_id, b_ord.symbol, b_ord.strategy_instance_id)
+            except Exception:
+                pass
+
+        # Fix any legs_info in strategy_instances where leg quantity exceeds configured lots
+        for inst in db.query(StrategyInstance).all():
+            if inst.legs_info:
+                mod_legs = False
+                cfg_lots = int((inst.config or {}).get("lots") or 1)
+                is_mcx = "MCX" in str((inst.config or {}).get("symbol", "")).upper()
+                for leg in inst.legs_info:
+                    cur_q = abs(int(leg.get("qty", 0)))
+                    if is_mcx and cur_q > cfg_lots and cfg_lots > 0:
+                        leg["qty"] = -cfg_lots if leg.get("qty", 0) < 0 else cfg_lots
+                        mod_legs = True
+                if mod_legs:
+                    flag_modified(inst, "legs_info")
+
         # Ensure all FILLED orders have Trade records
         filled_orders = db.query(Order).filter(Order.status == "FILLED", Order.filled_quantity > 0).all()
         for f_ord in filled_orders:
