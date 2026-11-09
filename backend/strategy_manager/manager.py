@@ -673,7 +673,15 @@ class StrategySupervisor:
                                 leg["entry"] = avg_p
                                 if float(leg.get("ltp") or 0.0) <= 0.0:
                                     leg["ltp"] = avg_p
+                                ltp = float(leg.get("ltp") or avg_p)
+                                is_mcx = "MCX" in sym.upper()
+                                lot_mult = symbol_mapper.get_lot_size(sym) if is_mcx else 1
+                                qty = abs(int(leg.get("qty") or 1))
+                                leg["pnl"] = round((avg_p - ltp) * qty * lot_mult, 2)
                             leg["status"] = "FILLED"
+                    tot_unrealized = sum(float(l.get("pnl") or 0.0) for l in legs if l.get("status") in ["FILLED", "OPEN"] and l.get("exit") is None)
+                    inst.unrealized_pnl = round(tot_unrealized, 2)
+                    inst.total_pnl = round((inst.realized_pnl or 0.0) + inst.unrealized_pnl, 2)
                 elif side == "BUY":
                     for leg in legs:
                         l_sym = str(leg.get("symbol") or leg.get("leg") or "")

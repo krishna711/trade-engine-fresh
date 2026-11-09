@@ -404,30 +404,32 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                                 ] and (not t.get("side") or t.get("side") == side_u)
                             ]
                             if matched_t:
-                                tot_val = sum(float(t["price"]) * int(t["quantity"]) for t in matched_t if float(t.get("price", 0)) > 0)
-                                tot_q = sum(int(t["quantity"]) for t in matched_t if int(t.get("quantity", 0)) > 0)
-                                if req_qty > 0 and tot_q > req_qty:
-                                    tot_q = req_qty
-                                if tot_q > 0:
-                                    fill_price = round(tot_val / tot_q, 2)
-                                    filled_qty = tot_q
+                                raw_sum_v = sum(float(t["price"]) * int(t["quantity"]) for t in matched_t if float(t.get("price", 0)) > 0)
+                                raw_sum_q = sum(int(t["quantity"]) for t in matched_t if int(t.get("quantity", 0)) > 0)
+                                if raw_sum_q > 0 and raw_sum_v > 0:
+                                    fill_price = round(raw_sum_v / raw_sum_q, 2)
+                                elif matched_t[0].get("price"):
+                                    fill_price = float(matched_t[0]["price"])
+                                filled_qty = min(raw_sum_q, req_qty) if req_qty > 0 else raw_sum_q
                         except Exception as e_trd:
                             print(f"[XTS Order] Tradebook lookup error for order {b_id}: {e_trd}")
 
-                    if fill_price <= 0.0:
-                        try:
-                            positions = await self.get_positions()
-                            ord_sym = str(broker_symbol or canonical_symbol).upper().replace(" ", "")
-                            side_u = str(order_dict.get("side", "BUY")).upper()
-                            for p in positions:
-                                p_sym = str(p.get("symbol", "")).upper().replace(" ", "")
-                                if ord_sym and (ord_sym in p_sym or p_sym in ord_sym):
-                                    p_price = float(p.get("sell_avg", 0.0) if side_u == "SELL" else p.get("buy_avg", 0.0) or 0.0)
-                                    if p_price > 0:
+                    # Cross-check positions for definitive broker RMS net position average
+                    try:
+                        positions = await self.get_positions()
+                        ord_sym = str(broker_symbol or canonical_symbol).upper().replace(" ", "")
+                        side_u = str(order_dict.get("side", "BUY")).upper()
+                        for p in positions:
+                            p_sym = str(p.get("symbol", "")).upper().replace(" ", "")
+                            if ord_sym and (ord_sym in p_sym or p_sym in ord_sym):
+                                p_price = float(p.get("sell_avg", 0.0) if side_u == "SELL" else p.get("buy_avg", 0.0) or 0.0)
+                                if p_price > 0:
+                                    if fill_price <= 0.0 or abs(fill_price - p_price) / max(p_price, 1.0) > 0.4:
+                                        print(f"[XTS Order] Position book average price {p_price} prioritized over {fill_price} for {ord_sym}")
                                         fill_price = p_price
-                                        break
-                        except Exception as e_pos:
-                            print(f"[XTS Order] Positions lookup error for order {b_id}: {e_pos}")
+                                    break
+                    except Exception as e_pos:
+                        print(f"[XTS Order] Positions lookup error for order {b_id}: {e_pos}")
 
                     # Fall back to limit req_price only if broker returned no traded price anywhere
                     if fill_price <= 0.0:
@@ -739,21 +741,18 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                     if matched_trades:
                         mapped_status = "FILLED"
                         status_raw = "COMPLETE (from tradebook)"
-                        tot_q = sum(int(t.get("quantity") or 0) for t in matched_trades if int(t.get("quantity") or 0) > 0)
-                        tot_v = sum(float(t.get("price") or 0.0) * int(t.get("quantity") or 0) for t in matched_trades if float(t.get("price") or 0.0) > 0)
-                        if order_qty > 0 and tot_q > order_qty:
-                            tot_q = order_qty
-                        if tot_q > 0:
-                            if cum_qty <= 0 or (order_qty > 0 and cum_qty > order_qty):
-                                cum_qty = tot_q
-                            avg_p = round(tot_v / tot_q, 2)
+                        raw_sum_q = sum(int(t.get("quantity") or 0) for t in matched_trades if int(t.get("quantity") or 0) > 0)
+                        raw_sum_v = sum(float(t.get("price") or 0.0) * int(t.get("quantity") or 0) for t in matched_trades if float(t.get("price") or 0.0) > 0)
+                        if raw_sum_q > 0 and raw_sum_v > 0:
+                            avg_p = round(raw_sum_v / raw_sum_q, 2)
                         elif matched_trades[0].get("price"):
                             avg_p = float(matched_trades[0]["price"])
+                        cum_qty = min(raw_sum_q, order_qty) if order_qty > 0 else raw_sum_q
                 except Exception as e_trd:
                     print(f"[XTS Order Status] Error cross-checking tradebook: {e_trd}")
 
-            # Position book fallback: If still avg_p <= 0.0 and mapped_status is FILLED, check positions
-            if (mapped_status == "FILLED" or not order_info) and avg_p <= 0.0:
+            # Position book verification: verify avg_p against broker position book
+            if mapped_status == "FILLED" or not order_info or avg_p <= 0.0:
                 try:
                     positions = await self.get_positions()
                     ord_sym = str(order_info.get("TradingSymbol") or order_info.get("tradingSymbol") or order_info.get("Symbol") or "").upper().replace(" ", "")
@@ -763,17 +762,14 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                         if ord_sym and (ord_sym in p_sym or p_sym in ord_sym):
                             p_sell = float(p.get("sell_avg", 0.0) or 0.0)
                             p_buy = float(p.get("buy_avg", 0.0) or 0.0)
-                            if ord_side == "SELL" and p_sell > 0:
-                                avg_p = p_sell
-                                mapped_status = "FILLED"
-                                break
-                            elif ord_side == "BUY" and p_buy > 0:
-                                avg_p = p_buy
-                                mapped_status = "FILLED"
-                                break
-                            elif p_sell > 0 or p_buy > 0:
-                                avg_p = p_sell or p_buy
-                                mapped_status = "FILLED"
+                            pos_price = p_sell if ord_side == "SELL" else p_buy
+                            if pos_price <= 0.0:
+                                pos_price = p_sell or p_buy
+                            if pos_price > 0:
+                                if avg_p <= 0.0 or abs(avg_p - pos_price) / max(pos_price, 1.0) > 0.4:
+                                    print(f"[XTS Order Status] Correcting avg_p from position book: {avg_p} -> {pos_price} for {ord_sym}")
+                                    avg_p = pos_price
+                                    mapped_status = "FILLED"
                                 break
                 except Exception as e_pos:
                     print(f"[XTS Order Status] Error cross-checking position book: {e_pos}")

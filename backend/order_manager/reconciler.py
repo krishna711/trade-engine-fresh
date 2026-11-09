@@ -2,7 +2,8 @@ import asyncio
 import datetime
 from typing import Dict, Any, Optional
 from backend.database.connection import SessionLocal
-from backend.database.models import Order, Trade, Position, SystemLog
+from backend.database.models import Order, Trade, Position, SystemLog, StrategyInstance
+from sqlalchemy.orm.attributes import flag_modified
 from backend.core.events import event_bus
 from backend.core.symbol_mapper import symbol_mapper
 
@@ -296,6 +297,7 @@ class OrderReconciler:
                         real_p = 0.0
                         b_id = str(ord_rec.broker_order_id or "").strip()
                         # Check trades
+                        matched_t = []
                         for t in trades:
                             t_oids = [
                                 str(t.get("order_id") or "").strip(),
@@ -311,20 +313,31 @@ class OrderReconciler:
                                 str(raw_t.get("ExchangeOrderID") or "").strip()
                             ])
                             if b_id in t_oids and float(t.get("price") or 0.0) > 0:
-                                real_p = float(t["price"])
-                                break
-                        
-                        # Fallback to positions if not in tradebook
-                        if real_p <= 0.0:
-                            ord_clean = ord_rec.symbol.split(":")[-1].replace(" ", "").upper()
-                            for p in positions:
-                                p_clean = str(p.get("symbol") or "").replace(" ", "").upper()
-                                if ord_clean and (ord_clean in p_clean or p_clean in ord_clean):
-                                    side_u = str(ord_rec.side or "SELL").upper()
-                                    pos_p = float(p.get("sell_avg", 0.0) if side_u == "SELL" else p.get("buy_avg", 0.0) or 0.0)
-                                    if pos_p > 0:
-                                        real_p = pos_p
-                                        break
+                                matched_t.append(t)
+
+                        if matched_t:
+                            sum_v = sum(float(t.get("price") or 0.0) * int(t.get("quantity") or 0) for t in matched_t if float(t.get("price") or 0.0) > 0)
+                            sum_q = sum(int(t.get("quantity") or 0) for t in matched_t if int(t.get("quantity") or 0) > 0)
+                            if sum_q > 0 and sum_v > 0:
+                                real_p = round(sum_v / sum_q, 2)
+                            elif matched_t[0].get("price"):
+                                real_p = float(matched_t[0]["price"])
+
+                        # Check positions: broker position book is authoritative for traded average
+                        ord_clean = ord_rec.symbol.split(":")[-1].replace(" ", "").upper()
+                        pos_p = 0.0
+                        for p in positions:
+                            p_clean = str(p.get("symbol") or "").replace(" ", "").upper()
+                            if ord_clean and (ord_clean in p_clean or p_clean in ord_clean):
+                                side_u = str(ord_rec.side or "SELL").upper()
+                                cand_p = float(p.get("sell_avg", 0.0) if side_u == "SELL" else p.get("buy_avg", 0.0) or 0.0)
+                                if cand_p > 0:
+                                    pos_p = cand_p
+                                    break
+
+                        if pos_p > 0:
+                            if real_p <= 0.0 or abs(real_p - pos_p) / max(pos_p, 1.0) > 0.4:
+                                real_p = pos_p
 
                         # If real traded price found and differs from recorded price, update it!
                         if real_p > 0 and abs(ord_rec.average_price - real_p) > 0.01:
@@ -334,6 +347,38 @@ class OrderReconciler:
                             if trd:
                                 trd.price = real_p
                             self.recalculate_position_for_symbol(db, ord_rec.client_id, ord_rec.symbol, ord_rec.strategy_instance_id)
+
+                            # Synchronize StrategyInstance.legs_info and recalculate unrealized/total PnL directly in DB
+                            if ord_rec.strategy_instance_id:
+                                inst = db.query(StrategyInstance).filter(StrategyInstance.id == ord_rec.strategy_instance_id).first()
+                                if inst and inst.legs_info:
+                                    legs = list(inst.legs_info)
+                                    mod_leg = False
+                                    tot_unrealized = 0.0
+                                    for leg in legs:
+                                        l_sym = str(leg.get("symbol") or leg.get("leg") or "")
+                                        if l_sym == ord_rec.symbol or ord_rec.symbol.endswith(l_sym) or l_sym.endswith(ord_rec.symbol.split(":")[-1]):
+                                            side_u = str(ord_rec.side or "SELL").upper()
+                                            if side_u == "SELL":
+                                                leg["entry"] = real_p
+                                            else:
+                                                leg["exit"] = real_p
+                                            # Recalculate leg pnl if active
+                                            ltp = float(leg.get("ltp") or real_p)
+                                            qty = abs(int(leg.get("qty") or 1))
+                                            is_mcx = "MCX" in ord_rec.symbol.upper()
+                                            pnl_mult = 10 if is_mcx and "CRUDE" in ord_rec.symbol.upper() else 1
+                                            if leg.get("status") != "CLOSED":
+                                                leg["pnl"] = round((real_p - ltp) * qty * pnl_mult, 2)
+                                            mod_leg = True
+                                        if leg.get("status") in ["FILLED", "OPEN"] and leg.get("exit") is None:
+                                            tot_unrealized += float(leg.get("pnl") or 0.0)
+                                    if mod_leg:
+                                        inst.legs_info = legs
+                                        flag_modified(inst, "legs_info")
+                                        inst.unrealized_pnl = round(tot_unrealized, 2)
+                                        inst.total_pnl = round((inst.realized_pnl or 0.0) + inst.unrealized_pnl, 2)
+
                             db.commit()
 
                             # Dispatch event so StrategySupervisor and UI update immediately

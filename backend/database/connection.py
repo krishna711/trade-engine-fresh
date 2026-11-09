@@ -806,6 +806,72 @@ def seed_initial_data():
                 if mod_inst:
                     flag_modified(inst, "legs_info")
 
+        # Specific repairs for MCX Crude straddle option orders with inflated duplicate-fill prices
+        crude_price_repairs = {
+            "8200CE": {"target_p": 311.01, "max_valid": 500.0},
+            "8200PE": {"target_p": 315.03, "max_valid": 500.0},
+            "8250PE": {"target_p": 323.05, "max_valid": 500.0},
+            "8300CE": {"target_p": 311.70, "max_valid": 500.0},
+            "8300PE": {"target_p": 315.00, "max_valid": 500.0},
+        }
+
+        for ord_obj in db.query(Order).filter(Order.status == "FILLED").all():
+            for key_s, pinfo in crude_price_repairs.items():
+                if key_s in ord_obj.symbol and ord_obj.average_price > pinfo["max_valid"]:
+                    print(f"[DB Repair] Correcting inflated Order {ord_obj.order_id} ({ord_obj.symbol}): {ord_obj.average_price} -> {pinfo['target_p']}")
+                    ord_obj.average_price = pinfo["target_p"]
+                    db.query(Trade).filter(Trade.order_id == ord_obj.order_id).update({"price": pinfo["target_p"]}, synchronize_session=False)
+
+        for pos_obj in db.query(Position).all():
+            for key_s, pinfo in crude_price_repairs.items():
+                if key_s in pos_obj.symbol:
+                    if pos_obj.sell_avg_price > pinfo["max_valid"]:
+                        pos_obj.sell_avg_price = pinfo["target_p"]
+                        pos_obj.sell_amount = round(pos_obj.sell_quantity * pinfo["target_p"], 2)
+                    if pos_obj.buy_avg_price > pinfo["max_valid"]:
+                        pos_obj.buy_avg_price = pinfo["target_p"]
+                        pos_obj.buy_amount = round(pos_obj.buy_quantity * pinfo["target_p"], 2)
+
+        # Fix StrategyInstance legs_info, unrealized_pnl, and realized_pnl
+        for inst in db.query(StrategyInstance).all():
+            if inst.legs_info:
+                mod_inst = False
+                tot_unreal = 0.0
+                tot_real = 0.0
+                new_legs = []
+                for leg in inst.legs_info:
+                    l_copy = dict(leg)
+                    sym_txt = str(l_copy.get("symbol") or l_copy.get("leg") or "")
+                    for key_s, pinfo in crude_price_repairs.items():
+                        if key_s in sym_txt and float(l_copy.get("entry") or 0.0) > pinfo["max_valid"]:
+                            print(f"[DB Repair] Correcting inflated Strategy {inst.id} leg {sym_txt} entry: {l_copy.get('entry')} -> {pinfo['target_p']}")
+                            l_copy["entry"] = pinfo["target_p"]
+                            mod_inst = True
+
+                    entry_p = float(l_copy.get("entry") or 0.0)
+                    ltp = float(l_copy.get("ltp") or entry_p)
+                    qty = abs(int(l_copy.get("qty") or 1))
+                    is_mcx = "MCX" in sym_txt.upper()
+                    pnl_mult = 10 if is_mcx and "CRUDE" in sym_txt.upper() else 1
+
+                    if l_copy.get("status") == "CLOSED" or l_copy.get("exit") is not None:
+                        exit_p = float(l_copy.get("exit") or entry_p)
+                        l_copy["pnl"] = round((entry_p - exit_p) * qty * pnl_mult, 2)
+                        tot_real += l_copy["pnl"]
+                    else:
+                        l_copy["pnl"] = round((entry_p - ltp) * qty * pnl_mult, 2)
+                        tot_unreal += l_copy["pnl"]
+                    new_legs.append(l_copy)
+
+                if mod_inst or (inst.unrealized_pnl and inst.unrealized_pnl > 10000.0) or (inst.realized_pnl and inst.realized_pnl > 10000.0):
+                    inst.legs_info = new_legs
+                    flag_modified(inst, "legs_info")
+                    inst.unrealized_pnl = round(tot_unreal, 2)
+                    if inst.realized_pnl and inst.realized_pnl > 10000.0:
+                        # Correct the fake realized profit on 8250PE (38817.00 -> 179.50)
+                        inst.realized_pnl = round(tot_real if tot_real != 0 else 179.50, 2)
+                    inst.total_pnl = round((inst.realized_pnl or 0.0) + inst.unrealized_pnl, 2)
+
         
         # 6. Seed Historical and Live Trade Reports if empty
         if db.query(TradeReport).count() == 0:
