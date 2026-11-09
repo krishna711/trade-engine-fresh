@@ -74,9 +74,11 @@ class ShoonyaFeedBroker(BaseFeedBroker):
         while self.is_connected:
             try:
                 for symbol in list(self.subscribed_symbols):
-                    base = self._current_prices.get(symbol, 100.0)
-                    delta_pct = (random.random() - 0.498) * 0.003
-                    new_ltp = round(base * (1 + delta_pct), 2)
+                    base_anchor = BASE_PRICES.get(symbol, 135.0 if (symbol.endswith("CE") or symbol.endswith("PE")) else 100.0)
+                    curr = self._current_prices.get(symbol, base_anchor)
+                    reversion = (base_anchor - curr) * 0.05
+                    noise = (random.random() - 0.50) * (base_anchor * 0.001)
+                    new_ltp = round(max(base_anchor * 0.90, min(base_anchor * 1.10, curr + reversion + noise)), 2)
                     self._current_prices[symbol] = new_ltp
 
                     mapping = symbol_mapper.get_mapping(symbol)

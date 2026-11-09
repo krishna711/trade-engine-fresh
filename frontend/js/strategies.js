@@ -971,22 +971,31 @@ class StrategiesManager {
 
             let legsBanner = "";
             if (data.legs_info && data.legs_info.length) {
-                legsBanner = `
-                    <div style="background: var(--bg-tertiary); padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; border: 1px solid var(--border-color);">
-                        <strong style="font-size: 0.8rem; color: var(--text-secondary);">Active Multi-Leg State:</strong>
-                        <div class="legs-display" style="margin-top: 6px;">
-                            ${data.legs_info.map(l => `
-                                <span class="leg-pill">
-                                    <span class="leg-name">${l.leg}</span>
-                                    <span>Entry: ₹${Number(l.entry || 0).toFixed(2)}</span>
-                                    <span>Exit: ${l.exit ? '₹' + Number(l.exit).toFixed(2) : (l.status === 'CLOSED' ? '₹' + Number(l.ltp || 0).toFixed(2) : 'OPEN')}</span>
-                                    <span>LTP: ₹${Number(l.ltp || 0).toFixed(2)}</span>
-                                    <span class="${l.pnl >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-weight: 700;">₹${Number(l.pnl || 0).toFixed(2)}</span>
-                                </span>
-                            `).join("")}
+                const activeLegs = data.legs_info.filter(l => l.status !== "REJECTED" && l.status !== "CANCELLED");
+                if (activeLegs.length) {
+                    legsBanner = `
+                        <div style="background: var(--bg-tertiary); padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem; border: 1px solid var(--border-color);">
+                            <strong style="font-size: 0.8rem; color: var(--text-secondary);">Active Multi-Leg State:</strong>
+                            <div class="legs-display" style="margin-top: 6px;">
+                                ${activeLegs.map(l => {
+                                    const isPending = l.status === "PENDING" || l.status === "SENT";
+                                    const entryTxt = Number(l.entry || 0) > 0 ? `₹${Number(l.entry).toFixed(2)}` : (isPending ? 'PENDING' : 'N/A');
+                                    const exitTxt = l.exit ? `₹${Number(l.exit).toFixed(2)}` : (l.status === 'CLOSED' ? `₹${Number(l.ltp || 0).toFixed(2)}` : (isPending ? 'PENDING' : 'OPEN'));
+                                    const pnlVal = isPending ? 0.0 : Number(l.pnl || 0);
+                                    return `
+                                        <span class="leg-pill">
+                                            <span class="leg-name">${l.leg}</span>
+                                            <span>Entry: ${entryTxt}</span>
+                                            <span>Exit: ${exitTxt}</span>
+                                            <span>LTP: ₹${Number(l.ltp || 0).toFixed(2)}</span>
+                                            <span class="${pnlVal >= 0 ? 'pnl-positive' : 'pnl-negative'}" style="font-weight: 700;">₹${pnlVal.toFixed(2)}</span>
+                                        </span>
+                                    `;
+                                }).join("")}
+                            </div>
                         </div>
-                    </div>
-                `;
+                    `;
+                }
             }
 
             contentEl.innerHTML = `
@@ -1348,7 +1357,17 @@ class StrategiesManager {
         if (userNameEl) userNameEl.value = inst.name_user || "";
         if (startTimeEl) startTimeEl.value = inst.start_time || "";
         if (endTimeEl) endTimeEl.value = inst.end_time || "";
-        if (configJsonEl) configJsonEl.value = JSON.stringify(inst.config || {}, null, 2);
+
+        // Merge template defaults so all configurable parameters (lots, risk, timings) are readily visible in editor
+        let mergedCfg = {};
+        if (this.templatesList) {
+            const tpl = this.templatesList.find(t => t.key === inst.template_key);
+            if (tpl && tpl.default_config) {
+                mergedCfg = Object.assign({}, tpl.default_config);
+            }
+        }
+        Object.assign(mergedCfg, inst.config || {});
+        if (configJsonEl) configJsonEl.value = JSON.stringify(mergedCfg, null, 2);
 
         if (pillEl) {
             const isRunning = inst.status === "RUNNING";

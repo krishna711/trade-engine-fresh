@@ -34,17 +34,17 @@ import requests
 
 # Baseline prices for realistic market simulation
 BASE_PRICES = {
-    "NSE:NIFTY": 22485.0,
-    "NSE:BANKNIFTY": 54730.0,
+    "NSE:NIFTY": 24925.0,
+    "NSE:BANKNIFTY": 51860.0,
     "NSE:RELIANCE": 2980.0,
-    "BSE:SENSEX": 72120.0,
+    "BSE:SENSEX": 81780.0,
     "NFO:NIFTY26OCT25000CE": 185.0,
     "BSEFO:SENSEX26OCT82000CE": 240.0,
-    "MCX:CRUDEOIL": 9850.0,
-    "MCX:CRUDEOILM": 9850.0,
-    "MCX:NATURALGAS": 292.2,
-    "MCX:GOLD": 149362.0,
-    "MCX:SILVER": 226233.0,
+    "MCX:CRUDEOIL": 5880.0,
+    "MCX:CRUDEOILM": 5880.0,
+    "MCX:NATURALGAS": 245.0,
+    "MCX:GOLD": 76420.0,
+    "MCX:SILVER": 92550.0,
     "MCXFO:CRUDEOIL6200CE": 125.0
 }
 
@@ -253,6 +253,16 @@ class XTSFeedBroker(BaseFeedBroker):
                                 if inst_id and ltp > 0:
                                     canonical = symbol_mapper.get_canonical_by_token("XTS", inst_id)
                                     if canonical:
+                                        # Defensive sanity check: filter out corrupted / byte-shifted binary packets
+                                        if "NIFTY" in canonical and (ltp > 60000 or ltp < 10000):
+                                            continue
+                                        if "BANKNIFTY" in canonical and (ltp > 100000 or ltp < 20000):
+                                            continue
+                                        if "SENSEX" in canonical and (ltp > 150000 or ltp < 40000):
+                                            continue
+                                        if "CRUDEOIL" in canonical and not ("CE" in canonical or "PE" in canonical) and (ltp > 20000 or ltp < 2000):
+                                            continue
+
                                         self._current_prices[canonical] = ltp
                                         mapping = symbol_mapper.get_mapping(canonical)
                                         display = mapping.display_name if mapping else canonical
@@ -634,10 +644,12 @@ class XTSFeedBroker(BaseFeedBroker):
         while self.is_connected:
             try:
                 for symbol in list(self.subscribed_symbols):
-                    # If real tick hasn't arrived recently for a synthetic symbol, drift slightly
-                    base = self._current_prices.get(symbol, 100.0)
-                    delta_pct = (random.random() - 0.498) * 0.002
-                    new_ltp = round(base * (1 + delta_pct), 2)
+                    # Mean-reverting drift towards anchor price to prevent exponential runaway
+                    base_anchor = BASE_PRICES.get(symbol, 100.0)
+                    curr = self._current_prices.get(symbol, base_anchor)
+                    reversion = (base_anchor - curr) * 0.05
+                    noise = (random.random() - 0.50) * (base_anchor * 0.001)
+                    new_ltp = round(max(base_anchor * 0.90, min(base_anchor * 1.10, curr + reversion + noise)), 2)
                     self._current_prices[symbol] = new_ltp
 
                     mapping = symbol_mapper.get_mapping(symbol)

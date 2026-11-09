@@ -604,16 +604,32 @@ def seed_initial_data():
         all_instances = db.query(StrategyInstance).all()
         for inst in all_instances:
             cfg = dict(inst.config or {})
+            if not cfg:
+                tpl = db.query(StrategyTemplate).filter(StrategyTemplate.key == inst.template_key).first()
+                if tpl and tpl.default_config:
+                    cfg = dict(tpl.default_config)
+                    inst.config = cfg
+
             sym = cfg.get("symbol", "")
             if "MCX" in sym.upper() and cfg.get("product") != "NRML":
                 cfg["product"] = "NRML"
                 inst.config = cfg
-            # Keep legs that have valid status or entry price, filtering out stale 5850 test legs
+
+            # Purge any corrupted 37000 strikes or stale legs
             if inst.legs_info:
-                valid_legs = [l for l in inst.legs_info if "5850" not in str(l.get("symbol", "")) and (l.get("status") in ["FILLED", "OPEN", "CLOSED"] or float(l.get("entry", 0.0) or 0.0) > 0.0)]
-                inst.legs_info = valid_legs
-                if valid_legs and all(l.get("status") == "CLOSED" or l.get("exit") is not None for l in valid_legs):
+                clean_legs = [l for l in inst.legs_info if "37000" not in str(l.get("symbol", "")) and "37000" not in str(l.get("leg", "")) and "5850" not in str(l.get("symbol", ""))]
+                inst.legs_info = clean_legs
+                if not clean_legs or all(l.get("status") == "CLOSED" or l.get("exit") is not None for l in clean_legs):
                     inst.last_trade_status = "CLOSED"
+                    inst.unrealized_pnl = 0.0
+                    inst.total_pnl = inst.realized_pnl
+                    db.query(Position).filter(Position.strategy_instance_id == inst.id).update({
+                        Position.net_quantity: 0,
+                        Position.unrealized_pnl: 0.0
+                    })
+
+        # Purge / cancel any corrupted 37000 orders
+        db.query(Order).filter(Order.symbol.like("%37000%")).update({"status": "CANCELLED", "rejection_reason": "Strike 37000 was invalid"}, synchronize_session=False)
 
         # Clean up any phantom trades that belong to genuinely REJECTED orders
         rej_orders = db.query(Order).filter(

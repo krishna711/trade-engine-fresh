@@ -191,6 +191,24 @@ class UniversalSymbolMapper:
 
         return None
 
+    def snap_to_nearest_option_strike(self, root: str, target_strike: float, opt_type: str = "CE") -> Optional[int]:
+        """
+        Snaps a calculated ATM strike to the nearest real strike present in broker exchange master.
+        Guarantees that an option order will always have a valid token and trading symbol.
+        """
+        if not self._xts_options_map:
+            self.load_xts_master_file()
+
+        root_upper = root.upper()
+        type_upper = opt_type.upper()
+        matching_strikes = [
+            strike for (r, strike, t) in self._xts_options_map.keys()
+            if r == root_upper and t == type_upper
+        ]
+        if not matching_strikes:
+            return None
+        return min(matching_strikes, key=lambda s: abs(s - target_strike))
+
     def get_lot_size(self, canonical_symbol: str) -> int:
         """Returns lot size: checks database mapping first, falls back to configurable default"""
         mapping = self.get_mapping(canonical_symbol)

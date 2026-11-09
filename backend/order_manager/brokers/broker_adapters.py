@@ -219,6 +219,21 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             broker_symbol = symbol_mapper.get_broker_symbol(canonical_symbol, "XTS")
             order_url = self._get_url("orders")
 
+            if not broker_token or not str(broker_token).isdigit():
+                err_msg = f"Exchange instrument token not found for {canonical_symbol} in XTS master. Order aborted."
+                print(f"[XTS Order] Validation Error: {err_msg}")
+                return {
+                    "success": False,
+                    "broker_order_id": None,
+                    "broker_symbol": broker_symbol,
+                    "broker_token": broker_token,
+                    "status": "REJECTED",
+                    "filled_quantity": 0,
+                    "average_price": 0.0,
+                    "rejection_reason": err_msg,
+                    "timestamp": datetime.datetime.utcnow().isoformat()
+                }
+
             segment_map = {
                 "NSE": "NSECM",
                 "NFO": "NSEFO",
@@ -300,6 +315,20 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             if resp.status_code == 200 and data.get("type") == "success":
                 result = data.get("result", {})
                 b_id = str(result.get("AppOrderID") or result.get("orderID") or "")
+                if not b_id:
+                    err_msg = data.get("description") or data.get("message") or "Broker accepted request but returned empty AppOrderID"
+                    print(f"[XTS Order] Warning: {err_msg}")
+                    return {
+                        "success": False,
+                        "broker_order_id": None,
+                        "broker_symbol": broker_symbol,
+                        "broker_token": broker_token,
+                        "status": "REJECTED",
+                        "filled_quantity": 0,
+                        "average_price": 0.0,
+                        "rejection_reason": err_msg,
+                        "timestamp": datetime.datetime.utcnow().isoformat()
+                    }
 
                 status_info = {}
                 order_st = "OPEN"
@@ -485,7 +514,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                                 "broker_token": broker_token,
                                 "status": "OPEN",
                                 "filled_quantity": 0,
-                                "average_price": new_price,
+                                "average_price": 0.0,
                                 "rejection_reason": None,
                                 "timestamp": datetime.datetime.utcnow().isoformat()
                             }
@@ -501,13 +530,13 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 fill_q = int(latest_st.get("filled_quantity") or (order_dict["quantity"] if final_st == "FILLED" else 0))
 
                 return {
-                    "success": final_st not in ["REJECTED", "CANCELLED"],
+                    "success": final_st == "FILLED",
                     "broker_order_id": b_id,
                     "broker_symbol": broker_symbol,
                     "broker_token": broker_token,
                     "status": final_st,
                     "filled_quantity": fill_q,
-                    "average_price": round(fill_p, 2),
+                    "average_price": round(fill_p if final_st == "FILLED" else 0.0, 2),
                     "rejection_reason": latest_st.get("rejection_reason") if final_st in ["REJECTED", "CANCELLED"] else None,
                     "timestamp": datetime.datetime.utcnow().isoformat()
                 }

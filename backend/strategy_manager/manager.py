@@ -95,6 +95,10 @@ class StrategySupervisor:
             mod_info = MODULE_CLASS_MAP.get(tpl.key, ("backend.strategy_manager.registered.ema_crossover", "EMACrossoverStrategy"))
             module_path, class_name = mod_info
 
+            # Merge template defaults with instance config so parameters are never lost
+            effective_config = dict(tpl.default_config or {})
+            effective_config.update(inst.config or {})
+
             in_q = multiprocessing.Queue()
             out_q = multiprocessing.Queue()
 
@@ -104,7 +108,7 @@ class StrategySupervisor:
                     inst.id,
                     module_path,
                     class_name,
-                    inst.config or {},
+                    effective_config,
                     inst.client_ids or [],
                     in_q,
                     out_q
@@ -117,11 +121,11 @@ class StrategySupervisor:
                 "process": proc,
                 "in_queue": in_q,
                 "out_queue": out_q,
-                "symbol": (inst.config or {}).get("symbol", "NSE:RELIANCE" if "ac_srv2" in inst.template_key else "MCX:CRUDEOILM"),
+                "symbol": effective_config.get("symbol", "NSE:RELIANCE" if "ac_srv2" in inst.template_key else "MCX:CRUDEOILM"),
                 "extra_symbols": set(),
                 "client_ids": inst.client_ids or [],
                 "template_key": inst.template_key,
-                "config": inst.config or {}
+                "config": effective_config
             }
 
 
@@ -480,27 +484,26 @@ class StrategySupervisor:
                     if r.get("rejection_reason"):
                         rejection_reasons.append(r["rejection_reason"])
 
-            total_active = filled_count + open_count
-            if total_active > 0:
-                avg_p = round(avg_p / total_active, 2)
-
+            ord_qty = int(ord_data.get("quantity") or 1)
             current_legs = list(inst.legs_info or [])
+
             if side == "SELL": # Entry
                 # If existing legs are already closed or belong to past tests (e.g. 5850 strikes), start clean
-                has_active = any(l.get("status") in ["OPEN", "FILLED"] and "5850" not in str(l.get("symbol", "")) for l in current_legs)
+                has_active = any(l.get("status") in ["OPEN", "FILLED", "PENDING"] and "5850" not in str(l.get("symbol", "")) for l in current_legs)
                 if not has_active:
                     current_legs = []
-                if total_active > 0:
+
+                if filled_count > 0:
+                    avg_p = round(avg_p / filled_count, 2)
                     inst.last_trade_status = "OPEN"
                     inst.last_trade_at = datetime.datetime.utcnow()
-                    leg_st = "FILLED" if filled_count > 0 else "OPEN"
                     found = False
                     for leg in current_legs:
                         if leg.get("symbol") == sym:
                             leg["entry"] = avg_p
                             leg["ltp"] = avg_p
-                            leg["qty"] = -ord_data.get("quantity", 10)
-                            leg["status"] = leg_st
+                            leg["qty"] = -ord_qty
+                            leg["status"] = "FILLED"
                             found = True
                             break
                     if not found:
@@ -510,23 +513,46 @@ class StrategySupervisor:
                             "entry": avg_p,
                             "exit": None,
                             "ltp": avg_p,
-                            "qty": -ord_data.get("quantity", 10),
+                            "qty": -ord_qty,
                             "pnl": 0.0,
-                            "status": leg_st
+                            "status": "FILLED"
                         })
                     inst.legs_info = current_legs
-                    if filled_count > 0:
-                        self._log_strategy_decision(
-                            instance_id,
-                            "SUCCESS",
-                            f"Order for {sym} FILLED @ {avg_p} across {filled_count} broker account(s)."
-                        )
-                    else:
-                        self._log_strategy_decision(
-                            instance_id,
-                            "INFO",
-                            f"Order for {sym} placed and OPEN in broker book @ {avg_p}. Awaiting fill."
-                        )
+                    self._log_strategy_decision(
+                        instance_id,
+                        "SUCCESS",
+                        f"Order for {sym} FILLED @ ₹{avg_p} across {filled_count} broker account(s)."
+                    )
+                elif open_count > 0:
+                    # Order is sitting PENDING in broker order book with 0 fills
+                    inst.last_trade_status = "PENDING"
+                    found = False
+                    for leg in current_legs:
+                        if leg.get("symbol") == sym:
+                            leg["entry"] = 0.0
+                            leg["ltp"] = 0.0
+                            leg["qty"] = -ord_qty
+                            leg["pnl"] = 0.0
+                            leg["status"] = "PENDING"
+                            found = True
+                            break
+                    if not found:
+                        current_legs.append({
+                            "leg": sym.split(":")[-1],
+                            "symbol": sym,
+                            "entry": 0.0,
+                            "exit": None,
+                            "ltp": 0.0,
+                            "qty": -ord_qty,
+                            "pnl": 0.0,
+                            "status": "PENDING"
+                        })
+                    inst.legs_info = current_legs
+                    self._log_strategy_decision(
+                        instance_id,
+                        "INFO",
+                        f"Order for {sym} placed and PENDING in broker order book. Awaiting execution."
+                    )
                 else:
                     # Truly REJECTED by broker
                     inst.last_trade_status = "REJECTED"
@@ -750,14 +776,16 @@ class StrategySupervisor:
                                     leg_pnl = float(leg.get("pnl") or 0.0)
                                 leg["pnl"] = leg_pnl
                                 tot_realized += leg_pnl
-                            elif status in ["FILLED", "OPEN", "EXIT_PENDING"]:
-                                leg_pnl = round((entry - current_ltp) * qty * lot_mult, 2) if entry > 0 else 0.0
+                            elif status in ["FILLED", "EXIT_PENDING"] and entry > 0:
+                                leg_pnl = round((entry - current_ltp) * qty * lot_mult, 2)
                                 leg["pnl"] = leg_pnl
                                 tot_unrealized += leg_pnl
+                            else:
+                                leg["pnl"] = 0.0
 
-                        # If all active legs are closed, or last trade status is CLOSED, unrealized PnL is strictly 0.0!
+                        # If all active legs are closed, or last trade status is not OPEN (e.g. CLOSED, PENDING, REJECTED), unrealized PnL is strictly 0.0!
                         is_all_closed = all(l.get("status") == "CLOSED" or l.get("exit") is not None for l in legs if "5850" not in str(l.get("symbol", "")))
-                        if is_all_closed or inst.last_trade_status == "CLOSED":
+                        if is_all_closed or inst.last_trade_status in ["CLOSED", "PENDING", "REJECTED", "IDLE"]:
                             tot_unrealized = 0.0
                             db.query(Position).filter(Position.strategy_instance_id == inst.id).update({
                                 Position.net_quantity: 0,

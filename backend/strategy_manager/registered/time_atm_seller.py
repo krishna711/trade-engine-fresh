@@ -21,7 +21,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         self.entry_time = str(self.config.get("entry_time") or self.config.get("start_time") or "15:45:00")
         self.exit_time = str(self.config.get("exit_time") or self.config.get("end_time") or "23:18:00")
         self.legs = self.config.get("legs", ["CE", "PE"])
-        self.lots = int(self.config.get("lots", 1))
+        self.lots = int(self.config.get("lots") or self.config.get("quantity") or self.config.get("qty") or 1)
         self.stop_loss_per_lot = float(self.config.get("stop_loss_per_lot", 750.0))
         
         # Product type: MCX Options / Futures require NRML in Indian brokers due to RMS intraday blocking
@@ -48,7 +48,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         self.subscribed_option_symbols: List[str] = []
 
         # Keep track of last known underlying LTP for timer-based entries
-        self.last_underlying_ltp = 9850.0 if "CRUDEOIL" in self.symbol else 22500.0
+        self.last_underlying_ltp = 5880.0 if "CRUDEOIL" in self.symbol else 24500.0
 
         self.log_decision(
             "INIT",
@@ -75,6 +75,11 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
 
         if "lots" in new_config:
             self.lots = int(new_config["lots"])
+        elif "quantity" in new_config:
+            self.lots = int(new_config["quantity"])
+        elif "qty" in new_config:
+            self.lots = int(new_config["qty"])
+
         if "stop_loss_per_lot" in new_config:
             self.stop_loss_per_lot = float(new_config["stop_loss_per_lot"])
         self.max_loss = self.stop_loss_per_lot * self.lots
@@ -151,13 +156,20 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         if not ltp:
             return
 
-        # Track underlying price
-        if sym == self.symbol or self.symbol.split(":")[-1] in sym:
-            self.last_underlying_ltp = float(ltp)
+        # Track underlying price strictly (never let option ticks pollute underlying future price)
+        is_opt = sym.endswith("CE") or sym.endswith("PE")
+        is_underlying = (sym == self.symbol or sym == self.symbol.split(":")[-1]) and not is_opt
+
+        if is_underlying:
+            flt_ltp = float(ltp)
+            # Defensive check: Crude oil underlying must be within realistic bounds (2000 - 20000)
+            if "CRUDEOIL" in self.symbol.upper() and (flt_ltp < 2000.0 or flt_ltp > 20000.0):
+                return
+            self.last_underlying_ltp = flt_ltp
 
         # If tick is for underlying index/future and we are IDLE, evaluate entry
-        if self.trade_state == "IDLE" and (sym == self.symbol or self.symbol.split(":")[-1] in sym):
-            self._check_entry_and_exit(ltp)
+        if self.trade_state == "IDLE" and is_underlying:
+            self._check_entry_and_exit(self.last_underlying_ltp)
             return
 
         # If we are in trade, monitor leg LTPs and evaluate SL & Exit Time
@@ -165,26 +177,29 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             # Check if this tick is for one of the option legs
             for leg in self.current_trade["legs"]:
                 if leg["symbol"] == sym or sym.endswith(leg["symbol"].split(":")[-1]):
-                    leg["ltp"] = ltp
-                    if leg.get("entry") and leg["entry"] > 0:
+                    leg["ltp"] = float(ltp)
+                    # Rupee PnL strictly calculated ONLY when leg has actually been filled at broker!
+                    if leg.get("status") == "FILLED" and leg.get("entry") and leg["entry"] > 0:
                         # Selling: profit when LTP drops below entry price
                         is_mcx = "MCX" in self.symbol.upper()
                         # For MCX, order quantity is in lots, so rupee PnL = (entry - ltp) * lots * lot_size
                         # For NSE/BSE, order quantity is already in total units (lots * lot_size)
                         pnl_mult = self.lot_size if is_mcx else 1
-                        leg["pnl"] = round((leg["entry"] - ltp) * abs(leg["qty"]) * pnl_mult, 2)
+                        leg["pnl"] = round((leg["entry"] - float(ltp)) * abs(leg["qty"]) * pnl_mult, 2)
 
-            total_pnl = sum(leg.get("pnl", 0.0) for leg in self.current_trade["legs"])
+            # Total PnL only sums legs that are actually filled
+            total_pnl = sum(leg.get("pnl", 0.0) for leg in self.current_trade["legs"] if leg.get("status") == "FILLED")
             self.current_trade["total_pnl"] = round(total_pnl, 2)
 
-            # Check SL and Exit Time
-            self._check_exit_conditions(total_pnl)
+            # Check SL and Exit Time only if at least one leg is actively filled
+            if self.trade_state == "IN_TRADE":
+                self._check_exit_conditions(total_pnl)
 
     def on_timer(self):
         """Called every second by worker container process for heartbeat and second-precision exit timing"""
         if self.trade_state == "IDLE":
             self._check_entry_and_exit(self.last_underlying_ltp)
-        elif self.trade_state in ["IN_TRADE", "ENTRY_SENT"] and self.current_trade:
+        elif self.trade_state == "IN_TRADE" and self.current_trade:
             total_pnl = self.current_trade.get("total_pnl", 0.0)
             self._check_exit_conditions(total_pnl)
 
@@ -207,7 +222,22 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             self._trigger_entry(underlying_ltp, curr_time)
 
     def _trigger_entry(self, underlying_ltp: float, curr_time: datetime.time):
-        atm_strike = int(round(underlying_ltp / self.strike_step) * self.strike_step)
+        # Sanity check for underlying price
+        if "CRUDEOIL" in self.symbol.upper() and (underlying_ltp > 20000.0 or underlying_ltp < 2000.0):
+            self.log_decision(
+                "PRICE ANOMALY",
+                f"Underlying LTP {underlying_ltp} out of bounds for {self.symbol}. Skipping entry.",
+                level="WARNING"
+            )
+            return
+
+        raw_strike = int(round(underlying_ltp / self.strike_step) * self.strike_step)
+        root = self.symbol.split(":")[-1]
+        
+        # Snap strike to nearest real strike available in broker master list
+        snapped = symbol_mapper.snap_to_nearest_option_strike(root, raw_strike, "CE")
+        atm_strike = snapped if snapped else raw_strike
+
         option_symbols = self._build_option_symbols(self.symbol, atm_strike)
 
         # MCX order quantity rule: For MCX orders, send lot without multiplying lot size.
@@ -243,14 +273,13 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
                 f"Dispatched SELL {opt_sym} (Qty: {order_qty} {'lots' if is_mcx else 'shares'}) [Marketable LIMIT + buffer] to Order Manager"
             )
 
-            # Estimated initial LTP for tracking until first fill/tick
-            est_ltp = round(underlying_ltp * 0.05, 1) or 500.0
+            # Initial state before fill: entry price is 0.0, status is SENT
             legs_data.append({
                 "leg": f"{self.symbol.split(':')[-1]} {atm_strike} {leg}",
                 "symbol": opt_sym,
-                "entry": est_ltp,
+                "entry": 0.0,
                 "exit": None,
-                "ltp": est_ltp,
+                "ltp": 0.0,
                 "qty": -order_qty,
                 "pnl": 0.0,
                 "status": "SENT"
@@ -281,7 +310,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
 
         if side == "SELL" and self.current_trade:
             # Entry fills
-            avg_price = 0.0
+            tot_filled_price = 0.0
             filled_count = 0
             open_count = 0
             rejected_count = 0
@@ -290,43 +319,42 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             for r in results:
                 st = str(r.get("status") or "").upper()
                 if r.get("success") and st == "FILLED":
-                    avg_price += float(r.get("price", 0.0))
+                    tot_filled_price += float(r.get("price", 0.0))
                     filled_count += 1
                 elif r.get("success") and st in ["OPEN", "PENDING", "NEW"]:
-                    avg_price += float(r.get("price", 0.0))
                     open_count += 1
                 else:
                     rejected_count += 1
                     if r.get("rejection_reason"):
                         rejection_reasons.append(r["rejection_reason"])
 
-            total_active = filled_count + open_count
-            if total_active > 0:
-                avg_price = round(avg_price / total_active, 2)
+            if filled_count > 0:
+                avg_price = round(tot_filled_price / filled_count, 2)
                 for leg in self.current_trade["legs"]:
                     if leg["symbol"] == sym:
-                        if avg_price > 0:
-                            leg["entry"] = avg_price
-                            leg["ltp"] = avg_price
-                        leg["status"] = "FILLED" if filled_count > 0 else "OPEN"
+                        leg["entry"] = avg_price
+                        leg["ltp"] = avg_price
+                        leg["status"] = "FILLED"
 
-                if filled_count > 0:
-                    self.log_decision(
-                        "ORDER FILLED",
-                        f"Leg {sym} SELL filled @ {avg_price} across {filled_count} broker account(s)."
-                    )
-                else:
-                    self.log_decision(
-                        "ORDER OPEN",
-                        f"Leg {sym} SELL order is OPEN on exchange @ {avg_price}. Monitoring fills & PnL."
-                    )
-
-                # Transition to IN_TRADE so we actively track ticks, SL, and exits
                 self.trade_state = "IN_TRADE"
+                self.log_decision(
+                    "ORDER FILLED",
+                    f"Leg {sym} SELL filled @ {avg_price} across {filled_count} broker account(s)."
+                )
                 self.log_decision(
                     "TRADE ACTIVE",
                     f"ATM legs active. Active monitoring SL (Max Loss: -INR {self.max_loss:.2f}) and Exit Time ({self.exit_time})."
                 )
+            elif open_count > 0:
+                for leg in self.current_trade["legs"]:
+                    if leg["symbol"] == sym:
+                        leg["entry"] = 0.0
+                        leg["status"] = "PENDING"
+                self.log_decision(
+                    "ORDER PENDING",
+                    f"Leg {sym} SELL order is PENDING in broker order book. Awaiting execution."
+                )
+                # Keep trade_state = "ENTRY_SENT" so fake PnL is NOT calculated
             else:
                 rej_msg = "; ".join(set(rejection_reasons)) if rejection_reasons else "Broker/RMS rejected order"
                 for leg in self.current_trade["legs"]:
