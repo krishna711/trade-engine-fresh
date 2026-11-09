@@ -1,4 +1,5 @@
 import os
+import re
 import datetime
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, scoped_session
@@ -634,16 +635,21 @@ def seed_initial_data():
                 inst.legs_info = clean_legs
                 flag_modified(inst, "legs_info")
 
-            # If strategy is STOPPED or has no remaining active legs, mark trade CLOSED & unrealized 0.0
+            # If strategy has no remaining active legs, mark trade CLOSED & unrealized 0.0
             is_all_closed = not inst.legs_info or all(l.get("status") == "CLOSED" or l.get("exit") is not None for l in inst.legs_info)
-            if inst.status == "STOPPED" or is_all_closed:
-                inst.last_trade_status = "CLOSED"
-                inst.unrealized_pnl = 0.0
-                inst.total_pnl = inst.realized_pnl
-                db.query(Position).filter(Position.strategy_instance_id == inst.id).update({
-                    Position.net_quantity: 0,
-                    Position.unrealized_pnl: 0.0
-                })
+            if is_all_closed:
+                if inst.status == "STOPPED":
+                    inst.last_trade_status = "CLOSED"
+                    inst.unrealized_pnl = 0.0
+                    inst.total_pnl = inst.realized_pnl
+                    db.query(Position).filter(Position.strategy_instance_id == inst.id).update({
+                        Position.net_quantity: 0,
+                        Position.unrealized_pnl: 0.0
+                    })
+            else:
+                # Active trade with filled legs is in progress: ensure status is RUNNING and trade status is OPEN
+                inst.last_trade_status = "OPEN"
+                inst.status = "RUNNING"
 
         # Purge / cancel any corrupted orders with non-existent strikes
         db.query(Order).filter(

@@ -28,6 +28,19 @@ class BaseStrategy(ABC):
         """Called once when strategy worker starts"""
         pass
 
+    def rehydrate_state(self, initial_state: Dict[str, Any]):
+        """Called on worker startup if recovering from previous active trade or restart"""
+        legs = initial_state.get("legs_info", [])
+        has_active = any(l.get("status") in ["FILLED", "OPEN", "PENDING"] and l.get("exit") is None for l in legs)
+        if initial_state.get("trade_state") == "IN_TRADE" or has_active:
+            self.trade_state = "IN_TRADE"
+            self.current_trade = {
+                "symbol": self.symbol,
+                "entry_time": initial_state.get("last_trade_at") or datetime.datetime.utcnow().isoformat(),
+                "legs": [dict(l) for l in legs],
+                "total_pnl": float(initial_state.get("unrealized_pnl", 0.0) or 0.0)
+            }
+
     @abstractmethod
     def on_candle(self, candle: Dict[str, Any], history: List[Dict[str, Any]]):
         """Called when a new completed candle is fetched/generated"""

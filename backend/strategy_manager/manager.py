@@ -70,7 +70,10 @@ class StrategySupervisor:
         strat_ids = []
         db = SessionLocal()
         try:
-            running_strats = db.query(StrategyInstance).filter(StrategyInstance.status == "RUNNING").all()
+            # Auto-start strategies that are marked RUNNING or have an OPEN trade awaiting exit/monitoring
+            running_strats = db.query(StrategyInstance).filter(
+                (StrategyInstance.status == "RUNNING") | (StrategyInstance.last_trade_status == "OPEN")
+            ).all()
             strat_ids = [st.id for st in running_strats]
         finally:
             db.close()
@@ -99,6 +102,19 @@ class StrategySupervisor:
             effective_config = dict(tpl.default_config or {})
             effective_config.update(inst.config or {})
 
+            # Build initial_state if strategy has an active trade in progress for state recovery
+            initial_state = None
+            has_active_legs = inst.legs_info and any(l.get("status") in ["FILLED", "OPEN", "PENDING"] and l.get("exit") is None for l in inst.legs_info)
+            if inst.last_trade_status == "OPEN" or has_active_legs:
+                initial_state = {
+                    "trade_state": "IN_TRADE",
+                    "last_trade_status": "OPEN",
+                    "legs_info": inst.legs_info or [],
+                    "unrealized_pnl": float(inst.unrealized_pnl or 0.0),
+                    "realized_pnl": float(inst.realized_pnl or 0.0),
+                    "last_trade_at": inst.last_trade_at.isoformat() if inst.last_trade_at else None
+                }
+
             in_q = multiprocessing.Queue()
             out_q = multiprocessing.Queue()
 
@@ -111,23 +127,36 @@ class StrategySupervisor:
                     effective_config,
                     inst.client_ids or [],
                     in_q,
-                    out_q
+                    out_q,
+                    initial_state
                 ),
                 daemon=True
             )
             proc.start()
+
+            extra_symbols = set()
+            if initial_state and initial_state.get("legs_info"):
+                for l in initial_state["legs_info"]:
+                    s = l.get("symbol")
+                    if s:
+                        extra_symbols.add(s)
+                if extra_symbols:
+                    try:
+                        from backend.feed_manager.manager import feed_manager
+                        asyncio.create_task(feed_manager.subscribe(list(extra_symbols)))
+                    except Exception:
+                        pass
 
             self.active_workers[instance_id] = {
                 "process": proc,
                 "in_queue": in_q,
                 "out_queue": out_q,
                 "symbol": effective_config.get("symbol", "NSE:RELIANCE" if "ac_srv2" in inst.template_key else "MCX:CRUDEOILM"),
-                "extra_symbols": set(),
+                "extra_symbols": extra_symbols,
                 "client_ids": inst.client_ids or [],
                 "template_key": inst.template_key,
                 "config": effective_config
             }
-
 
             inst.status = "RUNNING"
             db.commit()

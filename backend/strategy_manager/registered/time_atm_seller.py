@@ -1,4 +1,5 @@
 import datetime
+import re
 from typing import Dict, Any, List, Optional
 from backend.strategy_manager.base_strategy import BaseStrategy
 from backend.core.symbol_mapper import symbol_mapper
@@ -57,6 +58,49 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             f"Lots: {self.lots} (Size: {self.lot_size}) | SL: INR {self.max_loss:.2f} ({self.stop_loss_per_lot}/lot) | "
             f"Strike Step: {self.strike_step}"
         )
+
+    def rehydrate_state(self, initial_state: Dict[str, Any]):
+        """Recovers active open straddle trade state upon process spawn / engine restart"""
+        legs = initial_state.get("legs_info", [])
+        has_active = any(l.get("status") in ["FILLED", "OPEN", "PENDING"] and l.get("exit") is None for l in legs)
+
+        if initial_state.get("trade_state") == "IN_TRADE" or has_active:
+            self.trade_state = "IN_TRADE"
+            atm_strike = 0
+            opt_symbols = []
+            clean_legs = []
+
+            for l in legs:
+                l_copy = dict(l)
+                sym = str(l_copy.get("symbol") or "")
+                if sym:
+                    opt_symbols.append(sym)
+                m = re.search(r"(\d+)", sym) or re.search(r"(\d+)", str(l_copy.get("leg") or ""))
+                if m:
+                    atm_strike = int(m.group(1))
+                clean_legs.append(l_copy)
+
+            self.current_trade = {
+                "underlying": self.symbol,
+                "atm_strike": atm_strike,
+                "lots": self.lots,
+                "lot_size": self.lot_size,
+                "max_loss": self.max_loss,
+                "entry_time": initial_state.get("last_trade_at") or datetime.datetime.utcnow().isoformat(),
+                "legs": clean_legs,
+                "total_pnl": float(initial_state.get("unrealized_pnl", 0.0) or 0.0)
+            }
+
+            if opt_symbols:
+                self.subscribed_option_symbols = list(set(opt_symbols))
+                self.request_subscribe(self.subscribed_option_symbols)
+
+            self.log_decision(
+                "STATE REHYDRATED",
+                f"Resumed active straddle trade ({len(clean_legs)} legs). State: IN_TRADE. Strike: {atm_strike}. "
+                f"Active tracking SL (Max Loss: -₹{self.max_loss:.2f}) and Exit Time ({self.exit_time}).",
+                level="SUCCESS"
+            )
 
     def on_config_updated(self, new_config: Dict[str, Any]):
         """Dynamically applies parameter changes (timings, lots, stop loss) while running"""

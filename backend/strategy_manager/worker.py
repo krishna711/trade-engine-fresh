@@ -11,7 +11,8 @@ def strategy_process_entrypoint(
     config: Dict[str, Any],
     client_ids: List[str],
     in_queue: multiprocessing.Queue,
-    out_queue: multiprocessing.Queue
+    out_queue: multiprocessing.Queue,
+    initial_state: Optional[Dict[str, Any]] = None
 ):
     """
     Isolated OS Process container for a strategy instance.
@@ -24,6 +25,13 @@ def strategy_process_entrypoint(
         strat_cls = getattr(mod, class_name)
         instance = strat_cls(strategy_id, config, client_ids)
         instance.on_init()
+
+        # Re-hydrate state if recovering from previous active trade or restart
+        if initial_state and hasattr(instance, "rehydrate_state"):
+            try:
+                instance.rehydrate_state(initial_state)
+            except Exception as e_reh:
+                print(f"[Worker {strategy_id}] Error in rehydrate_state: {e_reh}")
 
         out_queue.put({
             "type": "STATUS",
