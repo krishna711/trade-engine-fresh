@@ -1117,3 +1117,142 @@ class FTXPaperResearchStrategy(BaseStrategy):
             self.vix_at_event = float(new_config["vix_at_event"])
         if "pcr" in new_config:
             self.pcr = float(new_config["pcr"])
+
+
+def compute_ftx_chart_payload(raw_bars: List[Dict[str, Any]], cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Computes OHLC candles, FTX structural overlays (VWAP, OR H/L, Session H/L, Prior Day H/L), and cell signals."""
+    valid_bars = [
+        b for b in (raw_bars or [])
+        if b.get("open") is not None and b.get("high") is not None and b.get("low") is not None and b.get("close") is not None
+    ]
+    if not valid_bars:
+        return {"candles": [], "overlays": {}, "oscillators": {}, "signals": []}
+
+    parsed_bars: List[Bar] = []
+    candles_out: List[Dict[str, Any]] = []
+    for b in valid_bars:
+        t_val = b.get("time")
+        if isinstance(t_val, datetime.datetime):
+            dt = t_val
+        elif isinstance(t_val, (int, float)):
+            dt = datetime.datetime.fromtimestamp(t_val / 1000.0 if t_val > 1e11 else t_val, tz=datetime.timezone.utc)
+        else:
+            s = str(t_val or "").replace("Z", "+00:00")
+            try:
+                dt = datetime.datetime.fromisoformat(s)
+            except Exception:
+                dt = datetime.datetime.now(datetime.timezone.utc)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        dt_ist = dt.astimezone(IST_TZ)
+
+        o, h, l, c = float(b["open"]), float(b["high"]), float(b["low"]), float(b["close"])
+        v = float(b.get("volume") or 0.0)
+        parsed_bars.append(Bar(timestamp=dt_ist, open=o, high=h, low=l, close=c, volume=v))
+        candles_out.append({
+            "time": dt_ist.isoformat(),
+            "label": dt_ist.strftime("%H:%M"),
+            "open": round(o, 2),
+            "high": round(h, 2),
+            "low": round(l, 2),
+            "close": round(c, 2),
+            "volume": round(v, 2),
+        })
+
+    n = len(parsed_bars)
+    vwap_arr: List[Optional[float]] = [None] * n
+    or_high_arr: List[Optional[float]] = [None] * n
+    or_low_arr: List[Optional[float]] = [None] * n
+    sess_high_arr: List[Optional[float]] = [None] * n
+    sess_low_arr: List[Optional[float]] = [None] * n
+    prior_high_arr: List[Optional[float]] = [None] * n
+    prior_low_arr: List[Optional[float]] = [None] * n
+    atr_arr: List[Optional[float]] = [None] * n
+    signals: List[Dict[str, Any]] = []
+
+    morning_policies = {p.cell: p for p in MORNING_CELL_POLICIES}
+    afternoon_policies = {p.cell: p for p in AFTERNOON_CELL_POLICIES}
+    pcr = float(cfg.get("pcr", 1.0))
+    vix_open = float(cfg.get("vix_open", 15.0))
+    vix_at_event = float(cfg.get("vix_at_event", 15.0))
+
+    session_bars: List[Bar] = []
+    cur_date = None
+    prior_day_high: Optional[float] = None
+    prior_day_low: Optional[float] = None
+
+    for idx, bar in enumerate(parsed_bars):
+        b_date = bar.timestamp.date()
+        if cur_date is not None and b_date != cur_date and session_bars:
+            prior_day_high = max(x.high for x in session_bars)
+            prior_day_low = min(x.low for x in session_bars)
+            session_bars = []
+        cur_date = b_date
+        prior_bars = list(session_bars)
+        session_bars.append(bar)
+
+        prior_high_arr[idx] = round(prior_day_high, 2) if prior_day_high is not None else None
+        prior_low_arr[idx] = round(prior_day_low, 2) if prior_day_low is not None else None
+        sess_high_arr[idx] = round(max(x.high for x in session_bars), 2)
+        sess_low_arr[idx] = round(min(x.low for x in session_bars), 2)
+
+        if len(session_bars) < 2:
+            continue
+
+        feats = compute_features(
+            session_bars=session_bars,
+            opening_range_bars=15,
+            atr_window=20,
+            prior_day_high=prior_day_high,
+            prior_day_low=prior_day_low,
+        )
+        vwap_arr[idx] = round(feats.vwap, 2) if feats.vwap is not None else None
+        or_high_arr[idx] = round(feats.opening_range_high, 2) if feats.opening_range_high is not None else None
+        or_low_arr[idx] = round(feats.opening_range_low, 2) if feats.opening_range_low is not None else None
+        atr_arr[idx] = round(feats.atr, 2)
+
+        cur_min = bar.ist_minute
+        session_type = Session.OUTSIDE
+        if SESSION_OPEN_MINUTES + MORNING_WINDOW[0] <= cur_min < SESSION_OPEN_MINUTES + MORNING_WINDOW[1]:
+            session_type = Session.MORNING
+        elif SESSION_OPEN_MINUTES + AFTERNOON_WINDOW[0] <= cur_min < SESSION_OPEN_MINUTES + AFTERNOON_WINDOW[1]:
+            session_type = Session.AFTERNOON
+
+        if session_type != Session.OUTSIDE:
+            locs = detect_all_locations(feats, bar.close)
+            if locs:
+                try:
+                    cell = Cell(*locs)
+                    policy_map = morning_policies if session_type == Session.MORNING else afternoon_policies
+                    policy = policy_map.get(cell)
+                    if policy:
+                        adm_feats = build_admission_features(prior_bars, bar, pcr=pcr, vix_open=vix_open, vix_at_event=vix_at_event)
+                        admitted, _ = admission_result(adm_feats, policy.hypothesis)
+                        if admitted:
+                            signals.append({
+                                "index": idx,
+                                "time": bar.timestamp.isoformat(),
+                                "label_time": bar.timestamp.strftime("%H:%M"),
+                                "type": policy.direction,
+                                "price": round(bar.close, 2),
+                                "label": f"{policy.direction} ({cell.name})",
+                            })
+                except ValueError:
+                    pass
+
+    return {
+        "candles": candles_out,
+        "overlays": {
+            "vwap": vwap_arr,
+            "or_high": or_high_arr,
+            "or_low": or_low_arr,
+            "session_high": sess_high_arr,
+            "session_low": sess_low_arr,
+            "prior_day_high": prior_high_arr,
+            "prior_day_low": prior_low_arr,
+        },
+        "oscillators": {
+            "atr": atr_arr,
+        },
+        "signals": signals,
+    }

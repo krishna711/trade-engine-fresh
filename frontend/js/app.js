@@ -70,6 +70,9 @@ class App {
                 document.body.classList.toggle("light-theme");
                 this.currentTheme = document.body.classList.contains("light-theme") ? "light" : "dark";
                 localStorage.setItem("fresh_trade_theme", this.currentTheme);
+                if (this.currentView === "charts" && window.chartsPageManager) {
+                    window.chartsPageManager.renderCurrent();
+                }
             };
         }
 
@@ -103,12 +106,18 @@ class App {
             if (window.strategiesManager) window.strategiesManager.loadInstances();
         } else if (viewName === "strategies") {
             if (window.strategiesManager) window.strategiesManager.loadTemplates();
+        } else if (viewName === "charts") {
+            if (window.chartsPageManager) window.chartsPageManager.onViewActivated();
         } else if (viewName === "status") {
             if (window.statusManager) window.statusManager.loadFeedStatus();
         } else if (viewName === "logs") {
             if (window.logsManager) window.logsManager.loadLogs();
         } else if (viewName === "reports") {
             if (window.reportsManager) window.reportsManager.loadReports();
+        }
+
+        if (viewName !== "charts" && window.chartsPageManager) {
+            window.chartsPageManager.onViewDeactivated();
         }
     }
 

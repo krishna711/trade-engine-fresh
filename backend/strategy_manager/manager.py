@@ -13,11 +13,26 @@ from backend.order_manager.manager import order_manager
 MODULE_CLASS_MAP = {
     "strat_ftx_paper_v1": ("backend.strategy_manager.registered.ftx_paper_research", "FTXPaperResearchStrategy"),
     "strat_time_atm_seller_v1": ("backend.strategy_manager.registered.time_atm_seller", "TimeBasedATMSellerStrategy"),
-    "strat_ac_srv2_future_v1": ("backend.strategy_manager.registered.ac_srv2_future", "ACSRv2FutureStrategy"),
-    "strat_ema_cross_v1": ("backend.strategy_manager.registered.ema_crossover", "EMACrossoverStrategy"),
-    "strat_short_straddle_v2": ("backend.strategy_manager.registered.short_straddle", "ShortStraddleStrategy"),
-    "strat_supertrend_mcx_v1": ("backend.strategy_manager.registered.supertrend_mcx", "SupertrendMCXStrategy")
+    "strat_pcp_pro_v201": ("backend.strategy_manager.registered.pcp_pro_v201", "PivotChandelierProV201Strategy"),
 }
+
+
+def _leg_matches_symbol(leg: Dict[str, Any], sym: str) -> bool:
+    """Checks whether a stored leg entry matches the canonical order symbol."""
+    l_sym = str(leg.get("symbol") or leg.get("leg") or "")
+    if not l_sym or not sym:
+        return False
+    return l_sym == sym or sym.endswith(l_sym) or l_sym.endswith(sym.split(":")[-1])
+
+
+def _calc_leg_pnl(entry_p: float, exit_or_ltp: float, raw_qty: int, sym: str) -> float:
+    """Calculates direction-aware PnL (positive qty = Long, negative qty = Short)."""
+    if entry_p <= 0 or exit_or_ltp <= 0:
+        return 0.0
+    is_long = int(raw_qty or -1) > 0
+    diff = (exit_or_ltp - entry_p) if is_long else (entry_p - exit_or_ltp)
+    lot_mult = symbol_mapper.get_lot_size(sym) if "MCX" in (sym or "").upper() else 1
+    return round(diff * abs(int(raw_qty or 1)) * lot_mult, 2)
 
 class StrategySupervisor:
     """
@@ -95,7 +110,10 @@ class StrategySupervisor:
             if not tpl:
                 return False
 
-            mod_info = MODULE_CLASS_MAP.get(tpl.key, ("backend.strategy_manager.registered.ema_crossover", "EMACrossoverStrategy"))
+            mod_info = MODULE_CLASS_MAP.get(tpl.key)
+            if not mod_info:
+                print(f"[StrategyManager] Unknown/unsupported strategy template: {tpl.key}")
+                return False
             module_path, class_name = mod_info
 
             # Merge template defaults with instance config so parameters are never lost
@@ -151,7 +169,7 @@ class StrategySupervisor:
                 "process": proc,
                 "in_queue": in_q,
                 "out_queue": out_q,
-                "symbol": effective_config.get("symbol", "NSE:RELIANCE" if "ac_srv2" in inst.template_key else "MCX:CRUDEOILM"),
+                "symbol": effective_config.get("symbol", "NSE:NIFTY" if "pcp_pro" in inst.template_key or "ftx" in inst.template_key else "MCX:CRUDEOILM"),
                 "extra_symbols": extra_symbols,
                 "client_ids": inst.client_ids or [],
                 "template_key": inst.template_key,
@@ -525,9 +543,19 @@ class StrategySupervisor:
                         rejection_reasons.append(r["rejection_reason"])
 
             ord_qty = int(ord_data.get("quantity") or 1)
+            signed_entry_qty = ord_qty if side == "BUY" else -ord_qty
             current_legs = list(inst.legs_info or [])
 
-            if side == "SELL": # Entry
+            # Determine if this order exits an existing opposite-side open leg or opens a new leg
+            is_exit = any(
+                _leg_matches_symbol(leg, sym)
+                and leg.get("status") not in ["CLOSED", "REJECTED", "CANCELLED"]
+                and leg.get("exit") is None
+                and ((side == "BUY" and int(leg.get("qty") or -1) < 0) or (side == "SELL" and int(leg.get("qty") or -1) > 0))
+                for leg in current_legs
+            )
+
+            if not is_exit: # Entry (Long BUY or Short SELL)
                 # If existing legs are already closed or belong to past tests (e.g. 5850 strikes), start clean
                 has_active = any(l.get("status") in ["OPEN", "FILLED", "PENDING"] and "5850" not in str(l.get("symbol", "")) for l in current_legs)
                 if not has_active:
@@ -542,7 +570,7 @@ class StrategySupervisor:
                         if leg.get("symbol") == sym:
                             leg["entry"] = avg_p
                             leg["ltp"] = avg_p
-                            leg["qty"] = -ord_qty
+                            leg["qty"] = signed_entry_qty
                             leg["status"] = "FILLED"
                             found = True
                             break
@@ -553,7 +581,7 @@ class StrategySupervisor:
                             "entry": avg_p,
                             "exit": None,
                             "ltp": avg_p,
-                            "qty": -ord_qty,
+                            "qty": signed_entry_qty,
                             "pnl": 0.0,
                             "status": "FILLED"
                         })
@@ -571,7 +599,7 @@ class StrategySupervisor:
                         if leg.get("symbol") == sym:
                             leg["entry"] = 0.0
                             leg["ltp"] = 0.0
-                            leg["qty"] = -ord_qty
+                            leg["qty"] = signed_entry_qty
                             leg["pnl"] = 0.0
                             leg["status"] = "PENDING"
                             found = True
@@ -583,7 +611,7 @@ class StrategySupervisor:
                             "entry": 0.0,
                             "exit": None,
                             "ltp": 0.0,
-                            "qty": -ord_qty,
+                            "qty": signed_entry_qty,
                             "pnl": 0.0,
                             "status": "PENDING"
                         })
@@ -607,16 +635,14 @@ class StrategySupervisor:
                         f"Order for {sym} REJECTED by broker: {rej_summary}",
                         is_dismissed=False
                     )
-            elif side == "BUY": # Exit
+            else: # Exit (closing open Short with BUY or open Long with SELL)
                 for leg in current_legs:
-                    l_sym = str(leg.get("symbol") or leg.get("leg") or "")
-                    if l_sym == sym or sym.endswith(l_sym) or l_sym.endswith(sym.split(":")[-1]):
+                    if _leg_matches_symbol(leg, sym):
                         if filled_count > 0:
-                            leg["exit"] = avg_p
-                            is_mcx = "MCX" in sym.upper()
-                            lot_mult = symbol_mapper.get_lot_size(sym) if is_mcx else 1
-                            entry_p = float(leg.get("entry") or avg_p)
-                            leg["pnl"] = round((entry_p - avg_p) * abs(leg.get("qty", 10)) * lot_mult, 2)
+                            avg_exit_p = round(avg_p / filled_count, 2)
+                            leg["exit"] = avg_exit_p
+                            entry_p = float(leg.get("entry") or avg_exit_p)
+                            leg["pnl"] = _calc_leg_pnl(entry_p, avg_exit_p, int(leg.get("qty") or -ord_qty), sym)
                             leg["status"] = "CLOSED"
                         elif open_count > 0:
                             leg["status"] = "EXIT_PENDING"
@@ -663,34 +689,34 @@ class StrategySupervisor:
 
             legs = [dict(l) for l in (inst.legs_info or [])]
             if st == "FILLED":
-                if side == "SELL":
+                is_exit = any(
+                    _leg_matches_symbol(leg, sym)
+                    and leg.get("status") not in ["CLOSED", "REJECTED", "CANCELLED"]
+                    and leg.get("exit") is None
+                    and ((side == "BUY" and int(leg.get("qty") or -1) < 0) or (side == "SELL" and int(leg.get("qty") or -1) > 0))
+                    for leg in legs
+                )
+                if not is_exit:
                     inst.last_trade_status = "OPEN"
                     inst.last_trade_at = datetime.datetime.utcnow()
                     for leg in legs:
-                        l_sym = str(leg.get("symbol") or leg.get("leg") or "")
-                        if l_sym == sym or sym.endswith(l_sym) or l_sym.endswith(sym.split(":")[-1]):
+                        if _leg_matches_symbol(leg, sym):
                             if avg_p > 0:
                                 leg["entry"] = avg_p
                                 if float(leg.get("ltp") or 0.0) <= 0.0:
                                     leg["ltp"] = avg_p
                                 ltp = float(leg.get("ltp") or avg_p)
-                                is_mcx = "MCX" in sym.upper()
-                                lot_mult = symbol_mapper.get_lot_size(sym) if is_mcx else 1
-                                qty = abs(int(leg.get("qty") or 1))
-                                leg["pnl"] = round((avg_p - ltp) * qty * lot_mult, 2)
+                                leg["pnl"] = _calc_leg_pnl(avg_p, ltp, int(leg.get("qty") or (1 if side == "BUY" else -1)), sym)
                             leg["status"] = "FILLED"
                     tot_unrealized = sum(float(l.get("pnl") or 0.0) for l in legs if l.get("status") in ["FILLED", "OPEN"] and l.get("exit") is None)
                     inst.unrealized_pnl = round(tot_unrealized, 2)
                     inst.total_pnl = round((inst.realized_pnl or 0.0) + inst.unrealized_pnl, 2)
-                elif side == "BUY":
+                else:
                     for leg in legs:
-                        l_sym = str(leg.get("symbol") or leg.get("leg") or "")
-                        if l_sym == sym or sym.endswith(l_sym) or l_sym.endswith(sym.split(":")[-1]):
+                        if _leg_matches_symbol(leg, sym):
                             if avg_p > 0:
                                 leg["exit"] = avg_p
-                                is_mcx = "MCX" in sym.upper()
-                                lot_mult = symbol_mapper.get_lot_size(sym) if is_mcx else 1
-                                leg["pnl"] = round(((leg.get("entry") or avg_p) - avg_p) * abs(leg.get("qty", 10)) * lot_mult, 2)
+                                leg["pnl"] = _calc_leg_pnl(float(leg.get("entry") or avg_p), avg_p, int(leg.get("qty") or -10), sym)
                             leg["status"] = "CLOSED"
                     active_legs = [l for l in legs if l.get("status") != "REJECTED" and "5850" not in str(l.get("symbol", ""))]
                     if active_legs and all(leg.get("exit") is not None or leg.get("status") == "CLOSED" for leg in active_legs):
@@ -757,7 +783,7 @@ class StrategySupervisor:
                     if tf.isdigit():
                         tf = f"{tf}m"
                     if tf not in ["1m", "3m", "5m", "15m", "1h"]:
-                        tf = "3m" if "ac_srv2" in str(worker.get("template_key", "")) else "5m"
+                        tf = "3m" if "pcp_pro" in str(worker.get("template_key", "")) else ("1m" if "ftx" in str(worker.get("template_key", "")) else "5m")
                     count = int(cfg.get("candle_count", 60))
                     bars = feed_manager.ohlc_builder.get_bars(sym, resolution=tf, count=count)
                     if bars:
@@ -795,9 +821,7 @@ class StrategySupervisor:
                             sym = leg.get("symbol")
                             status = leg.get("status", "OPEN")
                             entry = float(leg.get("entry", 0.0) or 0.0)
-                            qty = abs(int(leg.get("qty", 1) or 1))
-                            is_mcx = "MCX" in (sym or "").upper()
-                            lot_mult = symbol_mapper.get_lot_size(sym) if is_mcx else 1
+                            raw_qty = int(leg.get("qty", -1) or -1)
 
                             # Check tick cache for current LTP
                             cached_tick = feed_manager.ticks_cache.get(sym)
@@ -819,13 +843,13 @@ class StrategySupervisor:
                             if status in ["CLOSED"] or leg.get("exit") is not None:
                                 exit_p = float(leg.get("exit") or 0.0)
                                 if exit_p > 0:
-                                    leg_pnl = round((entry - exit_p) * qty * lot_mult, 2) if entry > 0 else 0.0
+                                    leg_pnl = _calc_leg_pnl(entry, exit_p, raw_qty, sym)
                                 else:
                                     leg_pnl = float(leg.get("pnl") or 0.0)
                                 leg["pnl"] = leg_pnl
                                 tot_realized += leg_pnl
                             elif status in ["FILLED", "EXIT_PENDING"] and entry > 0:
-                                leg_pnl = round((entry - current_ltp) * qty * lot_mult, 2)
+                                leg_pnl = _calc_leg_pnl(entry, current_ltp, raw_qty, sym)
                                 leg["pnl"] = leg_pnl
                                 tot_unrealized += leg_pnl
                             else:

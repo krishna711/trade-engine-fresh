@@ -1162,20 +1162,52 @@ class StrategiesManager {
 
     renderTemplates(templates) {
         if (!this.templatesTableBody) return;
-        this.templatesTableBody.innerHTML = templates.map(tpl => `
+        this.templatesTableBody.innerHTML = templates.map(tpl => {
+            const cfg = tpl.default_config || {};
+            const paramCount = Object.keys(cfg).length;
+            const sym = cfg.symbol || "NSE:NIFTY";
+            const tfOrTime = cfg.timeframe || (cfg.entry_time ? `${cfg.entry_time}–${cfg.exit_time || ''}` : "");
+            const domId = `tpl-cfg-${tpl.key.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+            return `
             <tr>
                 <td><code style="color: var(--accent-cyan); font-weight: 700;">${tpl.key}</code></td>
                 <td><strong>${tpl.name_admin}</strong></td>
                 <td>${tpl.name_user}</td>
-                <td><pre style="font-size: 0.7rem; max-width: 300px; overflow-x: auto; background: var(--bg-tertiary); padding: 4px; border-radius: 4px;">${JSON.stringify(tpl.default_config, null, 1)}</pre></td>
+                <td>
+                    <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                        <span class="leg-pill" style="font-size: 0.72rem; padding: 2px 7px;">${sym}${tfOrTime ? ` • ${tfOrTime}` : ""}</span>
+                        <button type="button" class="action-btn-sm" onclick="strategiesManager.toggleTemplateConfig('${domId}', this)" style="font-size: 0.72rem; padding: 2px 8px; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-secondary);">
+                            ▶ Config (${paramCount})
+                        </button>
+                    </div>
+                    <pre id="${domId}" style="display: none; font-size: 0.7rem; max-width: 340px; max-height: 240px; overflow: auto; background: var(--bg-tertiary); padding: 6px 8px; border-radius: 6px; margin-top: 6px; border: 1px solid var(--border-color);">${JSON.stringify(cfg, null, 2)}</pre>
+                </td>
                 <td>${tpl.created}</td>
                 <td style="text-align: right;">
-                    <button class="action-btn-sm" style="background: var(--accent-blue); color: white;" onclick="strategiesManager.deployTemplate('${tpl.key}', '${tpl.name_admin}', '${tpl.name_user}')">
-                        Deploy / Map Client
-                    </button>
+                    <div style="display: inline-flex; gap: 6px;">
+                        <button class="action-btn-sm" style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color);" onclick="window.chartsPageManager && window.chartsPageManager.openTemplateChart('${tpl.key}')" title="Open Strategy Chart">
+                            📈 Chart
+                        </button>
+                        <button class="action-btn-sm" style="background: var(--accent-blue); color: white;" onclick="strategiesManager.deployTemplate('${tpl.key}', '${tpl.name_admin}', '${tpl.name_user}')">
+                            Deploy / Map Client
+                        </button>
+                    </div>
                 </td>
             </tr>
-        `).join("");
+        `;
+        }).join("");
+    }
+
+    toggleTemplateConfig(domId, btn) {
+        const el = document.getElementById(domId);
+        if (!el) return;
+        const isHidden = el.style.display === "none";
+        el.style.display = isHidden ? "block" : "none";
+        if (btn) {
+            const countMatch = btn.textContent.match(/\((\d+)\)/);
+            const cnt = countMatch ? ` (${countMatch[1]})` : "";
+            btn.textContent = isHidden ? `▼ Hide Config${cnt}` : `▶ Config${cnt}`;
+        }
     }
 
     deployTemplate(key, adminName, userName) {

@@ -183,43 +183,57 @@ def seed_initial_data():
                 python_module="backend.strategy_manager.registered.ftx_paper_research"
             ),
             StrategyTemplate(
-                key="strat_ac_srv2_future_v1",
-                name_admin="AC SRv2 Reliance Future (Alpha System)",
-                name_user="Reliance Futures Trend Pro",
-                description="Reliance Industries algorithmic trend-following engine with Wilder ATR bands, volatility expansion filter (vCheck), dynamic trailing stop loss, and monthly expiry auto-roll.",
+                key="strat_pcp_pro_v201",
+                name_admin="PivotChandelier Pro v2.0.1 (PCP_Pro_v2_0_1)",
+                name_user="PivotChandelier Pro v2.0.1",
+                description="Dual-Chandelier trend & exit bands with day-frozen ATR, JMA(RWI) & ADX regime filters, cumulative volume delta quality gate, MAE hard stop, and risk-based position sizing.",
                 default_config={
-                    "symbol": "NSE:RELIANCE",
+                    "symbol": "NSE:NIFTY",
                     "trade_instrument": "FUTURE",
                     "timeframe": "3m",
                     "timeframe_min": 3,
-                    "atr_multiplier": 4.4,
-                    "atr_period": 28,
-                    "sensitivity": 1.0,
-                    "use_close_extremums": True,
-                    "volatility_filter": False,
-                    "target_long_per_mille": 48,
-                    "target_short_per_mille": 18,
-                    "first_trade_time": "09:15:00",
-                    "last_trade_time": "10:51:00",
-                    "square_off_time": "14:27:00",
-                    "strategy_version": "1.2",
-                    "position_sizing_mode": "fixed",
+                    "candle_count": 300,
+                    "atr_multiplier": 5.2,
+                    "atr_period": 12,
+                    "exit_atr_mult": 5.2,
+                    "use_close_for_extremums": True,
+                    "equity_at_risk": 20000,
+                    "target_long_pct": 0.027,
+                    "target_short_pct": 0.023,
+                    "jma_period": 16,
+                    "rwi_min_period": 12,
+                    "rwi_max_period": 40,
+                    "first_trade_time": 91800,
+                    "last_trade_time": 124200,
+                    "square_off_time": 151500,
+                    "shakeout_start": 94800,
+                    "shakeout_end": 100600,
+                    "adx_period": 14,
+                    "adx_threshold": 18,
+                    "use_delta_filter": True,
+                    "use_volume_ok_filter": False,
+                    "use_mae_stop": True,
+                    "mae_stop_mult": 0.75,
+                    "quality_gate_threshold": 1,
+                    "llv_period": 9,
+                    "hhv_period": 15,
+                    "vol_sma_period": 60,
+                    "vol_sma_lt_period": 180,
+                    "delta_sma_period": 3,
+                    "delta_momentum_period": 15,
+                    "round_lot_size": DEFAULT_LOT_SIZES.get("NIFTY", 65),
+                    "max_trades_per_day": 0,
+                    "reentry_cooldown_bars": 0,
+                    "position_sizing_mode": "risk",
                     "quantity_lots": 1,
-                    "lot_size": 250,
-                    "risk_amount": 20000.0,
                     "max_lots": 8,
-                    "fut_roll_next_month_from_last_friday": True,
-                    "opt_strike_step": 10,
-                    "opt_strike_mode": "ATM",
-                    "opt_strike_offset_steps": 0,
-                    "opt_quantity_lots": 1,
-                    "opt_lot_size": 250,
+                    "opt_strike_step": 50,
                     "product": "NRML",
                     "order_type": "LIMIT",
                     "limit_buffer_pct": 0.015,
                     "auto_chase": True
                 },
-                python_module="backend.strategy_manager.registered.ac_srv2_future"
+                python_module="backend.strategy_manager.registered.pcp_pro_v201"
             ),
             StrategyTemplate(
                 key="strat_time_atm_seller_v1",
@@ -242,57 +256,11 @@ def seed_initial_data():
                     "auto_chase": True
                 },
                 python_module="backend.strategy_manager.registered.time_atm_seller"
-            ),
-            StrategyTemplate(
-                key="strat_ema_cross_v1",
-                name_admin="EMA Crossover 9-21 Alpha",
-                name_user="Trend Momentum Alpha",
-                description="High probability exponential moving average 9/21 crossover strategy with ATR dynamic stop-loss.",
-                default_config={
-                    "symbol": "NSE:NIFTY",
-                    "timeframe": "5m",
-                    "fast_ema": 9,
-                    "slow_ema": 21,
-                    "quantity": DEFAULT_LOT_SIZES.get("NIFTY", 65),
-                    "stop_loss_pct": 0.5,
-                    "target_pct": 1.2,
-                    "max_trades_per_day": 3
-                },
-                python_module="backend.strategy_manager.registered.ema_crossover"
-            ),
-            StrategyTemplate(
-                key="strat_short_straddle_v2",
-                name_admin="0DTE Short Straddle Delta Hedged",
-                name_user="Index Neutral Income",
-                description="Non-directional automated intraday short straddle with leg-by-leg stop loss and re-entry.",
-                default_config={
-                    "symbol": "NSE:BANKNIFTY",
-                    "underlying": "NSE:BANKNIFTY",
-                    "strike_offset": 0,
-                    "lots": 2,
-                    "sl_percentage": 25.0,
-                    "trailing_sl": True,
-                    "entry_time": "09:25:00",
-                    "exit_time": "15:10:00"
-                },
-                python_module="backend.strategy_manager.registered.short_straddle"
-            ),
-            StrategyTemplate(
-                key="strat_supertrend_mcx_v1",
-                name_admin="MCX Energy Supertrend Breakout",
-                name_user="Commodity Trend Pro",
-                description="Commodity futures trend-following engine tuned for CrudeOil and NaturalGas volatility.",
-                default_config={
-                    "symbol": "MCX:CRUDEOIL",
-                    "atr_period": 10,
-                    "multiplier": 3.0,
-                    "lots": 1,
-                    "stop_loss_pts": 35.0,
-                    "target_pts": 70.0
-                },
-                python_module="backend.strategy_manager.registered.supertrend_mcx"
             )
         ]
+        allowed_keys = [t.key for t in templates]
+        db.query(StrategyInstance).filter(~StrategyInstance.template_key.in_(allowed_keys)).delete(synchronize_session=False)
+        db.query(StrategyTemplate).filter(~StrategyTemplate.key.in_(allowed_keys)).delete(synchronize_session=False)
         for tpl in templates:
             existing = db.query(StrategyTemplate).filter(StrategyTemplate.key == tpl.key).first()
             if not existing:
@@ -554,8 +522,8 @@ def seed_initial_data():
             (SystemLog.message.like("%IIFL XTS MarketData Socket connected%"))
         ).delete(synchronize_session=False)
 
-        # Purge any legacy dummy strategy instances
-        db.query(StrategyInstance).filter(StrategyInstance.template_key != "strat_time_atm_seller_v1").delete(synchronize_session=False)
+        # Keep instances belonging to the 3 active strategies; purge only removed legacy strategies
+        db.query(StrategyInstance).filter(~StrategyInstance.template_key.in_(allowed_keys)).delete(synchronize_session=False)
 
         # Ensure MCX:CRUDEOIL and MCX:CRUDEOILM mappings are set to current November contracts
         crudeoilm_map = db.query(SymbolMapping).filter(SymbolMapping.canonical_symbol == "MCX:CRUDEOILM").first()

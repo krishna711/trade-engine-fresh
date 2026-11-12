@@ -5,8 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Fresh Trade Engine | Fault-Proof Algorithmic Trading Architecture</title>
     <link rel="stylesheet" href="css/style.css?v=3.3">
-    <!-- Chart.js for high performance strategy charting -->
+    <!-- Chart.js & TradingView Lightweight Charts for strategy & OHLC charting -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
 
@@ -66,6 +67,9 @@
                     </button>
                     <button class="nav-link-btn" data-view="strategies" id="nav-strategies">
                         Strategies
+                    </button>
+                    <button class="nav-link-btn" data-view="charts" id="nav-charts">
+                        Charts
                     </button>
                     <button class="nav-link-btn" data-view="reports" id="nav-reports">
                         Reports
@@ -270,6 +274,108 @@
                         </thead>
                         <tbody id="strategy-templates-tbody">
                             <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+        <!-- ===============================================================
+             VIEW 2B: STRATEGY CHARTS & SIGNALS PAGE
+             =============================================================== -->
+        <section class="view-section" id="view-charts">
+            <div class="section-header" style="margin-bottom: 1rem; flex-wrap: wrap; gap: 0.75rem;">
+                <div>
+                    <h2>📈 Strategy Charts, Indicators & Live Signals</h2>
+                    <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">
+                        Combined Premium curve for Straddle ATM Seller; OHLC Candlestick + Technical Overlays & Signals for PivotChandelier Pro & FTX Structural Alpha.
+                    </p>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                    <select id="charts-page-selector" class="action-btn-sm" style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.4rem 0.75rem; min-width: 260px;">
+                        <option value="template:strat_time_atm_seller_v1">Loading strategies...</option>
+                    </select>
+                    <select id="charts-page-resolution" class="action-btn-sm" style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.4rem 0.65rem;">
+                        <option value="">Auto TF</option>
+                        <option value="1m">1m</option>
+                        <option value="3m">3m</option>
+                        <option value="5m">5m</option>
+                        <option value="15m">15m</option>
+                        <option value="1h">1h</option>
+                    </select>
+                    <label style="display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; color: var(--text-secondary); padding: 0.35rem 0.6rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;">
+                        <input type="checkbox" id="charts-page-autorefresh" checked>
+                        Live 5s
+                    </label>
+                    <button type="button" class="action-btn-sm" id="btn-charts-refresh" style="background: var(--accent-blue); color: white; font-weight: 600;">
+                        🔄 Refresh
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quick Strategy Switcher Tabs (3 Registered Strategies) -->
+            <div class="drawer-tabs" id="charts-quick-tabs" style="margin-bottom: 1rem; border-radius: 8px; border: 1px solid var(--border-color); padding: 4px; gap: 6px; flex-wrap: wrap;">
+                <button type="button" class="drawer-tab-btn active" data-chart-tpl="strat_time_atm_seller_v1">
+                    ⚡ Time ATM Seller (Combined Premium)
+                </button>
+                <button type="button" class="drawer-tab-btn" data-chart-tpl="strat_pcp_pro_v201">
+                    🕯️ PivotChandelier Pro v2.0.1 (OHLC + Dual Chandelier + ADX/RWI)
+                </button>
+                <button type="button" class="drawer-tab-btn" data-chart-tpl="strat_ftx_paper_v1">
+                    🕯️ FTX Structural Alpha (OHLC + VWAP / OR / Prior Day)
+                </button>
+            </div>
+
+            <!-- Live Metrics & Legend Strip -->
+            <div class="table-card" style="padding: 0.75rem 1rem; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.75rem;">
+                <div id="charts-metrics-strip" style="display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; font-size: 0.82rem;">
+                    <span style="color: var(--text-muted);">Select a strategy to view metrics</span>
+                </div>
+                <div id="charts-legend-strip" style="display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; font-size: 0.75rem;">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Main Interactive Chart Card -->
+            <div class="table-card" style="padding: 1rem; margin-bottom: 1rem; position: relative;">
+                <div id="charts-main-host" style="width: 100%; height: 430px; position: relative;"></div>
+                <div id="charts-empty-overlay" style="display: none; position: absolute; inset: 0; align-items: center; justify-content: center; pointer-events: none;">
+                    <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); padding: 1rem 1.5rem; border-radius: 8px; text-align: center;">
+                        <div style="font-weight: 700; color: var(--accent-amber);">Waiting for Market Bars</div>
+                        <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 4px;">No OHLC / premium ticks recorded yet for the selected strategy.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sub-Chart Card (ADX & JMA-RWI / CE vs PE Legs / ATR) -->
+            <div class="table-card" id="charts-subchart-card" style="padding: 0.85rem 1rem; margin-bottom: 1rem;">
+                <div id="charts-subchart-title" style="font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.5rem;">
+                    Indicator / Leg Breakdown
+                </div>
+                <div style="width: 100%; height: 185px; position: relative;">
+                    <canvas id="charts-subchart-canvas"></canvas>
+                </div>
+            </div>
+
+            <!-- Strategy Signals & Executed Trades Table -->
+            <div class="table-card">
+                <div style="padding: 0.75rem 1rem; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-weight: 600; font-size: 0.88rem;">🎯 Strategy Signals & Executed Orders</span>
+                    <span id="charts-signals-count" style="font-size: 0.75rem; color: var(--text-muted);">0 signals</span>
+                </div>
+                <div class="table-responsive" style="max-height: 260px; overflow-y: auto;">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>Time (IST)</th>
+                                <th>Source</th>
+                                <th>Signal / Side</th>
+                                <th>Price</th>
+                                <th>Details</th>
+                            </tr>
+                        </thead>
+                        <tbody id="charts-signals-tbody">
+                            <tr><td colspan="5" style="text-align: center; color: var(--text-muted);">No signals generated on visible bars yet</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1486,12 +1592,13 @@
     <script src="js/auth.js?v=3.3"></script>
     <script src="js/ticker.js?v=3.3"></script>
     <script src="js/client_cards.js?v=3.3"></script>
-    <script src="js/strategies.js?v=3.3"></script>
+    <script src="js/strategies.js?v=3.4"></script>
+    <script src="js/charts_page.js?v=3.4"></script>
     <script src="js/status_page.js?v=3.3"></script>
     <script src="js/logs_page.js?v=3.3"></script>
     <script src="js/reports.js?v=3.3"></script>
     <script src="js/users.js?v=3.3"></script>
     <script src="js/telegram.js?v=3.3"></script>
-    <script src="js/app.js?v=3.3"></script>
+    <script src="js/app.js?v=3.4"></script>
 </body>
 </html>

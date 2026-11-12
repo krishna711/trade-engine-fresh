@@ -1302,7 +1302,7 @@ async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
     if tf.isdigit():
         tf = f"{tf}m"
     if tf not in ["1m", "3m", "5m", "15m", "1h"]:
-        tf = "3m" if "ac_srv2" in str(inst.template_key) else "5m"
+        tf = "3m" if "pcp_pro" in str(inst.template_key) else ("1m" if "ftx" in str(inst.template_key) else "5m")
 
     ohlc = await feed_manager.get_ohlc(symbol, resolution=tf, count=40)
     
@@ -1370,6 +1370,320 @@ async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
         "unrealized_pnl": unrealized_pnl,
         "pnl_series": pnl_series,
         "ohlc": ohlc
+    }
+
+
+@app.get("/api/charts/catalog")
+def get_charts_catalog(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """Returns deployed strategy instances and registered strategy templates selectable in the Charts page."""
+    inst_q = db.query(StrategyInstance)
+    if current_user.role != "ADMIN":
+        user_cids = {a.client_id for a in db.query(Account).filter(Account.user_id == current_user.id).all()}
+        instances = [
+            inst for inst in inst_q.all()
+            if inst.user_id == current_user.id or any(c in user_cids for c in (inst.client_ids or []))
+        ]
+    else:
+        instances = inst_q.all()
+
+    templates = db.query(StrategyTemplate).all()
+
+    items = []
+    for inst in instances:
+        cfg = inst.config or (inst.template.default_config if inst.template else {}) or {}
+        tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or ("3m" if "pcp_pro" in str(inst.template_key) else ("1m" if "ftx" in str(inst.template_key) else "5m"))).lower()
+        if tf.isdigit():
+            tf = f"{tf}m"
+        items.append({
+            "target": f"instance:{inst.id}",
+            "kind": "instance",
+            "id": inst.id,
+            "template_key": inst.template_key,
+            "label": f"{inst.instance_name_user or inst.instance_name_admin} (#{inst.id} - {inst.status})",
+            "label_admin": f"{inst.instance_name_admin} (#{inst.id} - {inst.status})",
+            "symbol": cfg.get("symbol", "NSE:NIFTY"),
+            "timeframe": tf,
+            "status": inst.status,
+            "chart_mode": "COMBINED_PREMIUM" if inst.template_key == "strat_time_atm_seller_v1" else "OHLC_CANDLES",
+        })
+
+    for tpl in templates:
+        cfg = tpl.default_config or {}
+        tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or ("3m" if "pcp_pro" in tpl.key else ("1m" if "ftx" in tpl.key else "5m"))).lower()
+        if tf.isdigit():
+            tf = f"{tf}m"
+        items.append({
+            "target": f"template:{tpl.key}",
+            "kind": "template",
+            "id": None,
+            "template_key": tpl.key,
+            "label": f"[Template] {tpl.name_user}",
+            "label_admin": f"[Template] {tpl.name_admin} ({tpl.key})",
+            "symbol": cfg.get("symbol", "NSE:NIFTY"),
+            "timeframe": tf,
+            "status": "TEMPLATE",
+            "chart_mode": "COMBINED_PREMIUM" if tpl.key == "strat_time_atm_seller_v1" else "OHLC_CANDLES",
+        })
+
+    return {"items": items}
+
+
+@app.get("/api/charts/data")
+async def get_strategy_chart_data(
+    target: str = "template:strat_time_atm_seller_v1",
+    resolution: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Returns full charting payload for any of the 3 registered strategies:
+    - strat_time_atm_seller_v1: Combined Premium Line Chart (CE + PE) + signals
+    - strat_pcp_pro_v201: OHLC Candlestick Chart + Dual Chandelier, ADX, JMA(RWI) + signals
+    - strat_ftx_paper_v1: OHLC Candlestick Chart + VWAP, OR H/L, Session H/L, Prior Day H/L + cell signals
+    """
+    inst: Optional[StrategyInstance] = None
+    tpl: Optional[StrategyTemplate] = None
+
+    if target.startswith("instance:"):
+        try:
+            inst_id = int(target.split(":", 1)[1])
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid instance target")
+        inst = db.query(StrategyInstance).filter(StrategyInstance.id == inst_id).first()
+        if not inst:
+            raise HTTPException(status_code=404, detail="Strategy instance not found")
+        if current_user.role != "ADMIN":
+            user_cids = {a.client_id for a in db.query(Account).filter(Account.user_id == current_user.id).all()}
+            if inst.user_id != current_user.id and not any(c in user_cids for c in (inst.client_ids or [])):
+                raise HTTPException(status_code=403, detail="Not authorized to view this strategy chart")
+        tpl = inst.template or db.query(StrategyTemplate).filter(StrategyTemplate.key == inst.template_key).first()
+    elif target.startswith("template:"):
+        tpl_key = target.split(":", 1)[1]
+        tpl = db.query(StrategyTemplate).filter(StrategyTemplate.key == tpl_key).first()
+        if not tpl:
+            raise HTTPException(status_code=404, detail=f"Strategy template '{tpl_key}' not found")
+    else:
+        raise HTTPException(status_code=400, detail="target must start with 'instance:' or 'template:'")
+
+    template_key = inst.template_key if inst else tpl.key
+    cfg = dict(tpl.default_config or {}) if tpl else {}
+    if inst and inst.config:
+        cfg.update(inst.config)
+
+    symbol = str(cfg.get("symbol") or ("MCX:CRUDEOILM" if template_key == "strat_time_atm_seller_v1" else "NSE:NIFTY"))
+    default_tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or ("3m" if "pcp_pro" in template_key else ("1m" if "ftx" in template_key else "5m"))).lower()
+    if default_tf.isdigit():
+        default_tf = f"{default_tf}m"
+    tf = (resolution or default_tf).strip().lower()
+    if tf.isdigit():
+        tf = f"{tf}m"
+    if tf not in ["1m", "3m", "5m", "15m", "1h"]:
+        tf = "3m" if "pcp_pro" in template_key else ("1m" if "ftx" in template_key else "5m")
+
+    ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+    # Executed trade records for this instance (overlay onto chart signals)
+    executed_trades: List[Dict[str, Any]] = []
+    if inst:
+        today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        db_trades = db.query(Trade).filter(
+            Trade.strategy_instance_id == inst.id,
+            Trade.timestamp >= today_start - datetime.timedelta(days=2),
+        ).order_by(Trade.timestamp.asc()).all()
+        for t in db_trades:
+            dt_t = t.timestamp.replace(tzinfo=datetime.timezone.utc).astimezone(ist_tz) if t.timestamp else datetime.datetime.now(ist_tz)
+            executed_trades.append({
+                "time": dt_t.isoformat(),
+                "label_time": dt_t.strftime("%H:%M"),
+                "symbol": t.symbol,
+                "side": t.side,
+                "price": round(float(t.price or 0.0), 2),
+                "quantity": int(t.quantity or 0),
+                "leg_id": t.leg_id or "",
+            })
+
+    # ------------------------------------------------------------------
+    # 1. Combined Premium Line Chart (strat_time_atm_seller_v1)
+    # ------------------------------------------------------------------
+    if template_key == "strat_time_atm_seller_v1":
+        ce_sym = None
+        pe_sym = None
+        ce_entry = 0.0
+        pe_entry = 0.0
+        ce_ltp_hint = 0.0
+        pe_ltp_hint = 0.0
+
+        if inst and inst.legs_info:
+            for l in inst.legs_info:
+                ls = str(l.get("symbol") or "")
+                if ls.endswith("CE") and not ce_sym:
+                    ce_sym = ls
+                    ce_entry = float(l.get("entry") or 0.0)
+                    ce_ltp_hint = float(l.get("ltp") or ce_entry or 0.0)
+                elif ls.endswith("PE") and not pe_sym:
+                    pe_sym = ls
+                    pe_entry = float(l.get("entry") or 0.0)
+                    pe_ltp_hint = float(l.get("ltp") or pe_entry or 0.0)
+
+        underlying_tick = feed_manager.get_latest_tick(symbol)
+        underlying_ltp = float(underlying_tick.get("ltp") or 0.0) if underlying_tick else 0.0
+        if underlying_ltp <= 0.0:
+            und_bars = await feed_manager.get_ohlc(symbol, resolution=tf, count=20)
+            if und_bars:
+                underlying_ltp = float(und_bars[-1].get("close") or 0.0)
+
+        if not ce_sym or not pe_sym:
+            step = float(cfg.get("strike_step") or 50.0)
+            ref_spot = underlying_ltp if underlying_ltp > 0 else 6500.0
+            strike = int(round(ref_spot / max(1.0, step)) * step)
+            root = symbol.split(":")[-1]
+            seg = "MCXFO" if "MCX" in symbol.upper() else "NFO"
+            snapped_ce = symbol_mapper.snap_to_nearest_option_strike(root, strike, "CE")
+            use_strike = snapped_ce if snapped_ce else strike
+            ce_sym = ce_sym or f"{seg}:{root}{use_strike}CE"
+            pe_sym = pe_sym or f"{seg}:{root}{use_strike}PE"
+
+        # Seed active broker price hints so cold-start fallback anchors near real option LTPs
+        broker_inst = feed_manager.active_broker or feed_manager.brokers.get("XTS")
+        if broker_inst and hasattr(broker_inst, "_current_prices"):
+            ce_tick = feed_manager.ticks_cache.get(ce_sym)
+            pe_tick = feed_manager.ticks_cache.get(pe_sym)
+            if ce_tick and float(ce_tick.get("ltp") or 0) > 0:
+                broker_inst._current_prices[ce_sym] = float(ce_tick["ltp"])
+            elif ce_ltp_hint > 0:
+                broker_inst._current_prices[ce_sym] = ce_ltp_hint
+            if pe_tick and float(pe_tick.get("ltp") or 0) > 0:
+                broker_inst._current_prices[pe_sym] = float(pe_tick["ltp"])
+            elif pe_ltp_hint > 0:
+                broker_inst._current_prices[pe_sym] = pe_ltp_hint
+
+        ce_bars = await feed_manager.get_ohlc(ce_sym, resolution=tf, count=120)
+        pe_bars = await feed_manager.get_ohlc(pe_sym, resolution=tf, count=120)
+
+        # Align CE & PE bars cleanly
+        pe_by_label: Dict[str, float] = {}
+        pe_list = []
+        for pb in pe_bars:
+            dt_p = pb.get("time")
+            try:
+                pdt = datetime.datetime.fromisoformat(str(dt_p).replace("Z", "+00:00"))
+                if pdt.tzinfo is None:
+                    pdt = pdt.replace(tzinfo=datetime.timezone.utc)
+                lbl = pdt.astimezone(ist_tz).strftime("%H:%M")
+            except Exception:
+                lbl = str(dt_p)[-8:-3]
+            val = float(pb.get("close") or 0.0)
+            pe_by_label[lbl] = val
+            pe_list.append(val)
+
+        series = []
+        for idx_c, cb in enumerate(ce_bars):
+            dt_c = cb.get("time")
+            try:
+                cdt = datetime.datetime.fromisoformat(str(dt_c).replace("Z", "+00:00"))
+                if cdt.tzinfo is None:
+                    cdt = cdt.replace(tzinfo=datetime.timezone.utc)
+                cdt_ist = cdt.astimezone(ist_tz)
+                lbl = cdt_ist.strftime("%H:%M")
+                ts_iso = cdt_ist.isoformat()
+            except Exception:
+                lbl = str(dt_c)[-8:-3]
+                ts_iso = str(dt_c)
+            ce_val = float(cb.get("close") or 0.0)
+            pe_val = pe_by_label.get(lbl)
+            if pe_val is None:
+                pe_val = pe_list[idx_c] if idx_c < len(pe_list) else (pe_list[-1] if pe_list else ce_val)
+            series.append({
+                "time": ts_iso,
+                "label": lbl,
+                "ce_ltp": round(ce_val, 2),
+                "pe_ltp": round(pe_val, 2),
+                "combined_premium": round(ce_val + pe_val, 2),
+            })
+
+        # Override latest point with live tick cache if available
+        live_ce = feed_manager.ticks_cache.get(ce_sym)
+        live_pe = feed_manager.ticks_cache.get(pe_sym)
+        if series and (live_ce or live_pe):
+            last_pt = series[-1]
+            if live_ce and float(live_ce.get("ltp") or 0) > 0:
+                last_pt["ce_ltp"] = round(float(live_ce["ltp"]), 2)
+            if live_pe and float(live_pe.get("ltp") or 0) > 0:
+                last_pt["pe_ltp"] = round(float(live_pe["ltp"]), 2)
+            last_pt["combined_premium"] = round(last_pt["ce_ltp"] + last_pt["pe_ltp"], 2)
+
+        entry_combined = round(ce_entry + pe_entry, 2) if (ce_entry > 0 and pe_entry > 0) else None
+        sl_per_lot = float(cfg.get("stop_loss_per_lot", 750.0))
+        lot_sz = float(cfg.get("lot_size") or symbol_mapper.get_lot_size(symbol) or 10.0)
+        sl_combined = round(entry_combined + (sl_per_lot / max(1.0, lot_sz)), 2) if entry_combined else None
+
+        # Map signals (entry/exit cycles from DB + scheduled entry/exit markers)
+        signals = []
+        if inst and inst.legs_info:
+            for l in inst.legs_info:
+                if float(l.get("entry") or 0) > 0:
+                    signals.append({
+                        "label_time": str(cfg.get("entry_time", "15:45:00"))[:5],
+                        "type": "SELL",
+                        "price": entry_combined or round(float(l["entry"]) * 2, 2),
+                        "label": f"STRADDLE ENTRY @ ₹{(entry_combined or float(l['entry'])):.2f}",
+                    })
+                    break
+            for l in inst.legs_info:
+                if l.get("exit") is not None and float(l.get("exit") or 0) > 0:
+                    ce_x = sum(float(x.get("exit") or 0.0) for x in inst.legs_info if x.get("exit"))
+                    signals.append({
+                        "label_time": str(cfg.get("exit_time", "23:18:00"))[:5],
+                        "type": "COVER",
+                        "price": round(ce_x, 2),
+                        "label": f"STRADDLE EXIT @ ₹{ce_x:.2f}",
+                    })
+                    break
+
+        return {
+            "target": target,
+            "template_key": template_key,
+            "strategy_name": (inst.instance_name_user or inst.instance_name_admin) if inst else tpl.name_user,
+            "chart_mode": "COMBINED_PREMIUM",
+            "symbol": symbol,
+            "ce_symbol": ce_sym,
+            "pe_symbol": pe_sym,
+            "resolution": tf,
+            "underlying_ltp": round(underlying_ltp, 2),
+            "combined_series": series,
+            "reference_lines": {
+                "entry_combined": entry_combined,
+                "stop_loss_combined": sl_combined,
+                "entry_time": str(cfg.get("entry_time", "15:45:00"))[:5],
+                "exit_time": str(cfg.get("exit_time", "23:18:00"))[:5],
+            },
+            "signals": signals,
+            "executed_trades": executed_trades,
+        }
+
+    # ------------------------------------------------------------------
+    # 2. PivotChandelier Pro v2.0.1 / FTX Paper Research (OHLC + Indicators)
+    # ------------------------------------------------------------------
+    bars = await feed_manager.get_ohlc(symbol, resolution=tf, count=240)
+    if template_key == "strat_pcp_pro_v201":
+        from backend.strategy_manager.registered.pcp_pro_v201 import compute_pcp_chart_payload
+        payload = compute_pcp_chart_payload(bars, cfg)
+    else:
+        from backend.strategy_manager.registered.ftx_paper_research import compute_ftx_chart_payload
+        payload = compute_ftx_chart_payload(bars, cfg)
+
+    return {
+        "target": target,
+        "template_key": template_key,
+        "strategy_name": (inst.instance_name_user or inst.instance_name_admin) if inst else tpl.name_user,
+        "chart_mode": "OHLC_CANDLES",
+        "symbol": symbol,
+        "resolution": tf,
+        "candles": payload.get("candles", []),
+        "overlays": payload.get("overlays", {}),
+        "oscillators": payload.get("oscillators", {}),
+        "signals": payload.get("signals", []),
+        "executed_trades": executed_trades,
     }
 
 @app.get("/api/strategies/{id}/trades")
