@@ -435,6 +435,7 @@ class ChartsPageManager {
                 const stDir = (overlays.supertrend_direction && lastIdx >= 0) ? overlays.supertrend_direction[lastIdx] : 0;
                 const stVal = overlays.supertrend && lastIdx >= 0 ? overlays.supertrend[lastIdx] : null;
                 const rsiVal = osc.rsi && lastIdx >= 0 ? osc.rsi[lastIdx] : null;
+                const atrVal = osc.atr && lastIdx >= 0 ? osc.atr[lastIdx] : (overlays.atr && lastIdx >= 0 ? overlays.atr[lastIdx] : null);
                 const r1Val = overlays.pivot_r1 && lastIdx >= 0 ? overlays.pivot_r1[lastIdx] : null;
                 const s1Val = overlays.pivot_s1 && lastIdx >= 0 ? overlays.pivot_s1[lastIdx] : null;
                 const bbUVal = overlays.bb_upper && lastIdx >= 0 ? overlays.bb_upper[lastIdx] : null;
@@ -443,6 +444,7 @@ class ChartsPageManager {
                     <span><strong>${data.strategy_name}</strong> (<code>${data.symbol}</code> • ${data.resolution})</span>
                     <span>Close: <strong>₹${lastC ? lastC.close.toFixed(2) : '-'}</strong></span>
                     ${stVal !== null ? `<span style="color: ${stDir === 1 ? '#10b981' : '#ef4444'}; font-weight: 700;">Supertrend: ₹${stVal.toFixed(2)} (${stDir === 1 ? '▲ LONG' : '▼ SHORT'})</span>` : ""}
+                    ${atrVal !== null ? `<span style="color: ${(atrVal >= 15 && atrVal <= 35) ? '#10b981' : '#f59e0b'}; font-weight: 600;">ATR: ${atrVal.toFixed(1)} [15-35]</span>` : ""}
                     ${rsiVal !== null ? `<span style="color: ${rsiVal >= 70 ? '#10b981' : (rsiVal <= 30 ? '#ef4444' : '#38bdf8')}; font-weight: 600;">RSI(14): ${rsiVal.toFixed(1)}</span>` : ""}
                     ${r1Val !== null ? `<span style="color: #a855f7;">R1: ₹${r1Val.toFixed(2)}</span>` : ""}
                     ${s1Val !== null ? `<span style="color: #f59e0b;">S1: ₹${s1Val.toFixed(2)}</span>` : ""}
@@ -562,6 +564,8 @@ class ChartsPageManager {
                 addOverlayLine(overlays.pivot_s1, "#f59e0b", "Pivot S1", LightweightCharts.LineStyle.Dashed, 1.5);
                 addOverlayLine(overlays.opening_range_high, "#fbbf24", "OR High", LightweightCharts.LineStyle.Dotted, 1);
                 addOverlayLine(overlays.opening_range_low, "#fbbf24", "OR Low", LightweightCharts.LineStyle.Dotted, 1);
+                addOverlayLine(overlays.consolidation_high, "rgba(226, 232, 240, 0.4)", "Consolidation High", LightweightCharts.LineStyle.Dotted, 1);
+                addOverlayLine(overlays.consolidation_low, "rgba(226, 232, 240, 0.4)", "Consolidation Low", LightweightCharts.LineStyle.Dotted, 1);
                 addOverlayLine(overlays.long_stop, "#ef4444", "Long SL", LightweightCharts.LineStyle.Dashed, 1.5);
                 addOverlayLine(overlays.short_stop, "#ef4444", "Short SL", LightweightCharts.LineStyle.Dashed, 1.5);
                 addOverlayLine(overlays.long_target, "#10b981", "Target R:R", LightweightCharts.LineStyle.Dashed, 1.5);
@@ -632,7 +636,7 @@ class ChartsPageManager {
         if (subCanvas) {
             const labels = candles.map(c => c.label);
             if (isSupertrend) {
-                if (subTitle) subTitle.innerText = `Momentum Oscillators: RSI(14) [Overbought 70 / Oversold 30] & ADX(14) [Threshold ${osc.adx_threshold || 25}]`;
+                if (subTitle) subTitle.innerText = `Momentum & Volatility Oscillators: RSI(14), ADX(14), and ATR(14) [Entry Range: ${osc.minimum_entry_atr || 15} - ${osc.maximum_entry_atr || 35}]`;
                 this.subChart = new Chart(subCanvas.getContext("2d"), {
                     type: "line",
                     data: {
@@ -640,6 +644,7 @@ class ChartsPageManager {
                         datasets: [
                             { label: "RSI(14)", data: osc.rsi || [], borderColor: "#a855f7", yAxisID: "yRsi", tension: 0.2, pointRadius: 0 },
                             { label: "ADX(14)", data: osc.adx || [], borderColor: "#60a5fa", yAxisID: "yAdx", tension: 0.2, pointRadius: 0 },
+                            { label: "ATR", data: osc.atr || [], borderColor: "#f59e0b", yAxisID: "yAtr", tension: 0.2, pointRadius: 0 },
                         ],
                     },
                     options: {
@@ -663,6 +668,14 @@ class ChartsPageManager {
                                 max: 80,
                                 grid: { drawOnChartArea: false },
                                 title: { display: true, text: "ADX" }
+                            },
+                            yAtr: {
+                                type: "linear",
+                                position: "right",
+                                min: 0,
+                                max: 60,
+                                grid: { drawOnChartArea: false },
+                                title: { display: true, text: "ATR" }
                             },
                         },
                     },

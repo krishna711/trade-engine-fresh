@@ -1,24 +1,19 @@
 """
-Strategy: Supertrend RSI Bollinger Momentum (NIFTY)
-Long/short Supertrend, RSI, daily pivot, and Bollinger momentum strategy with 15-minute Opening Range gate.
+Strategy: Supertrend RSI Bollinger Momentum (NIFTY) - Updated Variant Engine
+Long/short Supertrend, RSI, daily pivot, and Bollinger momentum strategy with
+research variants (A, B, C, D, D1, D1R, D1B, D2, D2R, D2B), risk-budget position sizing,
+entry ATR bounds, 13:45 entry cutoff, and optional lower-timeframe execution.
 
-Combines:
-1. Supertrend (10, 3.0): Wilder ATR-based trend direction & trailing stop.
-2. RSI (14): Overbought momentum confirmation (> 70 for Long, < 30 for Short).
-3. Daily Pivots: Prior-day Floor Pivots (Long requires Close > R1; Short requires Close < S1).
-4. Bollinger Bands (20, 2.0 std): Volatility expansion filter (Long requires Close > Upper Band; Short requires Close < Lower Band).
-5. 15-minute Opening Range: High/Low breakout confirmation after opening window.
-6. Optional ADX (14) trend strength filter (> 25 & rising).
-7. Risk-Reward Exit Target (1:2 default R:R) & Supertrend Trailing Stop Loss.
-8. Intraday Square-off at 15:10 IST.
+Default Variant: D1R (D1 + RSI Momentum + Volume Expansion + Consolidation Breakout)
 """
 
 from __future__ import annotations
 
+import argparse
 import datetime
 import math
 import re
-from typing import Any, Dict, List, Optional, Tuple, TypedDict
+from typing import Any, Dict, List, Optional, Tuple, TypedDict, NotRequired
 
 import numpy as np
 import pandas as pd
@@ -37,6 +32,7 @@ DEFAULT_LOT_SIZE = 65
 
 
 class MomentumParamsOverrides(TypedDict, total=False):
+    variant: str
     supertrend_period: int
     supertrend_multiplier: float
     rsi_period: int
@@ -50,12 +46,18 @@ class MomentumParamsOverrides(TypedDict, total=False):
     use_adx_filter: bool
     bb_period: int
     bb_std_dev: float
-    square_off_time: int | None
+    minimum_entry_atr: float
+    maximum_entry_atr: float
+    risk_budget: float
+    lot_size: NotRequired[int]
     round_lot_size: int
     max_trades_per_day: int
+    square_off_time: int | None
+    entry_cutoff_minute: int | None
 
 
 class MomentumParams(TypedDict):
+    variant: str
     supertrend_period: int
     supertrend_multiplier: float
     rsi_period: int
@@ -69,12 +71,18 @@ class MomentumParams(TypedDict):
     use_adx_filter: bool
     bb_period: int
     bb_std_dev: float
-    square_off_time: int | None
+    minimum_entry_atr: float
+    maximum_entry_atr: float
+    risk_budget: float
+    lot_size: NotRequired[int]
     round_lot_size: int
     max_trades_per_day: int
+    square_off_time: int | None
+    entry_cutoff_minute: int | None
 
 
 DEFAULT_PARAMS: MomentumParams = {
+    "variant": "D1R",
     "supertrend_period": 10,
     "supertrend_multiplier": 3.0,
     "rsi_period": 14,
@@ -83,15 +91,33 @@ DEFAULT_PARAMS: MomentumParams = {
     "adx_period": 14,
     "adx_threshold": 25.0,
     "adx_slope_bars": 1,
-    "opening_range_minutes": 15,
+    "opening_range_minutes": None,
     "risk_reward": 2.0,
     "use_adx_filter": False,
     "bb_period": 20,
     "bb_std_dev": 2.0,
-    "square_off_time": 151000,
+    "minimum_entry_atr": 15.0,
+    "maximum_entry_atr": 35.0,
+    "risk_budget": 10_000.0,
     "round_lot_size": DEFAULT_LOT_SIZE,
     "max_trades_per_day": 0,
+    "square_off_time": 151000,
+    "entry_cutoff_minute": 13 * 60 + 45,
 }
+
+ENTRY_CUTOFF_MINUTE = 13 * 60 + 45  # 13:45 IST
+
+
+def resolve_futures_lot_size(symbol: str, default: Optional[int] = None) -> int:
+    """Resolves contract lot size from symbol mapper or fallback."""
+    try:
+        from backend.core.symbol_mapper import symbol_mapper
+        lot = symbol_mapper.get_lot_size(symbol)
+        if lot and lot > 0:
+            return int(lot)
+    except Exception:
+        pass
+    return default or DEFAULT_LOT_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -104,52 +130,61 @@ def _supertrend(
     close: pd.Series,
     period: int,
     multiplier: float,
-) -> tuple[pd.Series, pd.Series]:
-    """Supertrend with Wilder's ATR and trailing band clamping."""
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """Supertrend with Wilder's ATR and trailing band clamping in fast NumPy arrays."""
+    p = max(1, period)
     previous_close = close.shift(1)
     true_range = pd.concat(
         [high - low, (high - previous_close).abs(), (low - previous_close).abs()],
         axis=1,
     ).max(axis=1)
-    atr = true_range.ewm(alpha=1 / max(1, period), adjust=False, min_periods=period).mean()
+    atr = true_range.ewm(alpha=1 / p, adjust=False, min_periods=p).mean()
     midpoint = (high + low) / 2
     upper_basic = midpoint + multiplier * atr
     lower_basic = midpoint - multiplier * atr
-    upper = upper_basic.copy()
-    lower = lower_basic.copy()
-    direction = pd.Series(0, index=close.index, dtype="int64")
-    line = pd.Series(np.nan, index=close.index, dtype="float64")
-    for i in range(1, len(close)):
-        if pd.isna(atr.iloc[i]):
+    # Keep the recursive portion in NumPy arrays; repeated Series.iloc access
+    # dominates this loop on long intraday replays.
+    upper = upper_basic.to_numpy(copy=True)
+    lower = lower_basic.to_numpy(copy=True)
+    close_values = close.to_numpy()
+    atr_values = atr.to_numpy()
+    direction = np.zeros(len(close), dtype=np.int64)
+    line = np.full(len(close), np.nan, dtype=np.float64)
+    for i in range(1, len(close_values)):
+        if np.isnan(atr_values[i]):
             continue
-        upper.iloc[i] = (
-            upper_basic.iloc[i]
-            if pd.isna(upper.iloc[i - 1])
-            or upper_basic.iloc[i] < upper.iloc[i - 1]
-            or close.iloc[i - 1] > upper.iloc[i - 1]
-            else upper.iloc[i - 1]
+        upper[i] = (
+            upper[i]
+            if np.isnan(upper[i - 1])
+            or upper[i] < upper[i - 1]
+            or close_values[i - 1] > upper[i - 1]
+            else upper[i - 1]
         )
-        lower.iloc[i] = (
-            lower_basic.iloc[i]
-            if pd.isna(lower.iloc[i - 1])
-            or lower_basic.iloc[i] > lower.iloc[i - 1]
-            or close.iloc[i - 1] < lower.iloc[i - 1]
-            else lower.iloc[i - 1]
+        lower[i] = (
+            lower[i]
+            if np.isnan(lower[i - 1])
+            or lower[i] > lower[i - 1]
+            or close_values[i - 1] < lower[i - 1]
+            else lower[i - 1]
         )
-        prior_direction = direction.iloc[i - 1]
-        direction.iloc[i] = 1 if close.iloc[i] > upper.iloc[i - 1] else (
-            -1 if close.iloc[i] < lower.iloc[i - 1] else (prior_direction or 1)
+        prior_direction = direction[i - 1]
+        direction[i] = 1 if close_values[i] > upper[i - 1] else (
+            -1 if close_values[i] < lower[i - 1] else (prior_direction or 1)
         )
-        line.iloc[i] = lower.iloc[i] if direction.iloc[i] == 1 else upper.iloc[i]
-    return line, direction
+        line[i] = lower[i] if direction[i] == 1 else upper[i]
+    return (
+        pd.Series(line, index=close.index),
+        pd.Series(direction, index=close.index),
+        atr,
+    )
 
 
 def _rsi(close: pd.Series, period: int) -> pd.Series:
     """Wilder RSI calculation."""
+    p = max(1, period)
     change = close.diff()
     gain = change.clip(lower=0)
     loss = -change.clip(upper=0)
-    p = max(1, period)
     average_gain = gain.ewm(alpha=1 / p, adjust=False, min_periods=p).mean()
     average_loss = loss.ewm(alpha=1 / p, adjust=False, min_periods=p).mean()
     relative_strength = average_gain / average_loss.replace(0, np.nan)
@@ -160,7 +195,7 @@ def _rsi(close: pd.Series, period: int) -> pd.Series:
 
 
 def _adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.Series:
-    """Wilder ADX calculation."""
+    """Wilder ADX, using the same EWM convention as the RSI above."""
     p = max(1, period)
     previous_high = high.shift(1)
     previous_low = low.shift(1)
@@ -229,58 +264,54 @@ resolve_nifty_future_contract = resolve_future_contract
 
 
 # ---------------------------------------------------------------------------
-# Signal Generator (Pure Pandas / NumPy Engine)
+# Setup Signal Generator (Pure Pandas / NumPy Engine)
 # ---------------------------------------------------------------------------
 
-def generate_signals(
+def _generate_setup_signals(
     df: pd.DataFrame,
     params: MomentumParamsOverrides | None = None,
 ) -> pd.DataFrame:
-    """
-    Generate completed-candle setups and signals for Supertrend RSI Bollinger Momentum.
-    """
+    """Generate completed-candle signals filled at the following candle open."""
     required = {"Open", "High", "Low", "Close", "Volume"}
     missing = required.difference(df.columns)
     if missing:
         raise ValueError(f"Missing required column(s): {sorted(missing)}")
-
     p: MomentumParams = {**DEFAULT_PARAMS, **(params or {})}
+    allowed_variants = {"A", "B", "C", "D", "D1", "D1R", "D1B", "D2", "D2R", "D2B"}
+    if p["variant"] not in allowed_variants:
+        raise ValueError("unknown research variant")
     out = df.copy()
     close = out["Close"]
-
-    line, direction = _supertrend(
+    line, direction, atr = _supertrend(
         out["High"], out["Low"], close,
         int(p["supertrend_period"]), float(p["supertrend_multiplier"]),
     )
     rsi = _rsi(close, int(p["rsi_period"]))
     adx = _adx(out["High"], out["Low"], close, int(p["adx_period"]))
-
     bb_p = int(p["bb_period"])
-    middle = close.rolling(bb_p, min_periods=bb_p).mean()
-    deviation = close.rolling(bb_p, min_periods=bb_p).std(ddof=0)
+    middle = close.rolling(bb_p).mean()
+    deviation = close.rolling(bb_p).std(ddof=0)
     upper_band = middle + float(p["bb_std_dev"]) * deviation
     lower_band = middle - float(p["bb_std_dev"]) * deviation
-
     timestamps = pd.DatetimeIndex(out.index)
     if timestamps.tz is not None:
         timestamps = timestamps.tz_convert(IST_TZ)
     dates = pd.Series(timestamps.date, index=out.index)
-
-    # Daily Floor Pivots: aggregated by session and shifted by 1 day
     daily = out.assign(_date=dates).groupby("_date")[
         ["High", "Low", "Close"]
     ].agg({"High": "max", "Low": "min", "Close": "last"})
-    pivot = (daily["High"] + daily["Low"] + daily["Close"]) / 3.0
-    daily["R1"] = 2.0 * pivot - daily["Low"]
-    daily["S1"] = 2.0 * pivot - daily["High"]
+    pivot = (daily["High"] + daily["Low"] + daily["Close"]) / 3
+    daily["R1"] = 2 * pivot - daily["Low"]
+    daily["S1"] = 2 * pivot - daily["High"]
     r1 = dates.map(daily["R1"].shift(1))
     s1 = dates.map(daily["S1"].shift(1))
-
+    previous_daily_close = dates.map(daily["Close"].shift(1))
+    daily_sma20 = dates.map(daily["Close"].rolling(20).mean().shift(1))
+    daily_high60 = dates.map(daily["High"].rolling(60).max().shift(1))
+    daily_low60 = dates.map(daily["Low"].rolling(60).min().shift(1))
     minutes = pd.Series(timestamps.hour * 60 + timestamps.minute, index=out.index)
-    time_int = pd.Series(timestamps.hour * 10000 + timestamps.minute * 100 + timestamps.second, index=out.index)
     day_start = minutes.groupby(dates).transform("min")
-
-    opening_range_duration = p.get("opening_range_minutes") or 0
+    opening_range_duration = p["opening_range_minutes"] or 0
     opening_range_enabled = opening_range_duration > 0
     if opening_range_enabled:
         opening_range_end = day_start + opening_range_duration
@@ -291,50 +322,102 @@ def generate_signals(
         opening_range_high = pd.Series(np.inf, index=out.index)
         opening_range_low = pd.Series(-np.inf, index=out.index)
         after_opening_range = pd.Series(True, index=out.index)
-
-    adx_slope_bars = int(p.get("adx_slope_bars", 1))
-    adx_rising = adx.isna() | (adx > adx.shift(adx_slope_bars))
+    # Do not suppress the strategy before ADX has enough history to be known.
+    adx_rising = adx.isna() | (adx > adx.shift(int(p["adx_slope_bars"])))
     adx_strong = adx.isna() | (adx > float(p["adx_threshold"]))
-    if not p.get("use_adx_filter", False):
+    if not p["use_adx_filter"]:
         adx_strong = pd.Series(True, index=out.index)
         adx_rising = pd.Series(True, index=out.index)
-
-    # Long Setup
-    above_r1 = r1.isna() | (close > r1.to_numpy())
+    above_r1 = close > r1.to_numpy()
+    below_s1 = close < s1.to_numpy()
+    long_setup = (direction == 1) & (out["Low"] > line) & (rsi > float(p["rsi_threshold"]))
+    long_setup &= adx_strong & adx_rising & after_opening_range
+    long_setup &= above_r1
     opening_range_long = (
         close > opening_range_high.to_numpy()
         if opening_range_enabled
         else pd.Series(True, index=out.index)
     )
-    long_setup = (direction == 1) & (out["Low"] > line) & (rsi > float(p["rsi_threshold"]))
-    long_setup &= adx_strong & adx_rising & after_opening_range
-    long_setup &= above_r1
-    long_setup &= upper_band.isna() | (close > upper_band)
-    long_setup &= opening_range_long
-
-    # Short Setup
-    below_s1 = s1.isna() | (close < s1.to_numpy())
+    long_setup &= (close > upper_band) & opening_range_long
+    short_setup = (direction == -1) & (out["High"] < line) & (rsi < float(p["rsi_short_threshold"]))
+    short_setup &= adx_strong & adx_rising & after_opening_range
+    short_setup &= below_s1
     opening_range_short = (
         close < opening_range_low.to_numpy()
         if opening_range_enabled
         else pd.Series(True, index=out.index)
     )
-    short_setup = (direction == -1) & (out["High"] < line) & (rsi < float(p["rsi_short_threshold"]))
-    short_setup &= adx_strong & adx_rising & after_opening_range
-    short_setup &= below_s1
-    short_setup &= lower_band.isna() | (close < lower_band)
-    short_setup &= opening_range_short
-
-    # Cutoff: no new entries after 15:00 IST
-    entry_cutoff = minutes <= 15 * 60
+    short_setup &= (close < lower_band) & opening_range_short
+    if p["variant"] == "B":
+        strong_daily_long = (previous_daily_close > daily_sma20) & (
+            previous_daily_close >= 0.9 * daily_high60
+        )
+        strong_daily_short = (previous_daily_close < daily_sma20) & (
+            previous_daily_close <= 1.1 * daily_low60
+        )
+        long_setup &= strong_daily_long
+        short_setup &= strong_daily_short
+    if p["variant"] == "D":
+        long_setup = (direction == 1) & (out["Low"] > line) & above_r1 & after_opening_range
+        short_setup = (direction == -1) & (out["High"] < line) & below_s1 & after_opening_range
+    prior_high = out["High"].groupby(dates).transform(
+        lambda values: values.shift(1).rolling(6, min_periods=6).max()
+    )
+    prior_low = out["Low"].groupby(dates).transform(
+        lambda values: values.shift(1).rolling(6, min_periods=6).min()
+    )
+    prior_volume_median = out["Volume"].groupby(dates).transform(
+        lambda values: values.shift(1).rolling(6, min_periods=6).median()
+    )
+    prior_volume_median20 = out["Volume"].groupby(dates).transform(
+        lambda values: values.shift(1).rolling(20, min_periods=10).median()
+    )
+    prior_bar_range_median = (out["High"] - out["Low"]).groupby(dates).transform(
+        lambda values: values.shift(1).rolling(6, min_periods=6).median()
+    )
+    prior_range = prior_high - prior_low
+    consolidation = prior_range <= 2.5 * deviation.shift(1)
+    volume_expansion = (out["Volume"] > prior_volume_median).where(
+        prior_volume_median > 0,
+        (out["High"] - out["Low"]) > prior_bar_range_median,
+    )
+    volume_expansion20 = (out["Volume"] > prior_volume_median20).where(
+        prior_volume_median20 > 0,
+        (out["High"] - out["Low"]) > (out["High"] - out["Low"]).groupby(dates).transform(
+            lambda values: values.shift(1).rolling(20, min_periods=10).median()
+        ),
+    )
+    if p["variant"] == "C":
+        long_setup &= consolidation & volume_expansion & (close > prior_high)
+        short_setup &= consolidation & volume_expansion & (close < prior_low)
+    elif p["variant"] == "D":
+        long_setup &= consolidation & volume_expansion & (close > prior_high)
+        short_setup &= consolidation & volume_expansion & (close < prior_low)
+    elif p["variant"] in {"D1", "D1R", "D1B", "D2", "D2R", "D2B"}:
+        long_setup = (direction == 1) & (out["Low"] > line) & above_r1 & after_opening_range
+        short_setup = (direction == -1) & (out["High"] < line) & below_s1 & after_opening_range
+        if p["variant"] in {"D1R", "D2R"}:
+            long_setup &= rsi > float(p["rsi_threshold"])
+            short_setup &= rsi < float(p["rsi_short_threshold"])
+        if p["variant"] in {"D1B", "D2B"}:
+            long_setup &= (close > upper_band) & opening_range_long
+            short_setup &= (close < lower_band) & opening_range_short
+        long_setup &= consolidation & (close > prior_high)
+        short_setup &= consolidation & (close < prior_low)
+        if p["variant"] in {"D1", "D1R", "D1B"}:
+            long_setup &= volume_expansion20
+            short_setup &= volume_expansion20
+    # Do not carry late-session setups into the following session.
+    cutoff_min = int(p.get("entry_cutoff_minute") or ENTRY_CUTOFF_MINUTE)
+    entry_cutoff = minutes <= cutoff_min
     long_setup &= entry_cutoff
     short_setup &= entry_cutoff
-
     bullish_reversal = (direction == 1) & (direction.shift(1) == -1)
     bearish_reversal = (direction == -1) & (direction.shift(1) == 1)
 
     out["Supertrend"] = line
     out["SupertrendDirection"] = direction
+    out["ATR"] = atr
     out["RSI"] = rsi
     out["ADX"] = adx
     out["BBUpper"] = upper_band
@@ -343,125 +426,356 @@ def generate_signals(
     out["PivotS1"] = s1.to_numpy()
     out["OpeningRangeHigh"] = opening_range_high.to_numpy()
     out["OpeningRangeLow"] = opening_range_low.to_numpy()
+    out["ConsolidationHigh"] = prior_high.to_numpy()
+    out["ConsolidationLow"] = prior_low.to_numpy()
+    out["ConsolidationValid"] = consolidation.to_numpy()
+    out["VolumeExpansion"] = volume_expansion.to_numpy()
     out["ADXIncreasing"] = adx_rising
     out["LongEntrySetup"] = long_setup
     out["ShortEntrySetup"] = short_setup
     out["EntrySetup"] = long_setup | short_setup
     out["BullishReversal"] = bullish_reversal
     out["BearishReversal"] = bearish_reversal
+    buy_values = np.zeros(len(out), dtype=bool)
+    sell_values = np.zeros(len(out), dtype=bool)
+    short_values = np.zeros(len(out), dtype=bool)
+    cover_values = np.zeros(len(out), dtype=bool)
+    buy_prices = np.full(len(out), np.nan)
+    sell_prices = np.full(len(out), np.nan)
+    short_prices = np.full(len(out), np.nan)
+    cover_prices = np.full(len(out), np.nan)
+    out["LongStop"] = line
+    out["ShortStop"] = line
 
-    n = len(out)
-    Buy = np.zeros(n, dtype=bool)
-    Sell = np.zeros(n, dtype=bool)
-    Short = np.zeros(n, dtype=bool)
-    Cover = np.zeros(n, dtype=bool)
-
-    BuyPrice = np.full(n, np.nan)
-    SellPrice = np.full(n, np.nan)
-    ShortPrice = np.full(n, np.nan)
-    CoverPrice = np.full(n, np.nan)
-
-    LongStop = np.full(n, np.nan)
-    ShortStop = np.full(n, np.nan)
-    LongRiskTarget = np.full(n, np.nan)
-    ShortRiskTarget = np.full(n, np.nan)
-
-    sq_time = _parse_time_int(p.get("square_off_time"), 151000)
-    rr = float(p.get("risk_reward", 2.0))
-
-    open_arr = out["Open"].to_numpy()
-    high_arr = out["High"].to_numpy()
-    low_arr = out["Low"].to_numpy()
-    close_arr = out["Close"].to_numpy()
-    line_arr = line.to_numpy()
-    t_int_arr = time_int.to_numpy()
-    l_set_arr = long_setup.to_numpy()
-    s_set_arr = short_setup.to_numpy()
-    b_rev_arr = bullish_reversal.to_numpy()
-    s_rev_arr = bearish_reversal.to_numpy()
+    opens = out["Open"].to_numpy()
+    highs = out["High"].to_numpy()
+    lows = out["Low"].to_numpy()
+    line_values = line.to_numpy()
+    bullish_reversal_values = bullish_reversal.to_numpy()
+    bearish_reversal_values = bearish_reversal.to_numpy()
+    long_setup_values = long_setup.to_numpy()
+    short_setup_values = short_setup.to_numpy()
 
     position = 0
-    entry_price = np.nan
-    active_stop = np.nan
-    active_target = np.nan
-
-    for i in range(n - 1):
-        t_now = t_int_arr[i]
-        is_sq = t_now >= sq_time
-
-        long_stop_hit = position == 1 and low_arr[i] <= line_arr[i]
-        short_stop_hit = position == -1 and high_arr[i] >= line_arr[i]
-
-        long_target_hit = position == 1 and not np.isnan(active_target) and high_arr[i] >= active_target
-        short_target_hit = position == -1 and not np.isnan(active_target) and low_arr[i] <= active_target
-
-        if position == 1 and is_sq:
-            Sell[i] = True
-            SellPrice[i] = close_arr[i]
+    for i in range(len(out) - 1):
+        long_stop_hit = position == 1 and lows[i] <= line_values[i]
+        short_stop_hit = position == -1 and highs[i] >= line_values[i]
+        if position == 1 and (bearish_reversal_values[i] or long_stop_hit):
+            sell_values[i + 1] = True
+            sell_prices[i + 1] = opens[i + 1]
             position = 0
-            active_stop = np.nan
-            active_target = np.nan
-        elif position == -1 and is_sq:
-            Cover[i] = True
-            CoverPrice[i] = close_arr[i]
+        elif position == -1 and (bullish_reversal_values[i] or short_stop_hit):
+            cover_values[i + 1] = True
+            cover_prices[i + 1] = opens[i + 1]
             position = 0
-            active_stop = np.nan
-            active_target = np.nan
-        elif position == 1 and (s_rev_arr[i] or long_stop_hit or long_target_hit):
-            Sell[i + 1] = True
-            SellPrice[i + 1] = open_arr[i + 1]
-            position = 0
-            active_stop = np.nan
-            active_target = np.nan
-        elif position == -1 and (b_rev_arr[i] or short_stop_hit or short_target_hit):
-            Cover[i + 1] = True
-            CoverPrice[i + 1] = open_arr[i + 1]
-            position = 0
-            active_stop = np.nan
-            active_target = np.nan
-        elif position == 0 and l_set_arr[i] and not is_sq:
-            Buy[i + 1] = True
-            BuyPrice[i + 1] = open_arr[i + 1]
-            entry_price = open_arr[i + 1]
-            active_stop = line_arr[i]
-            risk = max(1.0, entry_price - active_stop)
-            active_target = entry_price + risk * rr
-            LongStop[i + 1] = active_stop
-            LongRiskTarget[i + 1] = active_target
+        elif position == 0 and long_setup_values[i]:
+            buy_values[i + 1] = True
+            buy_prices[i + 1] = opens[i + 1]
             position = 1
-        elif position == 0 and s_set_arr[i] and not is_sq:
-            Short[i + 1] = True
-            ShortPrice[i + 1] = open_arr[i + 1]
-            entry_price = open_arr[i + 1]
-            active_stop = line_arr[i]
-            risk = max(1.0, active_stop - entry_price)
-            active_target = entry_price - risk * rr
-            ShortStop[i + 1] = active_stop
-            ShortRiskTarget[i + 1] = active_target
+        elif position == 0 and short_setup_values[i]:
+            short_values[i + 1] = True
+            short_prices[i + 1] = opens[i + 1]
             position = -1
-
-        if position == 1:
-            LongStop[i] = line_arr[i]
-            LongRiskTarget[i] = active_target
-        elif position == -1:
-            ShortStop[i] = line_arr[i]
-            ShortRiskTarget[i] = active_target
-
-    out["Buy"] = Buy
-    out["Sell"] = Sell
-    out["Short"] = Short
-    out["Cover"] = Cover
-    out["BuyPrice"] = BuyPrice
-    out["SellPrice"] = SellPrice
-    out["ShortPrice"] = ShortPrice
-    out["CoverPrice"] = CoverPrice
-    out["LongStop"] = LongStop
-    out["ShortStop"] = ShortStop
-    out["LongRiskTarget"] = LongRiskTarget
-    out["ShortRiskTarget"] = ShortRiskTarget
-
+    out["Buy"] = buy_values
+    out["Sell"] = sell_values
+    out["Short"] = short_values
+    out["Cover"] = cover_values
+    out["BuyPrice"] = buy_prices
+    out["SellPrice"] = sell_prices
+    out["ShortPrice"] = short_prices
+    out["CoverPrice"] = cover_prices
     out.attrs.update(df.attrs)
     return out
+
+
+def _execute_on_lower_timeframe(
+    setup: pd.DataFrame,
+    execution: pd.DataFrame,
+    params: MomentumParamsOverrides | None = None,
+) -> pd.DataFrame:
+    """Execute setup-candle levels using risk-budget position sizing."""
+    p: MomentumParams = {**DEFAULT_PARAMS, **(params or {})}
+    if p["risk_budget"] <= 0:
+        raise ValueError("risk_budget must be positive")
+    lot_size = p.get("lot_size") or p.get("round_lot_size") or DEFAULT_LOT_SIZE
+    if lot_size <= 0:
+        raise ValueError("lot_size must be positive")
+    if execution.empty:
+        return execution.copy()
+    setup_diffs = pd.DatetimeIndex(setup.index).to_series().diff().dropna()
+    setup_delta = (
+        pd.Timedelta(setup_diffs.median())
+        if not setup_diffs.empty
+        else pd.Timedelta(minutes=5)
+    )
+    effective = setup.copy()
+    effective.index = effective.index + setup_delta
+    active = effective.reindex(execution.index, method="ffill")
+    out = execution.copy()
+    for column in (
+        "Supertrend", "SupertrendDirection", "RSI", "ADX", "BBUpper", "BBLower",
+        "ATR",
+        "PivotR1", "PivotS1", "OpeningRangeHigh", "OpeningRangeLow", "ADXIncreasing",
+        "LongEntrySetup", "ShortEntrySetup", "EntrySetup", "BullishReversal",
+        "BearishReversal",
+        "ConsolidationHigh", "ConsolidationLow", "ConsolidationValid",
+        "VolumeExpansion",
+    ):
+        if column in active.columns:
+            out[column] = active[column].to_numpy()
+    for column in ("Buy", "Sell", "Short", "Cover"):
+        out[column] = False
+    for column in ("BuyPrice", "SellPrice", "ShortPrice", "CoverPrice"):
+        out[column] = np.nan
+    out["LongStop"] = active["Supertrend"].to_numpy()
+    out["ShortStop"] = active["Supertrend"].to_numpy()
+    execution_rsi = _rsi(out["Close"], int(p["rsi_period"]))
+    opening_range_enabled = bool(p["opening_range_minutes"])
+
+    position = 0
+    timestamps = pd.DatetimeIndex(out.index)
+    if timestamps.tz is not None:
+        timestamps = timestamps.tz_convert(IST_TZ)
+    opens = out["Open"].to_numpy()
+    highs = out["High"].to_numpy()
+    lows = out["Low"].to_numpy()
+    closes = out["Close"].to_numpy()
+    rsi_values = execution_rsi.to_numpy()
+    supertrend_values = active["Supertrend"].to_numpy()
+    atr_values = active["ATR"].to_numpy()
+    direction_values = active["SupertrendDirection"].to_numpy()
+    pivot_r1_values = active["PivotR1"].to_numpy()
+    pivot_s1_values = active["PivotS1"].to_numpy()
+    bb_upper_values = active["BBUpper"].to_numpy()
+    bb_lower_values = active["BBLower"].to_numpy()
+    opening_high_values = active["OpeningRangeHigh"].to_numpy()
+    opening_low_values = active["OpeningRangeLow"].to_numpy()
+    long_entry_values = active["LongEntrySetup"].to_numpy().copy()
+    short_entry_values = active["ShortEntrySetup"].to_numpy().copy()
+    entry_values = active["EntrySetup"].to_numpy().copy()
+    bullish_reversal_values = active["BullishReversal"].to_numpy()
+    bearish_reversal_values = active["BearishReversal"].to_numpy()
+    buy_values = np.zeros(len(out), dtype=bool)
+    sell_values = np.zeros(len(out), dtype=bool)
+    short_values = np.zeros(len(out), dtype=bool)
+    cover_values = np.zeros(len(out), dtype=bool)
+    buy_prices = np.full(len(out), np.nan)
+    sell_prices = np.full(len(out), np.nan)
+    short_prices = np.full(len(out), np.nan)
+    cover_prices = np.full(len(out), np.nan)
+    buy_qty = np.zeros(len(out))
+    short_qty = np.zeros(len(out))
+    buy_lots = np.zeros(len(out))
+    short_lots = np.zeros(len(out))
+    cutoff_min = int(p.get("entry_cutoff_minute") or ENTRY_CUTOFF_MINUTE)
+
+    for row_number in range(len(out)):
+        timestamp = timestamps[row_number]
+        if pd.isna(supertrend_values[row_number]):
+            continue
+        stop = float(supertrend_values[row_number])
+        if any(pd.isna(values[row_number]) for values in (
+            pivot_r1_values, pivot_s1_values, bb_upper_values, bb_lower_values,
+        )):
+            continue
+        long_setup = (
+            bool(long_entry_values[row_number])
+            and
+            int(direction_values[row_number]) == 1
+            and lows[row_number] > stop
+            and rsi_values[row_number] > float(p["rsi_threshold"])
+            and closes[row_number] > float(pivot_r1_values[row_number])
+            and closes[row_number] > float(bb_upper_values[row_number])
+            and float(p["minimum_entry_atr"]) <= atr_values[row_number] <= float(p["maximum_entry_atr"])
+            and (
+                not opening_range_enabled
+                or closes[row_number] > float(opening_high_values[row_number])
+            )
+            and timestamp.hour * 60 + timestamp.minute <= cutoff_min
+        )
+        short_setup = (
+            bool(short_entry_values[row_number])
+            and
+            int(direction_values[row_number]) == -1
+            and highs[row_number] < stop
+            and rsi_values[row_number] < float(p["rsi_short_threshold"])
+            and closes[row_number] < float(pivot_s1_values[row_number])
+            and closes[row_number] < float(bb_lower_values[row_number])
+            and float(p["minimum_entry_atr"]) <= atr_values[row_number] <= float(p["maximum_entry_atr"])
+            and (
+                not opening_range_enabled
+                or closes[row_number] < float(opening_low_values[row_number])
+            )
+            and timestamp.hour * 60 + timestamp.minute <= cutoff_min
+        )
+        long_entry_values[row_number] = long_setup
+        short_entry_values[row_number] = short_setup
+        entry_values[row_number] = long_setup or short_setup
+        if position == 1 and (lows[row_number] <= stop or bool(bearish_reversal_values[row_number])):
+            price = min(opens[row_number], stop) if lows[row_number] <= stop else opens[row_number]
+            sell_values[row_number] = True
+            sell_prices[row_number] = price
+            position = 0
+        elif position == -1 and (highs[row_number] >= stop or bool(bullish_reversal_values[row_number])):
+            price = max(opens[row_number], stop) if highs[row_number] >= stop else opens[row_number]
+            cover_values[row_number] = True
+            cover_prices[row_number] = price
+            position = 0
+        elif position == 0:
+            long_entry_level = max(float(pivot_r1_values[row_number]), float(bb_upper_values[row_number]))
+            short_entry_level = min(float(pivot_s1_values[row_number]), float(bb_lower_values[row_number]))
+            if long_setup and highs[row_number] >= long_entry_level:
+                entry_price = max(opens[row_number], long_entry_level)
+                risk_points = abs(entry_price - stop)
+                buy_values[row_number] = True
+                buy_prices[row_number] = entry_price
+                buy_lots[row_number] = (
+                    p["risk_budget"] / (risk_points * lot_size)
+                    if risk_points > 0
+                    else 0.0
+                )
+                buy_qty[row_number] = buy_lots[row_number] * lot_size
+                position = 1
+            elif short_setup and lows[row_number] <= short_entry_level:
+                entry_price = min(opens[row_number], short_entry_level)
+                risk_points = abs(stop - entry_price)
+                short_values[row_number] = True
+                short_prices[row_number] = entry_price
+                short_lots[row_number] = (
+                    p["risk_budget"] / (risk_points * lot_size)
+                    if risk_points > 0
+                    else 0.0
+                )
+                short_qty[row_number] = short_lots[row_number] * lot_size
+                position = -1
+    out["LongEntrySetup"] = long_entry_values
+    out["ShortEntrySetup"] = short_entry_values
+    out["EntrySetup"] = entry_values
+    out["Buy"] = buy_values
+    out["Sell"] = sell_values
+    out["Short"] = short_values
+    out["Cover"] = cover_values
+    out["BuyPrice"] = buy_prices
+    out["SellPrice"] = sell_prices
+    out["ShortPrice"] = short_prices
+    out["CoverPrice"] = cover_prices
+    out["BuyQty"] = buy_qty
+    out["ShortQty"] = short_qty
+    out["BuyLots"] = buy_lots
+    out["ShortLots"] = short_lots
+    out.attrs.update(setup.attrs)
+    out.attrs["lot_size"] = lot_size
+    out.attrs["risk_budget"] = p["risk_budget"]
+    return out
+
+
+def generate_signals(
+    df: pd.DataFrame,
+    params: MomentumParamsOverrides | None = None,
+    execution_df: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Generate 5-minute setups, optionally executed on lower-timeframe bars."""
+    setup = _generate_setup_signals(df, params)
+    return (
+        _execute_on_lower_timeframe(setup, execution_df, params)
+        if execution_df is not None
+        else setup
+    )
+
+
+def _is_missing(value: object) -> bool:
+    return value is None or value is pd.NA or (
+        isinstance(value, (float, np.floating)) and bool(np.isnan(value))
+    )
+
+
+def _format_money(value: object) -> str:
+    return "-" if _is_missing(value) else f"{float(str(value)):,.2f}"
+
+
+def _extract_trades(df: pd.DataFrame) -> pd.DataFrame:
+    """Calculate risk-sized P&L from generated entry and exit prices."""
+    columns = [
+        "side", "entry_time", "exit_time", "entry_price", "exit_price",
+        "initial_sl_bps", "entry_atr", "lots", "qty", "gross_pnl", "cost", "pnl",
+    ]
+    rows: list[dict[str, object]] = []
+    position = 0
+    entry_time: pd.Timestamp | None = None
+    entry_price = 0.0
+    initial_sl_bps = np.nan
+    entry_atr = np.nan
+    entry_lots = 0.0
+    entry_qty = 0.0
+    timestamps = pd.DatetimeIndex(df.index)
+    buy_values = df["Buy"].to_numpy()
+    short_values = df["Short"].to_numpy()
+    sell_values = df["Sell"].to_numpy()
+    cover_values = df["Cover"].to_numpy()
+    buy_prices = df["BuyPrice"].to_numpy()
+    short_prices = df["ShortPrice"].to_numpy()
+    sell_prices = df["SellPrice"].to_numpy()
+    cover_prices = df["CoverPrice"].to_numpy()
+    buy_lots = df.get("BuyLots", pd.Series(1.0, index=df.index)).to_numpy()
+    short_lots = df.get("ShortLots", pd.Series(1.0, index=df.index)).to_numpy()
+    buy_qty = df.get("BuyQty", pd.Series(DEFAULT_LOT_SIZE, index=df.index)).to_numpy()
+    short_qty = df.get("ShortQty", pd.Series(DEFAULT_LOT_SIZE, index=df.index)).to_numpy()
+    closes = df["Close"].to_numpy()
+    for row_number, bar_time in enumerate(timestamps):
+        if position == 0 and bool(buy_values[row_number]):
+            position, entry_time, entry_price = 1, bar_time, float(buy_prices[row_number])
+            sl_val = float(df["LongStop"].iloc[row_number]) if "LongStop" in df.columns else entry_price * 0.99
+            initial_sl_bps = (
+                abs(entry_price - sl_val)
+                / entry_price
+                * 10_000
+            ) if entry_price > 0 else np.nan
+            entry_atr = float(df["ATR"].iloc[row_number]) if "ATR" in df.columns else np.nan
+            entry_lots, entry_qty = float(buy_lots[row_number]), float(buy_qty[row_number])
+        elif position == 0 and bool(short_values[row_number]):
+            position, entry_time, entry_price = -1, bar_time, float(short_prices[row_number])
+            sl_val = float(df["ShortStop"].iloc[row_number]) if "ShortStop" in df.columns else entry_price * 1.01
+            initial_sl_bps = (
+                abs(entry_price - sl_val)
+                / entry_price
+                * 10_000
+            ) if entry_price > 0 else np.nan
+            entry_atr = float(df["ATR"].iloc[row_number]) if "ATR" in df.columns else np.nan
+            entry_lots, entry_qty = float(short_lots[row_number]), float(short_qty[row_number])
+        elif position == 1 and bool(sell_values[row_number]):
+            exit_price = float(sell_prices[row_number])
+            qty_mult = entry_qty if entry_qty > 0 else DEFAULT_LOT_SIZE
+            pnl = (exit_price - entry_price) * qty_mult
+            rows.append({"side": "L", "entry_time": entry_time, "exit_time": bar_time,
+                         "entry_price": entry_price, "exit_price": exit_price,
+                         "initial_sl_bps": initial_sl_bps,
+                         "entry_atr": entry_atr,
+                         "lots": entry_lots, "qty": entry_qty, "gross_pnl": pnl,
+                         "cost": 0.0, "pnl": pnl})
+            position = 0
+        elif position == -1 and bool(cover_values[row_number]):
+            exit_price = float(cover_prices[row_number])
+            qty_mult = entry_qty if entry_qty > 0 else DEFAULT_LOT_SIZE
+            pnl = (entry_price - exit_price) * qty_mult
+            rows.append({"side": "S", "entry_time": entry_time, "exit_time": bar_time,
+                         "entry_price": entry_price, "exit_price": exit_price,
+                         "initial_sl_bps": initial_sl_bps,
+                         "entry_atr": entry_atr,
+                         "lots": entry_lots, "qty": entry_qty, "gross_pnl": pnl,
+                         "cost": 0.0, "pnl": pnl})
+            position = 0
+    if position and entry_time is not None and len(df):
+        exit_price = float(closes[-1])
+        qty_mult = entry_qty if entry_qty > 0 else DEFAULT_LOT_SIZE
+        pnl = ((exit_price - entry_price) if position == 1 else (entry_price - exit_price)) * qty_mult
+        rows.append({"side": "L" if position == 1 else "S", "entry_time": entry_time,
+                     "exit_time": timestamps[-1], "entry_price": entry_price,
+                     "exit_price": exit_price, "lots": entry_lots, "qty": entry_qty,
+                     "initial_sl_bps": initial_sl_bps,
+                     "entry_atr": entry_atr,
+                     "gross_pnl": pnl,
+                     "cost": 0.0, "pnl": pnl})
+    return pd.DataFrame(rows, columns=columns)
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +783,7 @@ def generate_signals(
 # ---------------------------------------------------------------------------
 
 def compute_supertrend_chart_payload(bars: List[Dict[str, Any]], cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """Computes OHLC candles, Supertrend, BB, Pivots, RSI, and Signals for charting."""
+    """Computes OHLC candles, Supertrend, BB, Pivots, RSI, ATR, and Signals for charting."""
     valid_bars = [
         b for b in (bars or [])
         if b.get("open") is not None and b.get("high") is not None and b.get("low") is not None and b.get("close") is not None
@@ -480,6 +794,7 @@ def compute_supertrend_chart_payload(bars: List[Dict[str, Any]], cfg: Dict[str, 
     rows = []
     idx = []
     candles_out = []
+
     for b in valid_bars:
         t_val = b.get("time")
         if isinstance(t_val, datetime.datetime):
@@ -494,9 +809,13 @@ def compute_supertrend_chart_payload(bars: List[Dict[str, Any]], cfg: Dict[str, 
             except Exception:
                 dt_ist = datetime.datetime.now(IST_TZ)
 
-        idx.append(dt_ist)
-        o, h, l, c = float(b["open"]), float(b["high"]), float(b["low"]), float(b["close"])
+        o = float(b["open"])
+        h = float(b["high"])
+        l = float(b["low"])
+        c = float(b["close"])
         v = float(b.get("volume") or 0.0)
+
+        idx.append(dt_ist)
         rows.append({"Open": o, "High": h, "Low": l, "Close": c, "Volume": v})
         candles_out.append({
             "time": dt_ist.isoformat(),
@@ -516,6 +835,7 @@ def compute_supertrend_chart_payload(bars: List[Dict[str, Any]], cfg: Dict[str, 
     df.attrs["symbol"] = cfg.get("symbol", "NSE:NIFTY")
 
     params: MomentumParamsOverrides = {
+        "variant": str(cfg.get("variant", "D1R")),
         "supertrend_period": int(cfg.get("supertrend_period", 10)),
         "supertrend_multiplier": float(cfg.get("supertrend_multiplier", 3.0)),
         "rsi_period": int(cfg.get("rsi_period", 14)),
@@ -524,12 +844,16 @@ def compute_supertrend_chart_payload(bars: List[Dict[str, Any]], cfg: Dict[str, 
         "adx_period": int(cfg.get("adx_period", 14)),
         "adx_threshold": float(cfg.get("adx_threshold", 25.0)),
         "adx_slope_bars": int(cfg.get("adx_slope_bars", 1)),
-        "opening_range_minutes": int(cfg.get("opening_range_minutes", 15)) if cfg.get("opening_range_minutes") is not None else 15,
+        "opening_range_minutes": int(cfg.get("opening_range_minutes")) if cfg.get("opening_range_minutes") is not None else None,
         "risk_reward": float(cfg.get("risk_reward", 2.0)),
         "use_adx_filter": bool(cfg.get("use_adx_filter", False)),
         "bb_period": int(cfg.get("bb_period", 20)),
         "bb_std_dev": float(cfg.get("bb_std_dev", 2.0)),
+        "minimum_entry_atr": float(cfg.get("minimum_entry_atr", 15.0)),
+        "maximum_entry_atr": float(cfg.get("maximum_entry_atr", 35.0)),
+        "risk_budget": float(cfg.get("risk_budget", 10000.0)),
         "square_off_time": _parse_time_int(cfg.get("square_off_time"), 151000),
+        "entry_cutoff_minute": int(cfg.get("entry_cutoff_minute") or ENTRY_CUTOFF_MINUTE),
     }
 
     sig_df = generate_signals(df, params)
@@ -546,34 +870,35 @@ def compute_supertrend_chart_payload(bars: List[Dict[str, Any]], cfg: Dict[str, 
         ts_dt = sig_df.index[pos_i].to_pydatetime()
         ts_iso = ts_dt.isoformat()
         lbl_t = ts_dt.strftime("%H:%M")
-        if bool(row["Buy"]):
-            p_val = float(row["BuyPrice"]) if math.isfinite(row["BuyPrice"]) else float(row["Close"])
-            signals.append({"index": pos_i, "time": ts_iso, "label_time": lbl_t, "type": "BUY", "price": round(p_val, 2), "label": "BUY (Long)"})
-        if bool(row["Sell"]):
-            p_val = float(row["SellPrice"]) if math.isfinite(row["SellPrice"]) else float(row["Close"])
+        if bool(row.get("Buy", False)):
+            p_val = float(row["BuyPrice"]) if math.isfinite(row.get("BuyPrice", np.nan)) else float(row["Close"])
+            signals.append({"index": pos_i, "time": ts_iso, "label_time": lbl_t, "type": "BUY", "price": round(p_val, 2), "label": f"BUY ({params['variant']})"})
+        if bool(row.get("Sell", False)):
+            p_val = float(row["SellPrice"]) if math.isfinite(row.get("SellPrice", np.nan)) else float(row["Close"])
             signals.append({"index": pos_i, "time": ts_iso, "label_time": lbl_t, "type": "SELL", "price": round(p_val, 2), "label": "SELL (Exit)"})
-        if bool(row["Short"]):
-            p_val = float(row["ShortPrice"]) if math.isfinite(row["ShortPrice"]) else float(row["Close"])
-            signals.append({"index": pos_i, "time": ts_iso, "label_time": lbl_t, "type": "SHORT", "price": round(p_val, 2), "label": "SHORT"})
-        if bool(row["Cover"]):
-            p_val = float(row["CoverPrice"]) if math.isfinite(row["CoverPrice"]) else float(row["Close"])
+        if bool(row.get("Short", False)):
+            p_val = float(row["ShortPrice"]) if math.isfinite(row.get("ShortPrice", np.nan)) else float(row["Close"])
+            signals.append({"index": pos_i, "time": ts_iso, "label_time": lbl_t, "type": "SHORT", "price": round(p_val, 2), "label": f"SHORT ({params['variant']})"})
+        if bool(row.get("Cover", False)):
+            p_val = float(row["CoverPrice"]) if math.isfinite(row.get("CoverPrice", np.nan)) else float(row["Close"])
             signals.append({"index": pos_i, "time": ts_iso, "label_time": lbl_t, "type": "COVER", "price": round(p_val, 2), "label": "COVER (Exit)"})
 
     return {
         "candles": candles_out,
         "overlays": {
             "supertrend": _clean_series("Supertrend"),
-            "supertrend_direction": [int(v) for v in sig_df["SupertrendDirection"].to_numpy()],
+            "supertrend_direction": [int(v) for v in sig_df["SupertrendDirection"].to_numpy()] if "SupertrendDirection" in sig_df.columns else [],
             "bb_upper": _clean_series("BBUpper"),
             "bb_lower": _clean_series("BBLower"),
             "pivot_r1": _clean_series("PivotR1"),
             "pivot_s1": _clean_series("PivotS1"),
             "opening_range_high": _clean_series("OpeningRangeHigh"),
             "opening_range_low": _clean_series("OpeningRangeLow"),
+            "consolidation_high": _clean_series("ConsolidationHigh"),
+            "consolidation_low": _clean_series("ConsolidationLow"),
             "long_stop": _clean_series("LongStop"),
             "short_stop": _clean_series("ShortStop"),
-            "long_target": _clean_series("LongRiskTarget"),
-            "short_target": _clean_series("ShortRiskTarget"),
+            "atr": _clean_series("ATR"),
         },
         "oscillators": {
             "rsi": _clean_series("RSI"),
@@ -581,6 +906,9 @@ def compute_supertrend_chart_payload(bars: List[Dict[str, Any]], cfg: Dict[str, 
             "rsi_oversold": float(params["rsi_short_threshold"]),
             "adx": _clean_series("ADX"),
             "adx_threshold": float(params["adx_threshold"]),
+            "atr": _clean_series("ATR"),
+            "minimum_entry_atr": float(params["minimum_entry_atr"]),
+            "maximum_entry_atr": float(params["maximum_entry_atr"]),
         },
         "signals": signals,
     }
@@ -593,6 +921,7 @@ def compute_supertrend_chart_payload(bars: List[Dict[str, Any]], cfg: Dict[str, 
 class SupertrendMomentumStrategy(BaseStrategy):
     """
     Live / Paper Algorithmic Execution Container for Supertrend RSI Bollinger Momentum Strategy on NIFTY.
+    Supports variant D1R with risk-budget lot sizing, entry ATR bounds, and Supertrend trailing stop.
     """
 
     def on_init(self):
@@ -628,6 +957,7 @@ class SupertrendMomentumStrategy(BaseStrategy):
         self.max_lots = int(self.config.get("max_lots", 8))
 
         # Parameters
+        self.variant = str(self.config.get("variant", "D1R")).strip().upper()
         self.supertrend_period = int(self.config.get("supertrend_period", 10))
         self.supertrend_multiplier = float(self.config.get("supertrend_multiplier", 3.0))
         self.rsi_period = int(self.config.get("rsi_period", 14))
@@ -636,11 +966,15 @@ class SupertrendMomentumStrategy(BaseStrategy):
         self.adx_period = int(self.config.get("adx_period", 14))
         self.adx_threshold = float(self.config.get("adx_threshold", 25.0))
         self.adx_slope_bars = int(self.config.get("adx_slope_bars", 1))
-        self.opening_range_minutes = int(self.config.get("opening_range_minutes", 15)) if self.config.get("opening_range_minutes") is not None else 15
+        self.opening_range_minutes = int(self.config.get("opening_range_minutes")) if self.config.get("opening_range_minutes") is not None else None
         self.risk_reward = float(self.config.get("risk_reward", 2.0))
         self.use_adx_filter = bool(self.config.get("use_adx_filter", False))
         self.bb_period = int(self.config.get("bb_period", 20))
         self.bb_std_dev = float(self.config.get("bb_std_dev", 2.0))
+        self.minimum_entry_atr = float(self.config.get("minimum_entry_atr", 15.0))
+        self.maximum_entry_atr = float(self.config.get("maximum_entry_atr", 35.0))
+        self.risk_budget = float(self.config.get("risk_budget", 10000.0))
+        self.entry_cutoff_minute = int(self.config.get("entry_cutoff_minute") or ENTRY_CUTOFF_MINUTE)
         self.square_off_time_num = _parse_time_int(self.config.get("square_off_time"), 151000)
         self.fut_roll_last_friday = bool(self.config.get("fut_roll_last_friday", True))
 
@@ -667,8 +1001,10 @@ class SupertrendMomentumStrategy(BaseStrategy):
         self.log_decision(
             "INIT",
             f"Supertrend Momentum Strategy Initialized for {self.underlying_root} | "
-            f"ST({self.supertrend_period}, {self.supertrend_multiplier}) | RSI({self.rsi_period}) > {self.rsi_threshold}/<{self.rsi_short_threshold} | "
-            f"BB({self.bb_period}, {self.bb_std_dev}) | OR: {self.opening_range_minutes}m | R:R {self.risk_reward} | "
+            f"Variant: {self.variant} | ST({self.supertrend_period}, {self.supertrend_multiplier}) | "
+            f"RSI({self.rsi_period}) > {self.rsi_threshold}/<{self.rsi_short_threshold} | "
+            f"BB({self.bb_period}, {self.bb_std_dev}) | ATR Bounds: [{self.minimum_entry_atr}, {self.maximum_entry_atr}] | "
+            f"Risk Budget: ₹{self.risk_budget:,.2f} | Cutoff: {self.entry_cutoff_minute // 60:02d}:{self.entry_cutoff_minute % 60:02d} IST | "
             f"SquareOff: {self.square_off_time_num} IST | Signal: {self.signal_symbol}",
         )
 
@@ -783,6 +1119,7 @@ class SupertrendMomentumStrategy(BaseStrategy):
             self._last_bucket_seen = latest_dt
 
         params: MomentumParamsOverrides = {
+            "variant": self.variant,
             "supertrend_period": self.supertrend_period,
             "supertrend_multiplier": self.supertrend_multiplier,
             "rsi_period": self.rsi_period,
@@ -796,6 +1133,10 @@ class SupertrendMomentumStrategy(BaseStrategy):
             "use_adx_filter": self.use_adx_filter,
             "bb_period": self.bb_period,
             "bb_std_dev": self.bb_std_dev,
+            "minimum_entry_atr": self.minimum_entry_atr,
+            "maximum_entry_atr": self.maximum_entry_atr,
+            "risk_budget": self.risk_budget,
+            "entry_cutoff_minute": self.entry_cutoff_minute,
             "square_off_time": self.square_off_time_num,
         }
 
@@ -806,13 +1147,15 @@ class SupertrendMomentumStrategy(BaseStrategy):
         st_val = float(last["Supertrend"]) if math.isfinite(last["Supertrend"]) else 0.0
         st_dir = int(last["SupertrendDirection"])
         rsi_val = float(last["RSI"]) if math.isfinite(last["RSI"]) else 50.0
+        atr_val = float(last["ATR"]) if math.isfinite(last.get("ATR", np.nan)) else 0.0
 
         if is_new_bar:
             self.log_decision(
                 "Candle Fetch Success",
-                f"{self.symbol} C={last['Close']:.2f} | Supertrend={st_val:.2f} ({'BULL' if st_dir == 1 else 'BEAR'}) | "
+                f"{self.symbol} C={last['Close']:.2f} | ST={st_val:.2f} ({'BULL' if st_dir == 1 else 'BEAR'}) | "
+                f"ATR={atr_val:.1f} (Bounds: [{self.minimum_entry_atr:.1f}, {self.maximum_entry_atr:.1f}]) | "
                 f"RSI={rsi_val:.1f} | BB=[{last['BBLower']:.1f} - {last['BBUpper']:.1f}] | "
-                f"Pivot=[S1:{last['PivotS1']:.1f} R1:{last['PivotR1']:.1f}]",
+                f"Pivot=[S1:{last['PivotS1']:.1f} R1:{last['PivotR1']:.1f}] | Variant={self.variant}",
             )
 
         tn_now = int(latest_dt.hour * 10000 + latest_dt.minute * 100 + latest_dt.second)
@@ -836,13 +1179,14 @@ class SupertrendMomentumStrategy(BaseStrategy):
                 self._execute_exit("TIME_SQUARE_OFF", exit_spot=cur_close)
                 return
 
-            # 2. Risk Target Hit
-            if in_long and target_p > 0 and cur_high >= target_p:
-                self._execute_exit("TARGET_HIT", exit_spot=target_p)
-                return
-            elif not in_long and target_p > 0 and cur_low <= target_p:
-                self._execute_exit("TARGET_HIT", exit_spot=target_p)
-                return
+            # 2. Risk Target Hit (if risk_reward configured)
+            if self.risk_reward > 0 and target_p > 0:
+                if in_long and cur_high >= target_p:
+                    self._execute_exit("TARGET_HIT", exit_spot=target_p)
+                    return
+                elif not in_long and cur_low <= target_p:
+                    self._execute_exit("TARGET_HIT", exit_spot=target_p)
+                    return
 
             # 3. Supertrend Stop Loss Hit
             if in_long and cur_low <= stop_p:
@@ -881,29 +1225,53 @@ class SupertrendMomentumStrategy(BaseStrategy):
         if max_t > 0 and self._trades_today >= max_t:
             return
 
-        enter_long = bool(last["LongEntrySetup"])
-        enter_short = bool(last["ShortEntrySetup"])
+        # Cutoff check: no new entries after cutoff minute (default 13:45 IST)
+        minute_now = latest_dt.hour * 60 + latest_dt.minute
+        if minute_now > self.entry_cutoff_minute:
+            return
+
+        enter_long = bool(last.get("LongEntrySetup", False))
+        enter_short = bool(last.get("ShortEntrySetup", False))
 
         if not enter_long and not enter_short:
+            return
+
+        # Check ATR bounds (minimum_entry_atr <= atr <= maximum_entry_atr)
+        if atr_val > 0 and (atr_val < self.minimum_entry_atr or atr_val > self.maximum_entry_atr):
+            self.log_decision(
+                "ENTRY FILTER REJECTED",
+                f"ATR {atr_val:.2f} is outside entry bounds [{self.minimum_entry_atr}, {self.maximum_entry_atr}] | Setup skipped.",
+                level="WARNING",
+            )
             return
 
         sig_side = "BUY" if enter_long else "SELL"
         signal_spot = float(last["Close"])
 
-        lots = max(1, min(self.max_lots, self.quantity_lots))
-        order_qty = lots * self.round_lot_size
+        stop_p = st_val
+        risk_points = max(1.0, abs(signal_spot - stop_p))
 
+        # Dynamic risk-budget position sizing
+        if self.risk_budget > 0 and risk_points > 0:
+            calc_lots = self.risk_budget / (risk_points * self.round_lot_size)
+            lots = max(1, min(self.max_lots, int(round(calc_lots))))
+        else:
+            lots = max(1, min(self.max_lots, self.quantity_lots))
+
+        order_qty = lots * self.round_lot_size
         trade_symbol, order_side, ref_price = self._resolve_execution_symbol(sig_side, signal_spot, latest_dt)
 
-        stop_p = st_val
-        risk = max(1.0, abs(signal_spot - stop_p))
-        target_p = signal_spot + (risk * self.risk_reward) if enter_long else signal_spot - (risk * self.risk_reward)
+        target_p = (
+            signal_spot + (risk_points * self.risk_reward)
+            if enter_long
+            else signal_spot - (risk_points * self.risk_reward)
+        )
 
         self.log_decision(
             "ENTRY CONDITION MATCH",
-            f"Supertrend Momentum {sig_side} Signal | Spot={signal_spot:.2f} | "
-            f"Supertrend Stop={stop_p:.2f} | Target ({self.risk_reward} R:R)={target_p:.2f} | "
-            f"Contract={trade_symbol} ({order_side}) | Qty={order_qty} ({lots}L)",
+            f"Supertrend Momentum [{self.variant}] {sig_side} Signal | Spot={signal_spot:.2f} | "
+            f"ATR={atr_val:.1f} | Stop={stop_p:.2f} (Risk={risk_points:.1f} pts) | Target={target_p:.2f} | "
+            f"Budget=₹{self.risk_budget:,.0f} -> Lots={lots} (Qty={order_qty}) | Contract={trade_symbol}",
             level="SUCCESS",
         )
 
@@ -1050,12 +1418,12 @@ class SupertrendMomentumStrategy(BaseStrategy):
 
         if check_p > 0:
             if sig_side == "BUY":
-                if target_p > 0 and check_p >= target_p:
+                if self.risk_reward > 0 and target_p > 0 and check_p >= target_p:
                     self._execute_exit("TARGET_HIT", exit_spot=check_p)
                 elif stop_p > 0 and check_p <= stop_p:
                     self._execute_exit("STOP_LOSS", exit_spot=check_p)
             elif sig_side == "SELL":
-                if target_p > 0 and check_p <= target_p:
+                if self.risk_reward > 0 and target_p > 0 and check_p <= target_p:
                     self._execute_exit("TARGET_HIT", exit_spot=check_p)
                 elif stop_p > 0 and check_p >= stop_p:
                     self._execute_exit("STOP_LOSS", exit_spot=check_p)
@@ -1093,9 +1461,10 @@ class SupertrendMomentumStrategy(BaseStrategy):
                 stop_p = float(self.current_trade.get("stop_price") or avg_fill * 0.99)
                 risk = max(1.0, abs(avg_fill - stop_p))
                 is_long = self.current_trade.get("signal_side") == "BUY"
-                target_p = avg_fill + (risk * self.risk_reward) if is_long else avg_fill - (risk * self.risk_reward)
-                self.current_trade["target_price"] = round(target_p, 2)
-                self.current_trade["pt_spot"] = round(target_p, 2)
+                if self.risk_reward > 0:
+                    target_p = avg_fill + (risk * self.risk_reward) if is_long else avg_fill - (risk * self.risk_reward)
+                    self.current_trade["target_price"] = round(target_p, 2)
+                    self.current_trade["pt_spot"] = round(target_p, 2)
             leg0["status"] = "FILLED"
             self.log_decision(
                 "ORDER FILLED",
@@ -1107,3 +1476,23 @@ class SupertrendMomentumStrategy(BaseStrategy):
             leg0["status"] = "REJECTED"
             self.trade_state = "IDLE"
             self.log_decision("ORDER REJECTED", f"Entry order rejected: {rej}", level="ERROR")
+
+
+__all__ = [
+    "DEFAULT_PARAMS",
+    "MomentumParamsOverrides",
+    "MomentumParams",
+    "ENTRY_CUTOFF_MINUTE",
+    "_supertrend",
+    "_rsi",
+    "_adx",
+    "_generate_setup_signals",
+    "_execute_on_lower_timeframe",
+    "generate_signals",
+    "_extract_trades",
+    "resolve_futures_lot_size",
+    "resolve_future_contract",
+    "resolve_nifty_future_contract",
+    "compute_supertrend_chart_payload",
+    "SupertrendMomentumStrategy",
+]
