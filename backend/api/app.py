@@ -418,9 +418,21 @@ def list_accounts(db: Session = Depends(get_db), current_user: User = Depends(ge
         # Check if today's session token is active
         creds = acc.credentials_json or {}
         today_str = datetime.date.today().isoformat()
-        token = creds.get("token", "")
-        token_date = creds.get("token_date", "")
-        has_token_today = bool(token) and (token_date == today_str)
+        today_compact = datetime.date.today().strftime("%Y%m%d")
+        token = str(creds.get("token") or "").strip()
+        token_date = str(creds.get("token_date") or "").strip()
+        has_token_today = bool(token) and (token_date == today_str or token_date == today_compact)
+        if acc.broker != "XTS" and (has_token_today or bool(acc.is_logged_in)):
+            has_token_today = True
+
+        if has_token_today and not acc.is_logged_in:
+            acc.is_logged_in = True
+            try:
+                db.commit()
+            except Exception:
+                pass
+
+        is_logged_in = has_token_today or bool(acc.is_logged_in)
 
         result.append({
             "id": acc.id,
@@ -430,7 +442,7 @@ def list_accounts(db: Session = Depends(get_db), current_user: User = Depends(ge
             "static_ip": acc.static_ip or creds.get("static_ip", ""),
             "paper_mode": acc.paper_mode,
             "is_active": acc.is_active,
-            "is_logged_in": acc.is_logged_in if has_token_today else (acc.is_logged_in and not bool(token)),
+            "is_logged_in": is_logged_in,
             "margin_available": acc.margin_available,
             "margin_used": acc.margin_used,
             "total_balance": acc.total_balance,

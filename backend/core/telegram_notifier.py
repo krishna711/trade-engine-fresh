@@ -395,10 +395,61 @@ class TelegramNotifier:
     # SCHEDULED WARNING CHECKS (1 Hour Pre-Run & Pre-Market)
     # =========================================================================
 
+    def _is_account_token_valid_today(self, acc: Account, db=None) -> bool:
+        """
+        Determines whether the account has a valid active session token for today.
+        - Checks today's ISO date ('YYYY-MM-DD') and compact date ('YYYYMMDD') against token_date.
+        - Checks if last_login_at was today as a secondary fallback.
+        - For non-XTS brokers that don't enforce daily tokens, respects is_logged_in.
+        - Automatically updates acc.is_logged_in = True in DB if token is valid today.
+        """
+        if not acc:
+            return False
+
+        creds = acc.credentials_json or {}
+        token = str(creds.get("token") or "").strip()
+        token_date = str(creds.get("token_date") or "").strip()
+
+        today_iso = datetime.date.today().isoformat()
+        today_compact = datetime.date.today().strftime("%Y%m%d")
+
+        # 1. Primary check: token exists and token_date matches today
+        has_token_today = bool(token) and (token_date == today_iso or token_date == today_compact)
+
+        # 2. Secondary check: token exists and last_login_at is today
+        if not has_token_today and token and acc.last_login_at:
+            try:
+                if acc.last_login_at.date() == datetime.date.today():
+                    has_token_today = True
+            except Exception:
+                pass
+
+        # 3. Non-XTS brokers that may use static API credentials
+        broker_upper = str(acc.broker or "").upper()
+        if broker_upper != "XTS":
+            if has_token_today or (bool(acc.is_logged_in) and bool(creds)):
+                has_token_today = True
+
+        # Sync database boolean flag if token is active today
+        if has_token_today and not acc.is_logged_in and db:
+            try:
+                acc.is_logged_in = True
+                db.commit()
+            except Exception:
+                pass
+
+        return has_token_today
+
     def _check_upcoming_strategies_sync(self):
         """
         Synchronous check for strategies starting within 1 hour.
         Warns if mapped broker accounts are not logged in or have missing tokens.
+        Skips:
+        - Paper trading strategies (inst.paper_mode == True)
+        - Stopped strategies (inst.status == 'STOPPED')
+        - Paper trading accounts (acc.paper_mode == True)
+        - Inactive accounts (acc.is_active == False)
+        - Accounts that already have a valid session token generated for today.
         """
         now = datetime.datetime.now()
         today_date = now.strftime("%Y%m%d")
@@ -409,6 +460,15 @@ class TelegramNotifier:
             instances = db.query(StrategyInstance).all()
             for inst in instances:
                 if not inst.start_time:
+                    continue
+
+                # Skip paper trading strategies
+                if bool(getattr(inst, "paper_mode", False)):
+                    continue
+
+                # Skip stopped strategies
+                strat_status = str(inst.status or "").upper()
+                if strat_status == "STOPPED":
                     continue
 
                 # Parse scheduled start time for today
@@ -422,32 +482,43 @@ class TelegramNotifier:
                 
                 # Check if within 60 minutes before start time (between 0 and 3600 seconds)
                 if 0 <= diff_seconds <= 3600:
-                    warn_key = f"{today_date}_{inst.id}"
-                    if warn_key in self._warned_strategies_today:
-                        continue # Already warned today
-
                     # Check mapped accounts
                     client_ids = inst.client_ids or []
                     for cid in client_ids:
+                        warn_key = f"{today_date}_{inst.id}_{cid}"
+                        if warn_key in self._warned_strategies_today:
+                            continue # Already warned today for this strategy and account
+
                         acc = db.query(Account).filter(Account.client_id == cid).first()
                         if not acc:
                             continue
 
-                        # Check login / token status
-                        is_ok = bool(acc.is_logged_in and acc.is_active)
-                        if not is_ok:
-                            mins_left = max(1, int(diff_seconds // 60))
-                            warnings_to_dispatch.append({
-                                "title": f"Broker Token Required in ~{mins_left} mins",
-                                "account_info": f"{acc.client_id} ({acc.broker})",
-                                "strategy_name": inst.instance_name_user or inst.instance_name_admin,
-                                "scheduled_time": inst.start_time,
-                                "action_required": f"Strategy starts in {mins_left} min(s). Please login to {acc.broker} to generate valid token.",
-                                "user_id": inst.user_id or acc.user_id,
-                                "strategy_id": inst.id,
-                                "client_id": acc.client_id
-                            })
-                            self._warned_strategies_today.add(warn_key)
+                        # Skip paper trading accounts
+                        if bool(acc.paper_mode):
+                            continue
+
+                        # Skip paused/inactive accounts
+                        if not bool(acc.is_active):
+                            continue
+
+                        # Check if today's broker token is already generated / active
+                        has_token = self._is_account_token_valid_today(acc, db=db)
+                        if has_token:
+                            continue # Token already generated today! No alert needed.
+
+                        # Live account missing today's token
+                        mins_left = max(1, int(diff_seconds // 60))
+                        warnings_to_dispatch.append({
+                            "title": f"Broker Token Required in ~{mins_left} mins",
+                            "account_info": f"{acc.client_id} ({acc.broker})",
+                            "strategy_name": inst.instance_name_user or inst.instance_name_admin,
+                            "scheduled_time": inst.start_time,
+                            "action_required": f"Live strategy starts in {mins_left} min(s). Please login to {acc.broker} to generate valid token.",
+                            "user_id": inst.user_id or acc.user_id,
+                            "strategy_id": inst.id,
+                            "client_id": acc.client_id
+                        })
+                        self._warned_strategies_today.add(warn_key)
 
         except Exception as e:
             logger.error(f"[TelegramNotifier] Error in strategy pre-run check: {e}")
@@ -459,7 +530,7 @@ class TelegramNotifier:
     def _check_premarket_sync(self):
         """
         Pre-market morning check (runs between 08:30 and 09:15 AM).
-        Warns for any active broker account not logged in.
+        Warns for any active LIVE broker account missing today's token.
         """
         now = datetime.datetime.now()
         today_date = now.strftime("%Y%m%d")
@@ -476,18 +547,27 @@ class TelegramNotifier:
         try:
             accounts = db.query(Account).filter(Account.is_active == True).all()
             for acc in accounts:
-                if not acc.is_logged_in:
-                    warnings.append({
-                        "title": "Pre-Market Broker Login Required",
-                        "account_info": f"{acc.client_id} ({acc.broker})",
-                        "strategy_name": "Pre-Market Session Readiness",
-                        "scheduled_time": "09:15:00",
-                        "action_required": f"Market opens at 09:15. Please login to {acc.broker} and ensure token is active.",
-                        "user_id": acc.user_id,
-                        "client_id": acc.client_id
-                    })
-            if warnings:
-                self._premarket_warned_today = today_date
+                # Skip paper trading accounts
+                if bool(acc.paper_mode):
+                    continue
+
+                # Check if today's broker token is already generated / active
+                has_token = self._is_account_token_valid_today(acc, db=db)
+                if has_token:
+                    continue # Token already active! No alert needed.
+
+                warnings.append({
+                    "title": "Pre-Market Broker Login Required",
+                    "account_info": f"{acc.client_id} ({acc.broker})",
+                    "strategy_name": "Pre-Market Session Readiness",
+                    "scheduled_time": "09:15:00",
+                    "action_required": f"Market opens at 09:15. Please login to {acc.broker} and ensure token is active.",
+                    "user_id": acc.user_id,
+                    "client_id": acc.client_id
+                })
+
+            # Mark checked for today so we don't repeat queries every 60s
+            self._premarket_warned_today = today_date
         except Exception as e:
             logger.error(f"[TelegramNotifier] Error in premarket check: {e}")
         finally:
