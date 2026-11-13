@@ -37,6 +37,11 @@ BASE_PRICES = {
     "NSE:NIFTY": 24925.0,
     "NSE:BANKNIFTY": 51860.0,
     "NSE:RELIANCE": 2980.0,
+    "NFO:RELIANCE": 2985.0,
+    "NSE:HAL": 4250.0,
+    "NFO:HAL": 4260.0,
+    "NSE:BHARTIARTL": 1610.0,
+    "NFO:BHARTIARTL": 1615.0,
     "BSE:SENSEX": 81780.0,
     "NFO:NIFTY26OCT25000CE": 185.0,
     "BSEFO:SENSEX26OCT82000CE": 240.0,
@@ -695,7 +700,18 @@ class XTSFeedBroker(BaseFeedBroker):
         count: int = 50
     ) -> List[Dict[str, Any]]:
         cache_key = (canonical_symbol, resolution)
-        curr_price = float(self._current_prices.get(canonical_symbol, BASE_PRICES.get(canonical_symbol, 1000.0)))
+        curr_price = float(self._current_prices.get(canonical_symbol, 0.0))
+        if curr_price <= 0.0:
+            if canonical_symbol in BASE_PRICES:
+                curr_price = BASE_PRICES[canonical_symbol]
+            elif "HAL" in canonical_symbol:
+                curr_price = 4250.0
+            elif "BHARTIARTL" in canonical_symbol or "BHARTIAIRTEL" in canonical_symbol:
+                curr_price = 1610.0
+            elif "RELIANCE" in canonical_symbol:
+                curr_price = 2980.0
+            else:
+                curr_price = 1000.0
 
         if cache_key in self._cached_ohlc:
             bars = self._cached_ohlc[cache_key]

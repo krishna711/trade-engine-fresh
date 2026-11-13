@@ -45,7 +45,11 @@ DEFAULT_SUBSCRIPTIONS = [
     {"symbol": "GOLD FUT", "canonical": "MCX:GOLD", "segment": "MCX", "exchange": "MCX", "is_commodity_future": True},
     {"symbol": "SILVER FUT", "canonical": "MCX:SILVER", "segment": "MCX", "exchange": "MCX", "is_commodity_future": True},
     {"symbol": "RELIANCE", "canonical": "NSE:RELIANCE", "segment": "NSE", "exchange": "NSE"},
-    {"symbol": "RELIANCE FUT", "canonical": "NFO:RELIANCE", "segment": "NFO", "exchange": "NSE"}
+    {"symbol": "RELIANCE FUT", "canonical": "NFO:RELIANCE", "segment": "NFO", "exchange": "NSE"},
+    {"symbol": "HAL", "canonical": "NSE:HAL", "segment": "NSE", "exchange": "NSE"},
+    {"symbol": "HAL FUT", "canonical": "NFO:HAL", "segment": "NFO", "exchange": "NSE"},
+    {"symbol": "BHARTIARTL", "canonical": "NSE:BHARTIARTL", "segment": "NSE", "exchange": "NSE"},
+    {"symbol": "BHARTIARTL FUT", "canonical": "NFO:BHARTIARTL", "segment": "NFO", "exchange": "NSE"}
 ]
 
 # Supported Segments
@@ -65,6 +69,9 @@ DEFAULT_LOT_SIZES = {
     "GOLD": int(os.getenv("LOT_SIZE_GOLD", 100)),
     "SILVER": int(os.getenv("LOT_SIZE_SILVER", 30)),
     "RELIANCE": int(os.getenv("LOT_SIZE_RELIANCE", 250)),
+    "HAL": int(os.getenv("LOT_SIZE_HAL", 150)),
+    "BHARTIARTL": int(os.getenv("LOT_SIZE_BHARTIARTL", 475)),
+    "BHARTIAIRTEL": int(os.getenv("LOT_SIZE_BHARTIAIRTEL", 475)),
 }
 
 def get_default_lot_size(symbol: str) -> int:

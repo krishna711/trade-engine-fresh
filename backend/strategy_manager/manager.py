@@ -165,11 +165,25 @@ class StrategySupervisor:
                     except Exception:
                         pass
 
+            worker_sym = effective_config.get("symbol", "NSE:NIFTY" if "ftx" in inst.template_key else "MCX:CRUDEOILM")
+            if "pcp_pro" in inst.template_key:
+                from backend.strategy_manager.registered.pcp_pro_v201 import resolve_future_contract, normalize_underlying_root
+                root = normalize_underlying_root(effective_config.get("symbol") or effective_config.get("underlying") or "HAL")
+                fut_roll = bool(effective_config.get("fut_roll_last_friday", True))
+                fut_sym = resolve_future_contract(root, roll_last_friday=fut_roll)
+                worker_sym = fut_sym
+                extra_symbols.update([fut_sym, f"NSE:{root}", f"NFO:{root}", root])
+                try:
+                    from backend.feed_manager.manager import feed_manager
+                    asyncio.create_task(feed_manager.subscribe(list(extra_symbols)))
+                except Exception:
+                    pass
+
             self.active_workers[instance_id] = {
                 "process": proc,
                 "in_queue": in_q,
                 "out_queue": out_q,
-                "symbol": effective_config.get("symbol", "NSE:NIFTY" if "pcp_pro" in inst.template_key or "ftx" in inst.template_key else "MCX:CRUDEOILM"),
+                "symbol": worker_sym,
                 "extra_symbols": extra_symbols,
                 "client_ids": inst.client_ids or [],
                 "template_key": inst.template_key,
@@ -336,6 +350,11 @@ class StrategySupervisor:
             if not matched and ":" in sym:
                 suffix = sym.split(":")[-1]
                 matched = any(suffix in es for es in extra_syms)
+            if not matched and worker.get("template_key") == "strat_pcp_pro_v201":
+                from backend.strategy_manager.registered.pcp_pro_v201 import normalize_underlying_root
+                root = normalize_underlying_root(worker.get("config", {}).get("underlying") or worker.get("config", {}).get("symbol") or "HAL")
+                if root.upper() in sym.upper():
+                    matched = True
 
             if matched:
                 try:
@@ -786,6 +805,10 @@ class StrategySupervisor:
                         tf = "3m" if "pcp_pro" in str(worker.get("template_key", "")) else ("1m" if "ftx" in str(worker.get("template_key", "")) else "5m")
                     count = int(cfg.get("candle_count", 60))
                     bars = feed_manager.ohlc_builder.get_bars(sym, resolution=tf, count=count)
+                    if len(bars) < 18:
+                        fallback_bars = await feed_manager.get_ohlc(sym, resolution=tf, count=count)
+                        if fallback_bars and len(fallback_bars) > len(bars):
+                            bars = fallback_bars
                     if bars:
                         latest_bar = bars[-1]
                         history = bars[:-1]

@@ -156,10 +156,10 @@ class UniversalSymbolMapper:
             xts_token_val = token_hash
             display_name_val = sym_part
 
-            # Check if this matches an option strike (e.g. MCXFO:CRUDEOILM9850CE)
-            opt_match = re.match(r"^([A-Z]+):([A-Z]+?)(\d+)(CE|PE)$", canonical_symbol)
+            # Check if this matches an option strike (e.g. MCXFO:CRUDEOILM9850CE, NFO:HAL26NOV4150CE, NFO:HAL4150CE)
+            opt_match = re.match(r"^([A-Z]+):([A-Z]+?)(\d{2}[A-Z]{3})?(\d+)(CE|PE)$", canonical_symbol)
             if opt_match:
-                seg_grp, root_grp, strike_grp, type_grp = opt_match.groups()
+                seg_grp, root_grp, exp_grp, strike_grp, type_grp = opt_match.groups()
                 opt_key = (root_grp.upper(), int(strike_grp), type_grp.upper())
                 candidates = self._xts_options_map.get(opt_key)
                 if candidates:

@@ -1511,7 +1511,12 @@ async def get_strategy_chart_data(
     if inst and inst.config:
         cfg.update(inst.config)
 
-    symbol = str(cfg.get("symbol") or ("MCX:CRUDEOILM" if template_key == "strat_time_atm_seller_v1" else "NSE:NIFTY"))
+    symbol = str(cfg.get("symbol") or ("MCX:CRUDEOILM" if template_key == "strat_time_atm_seller_v1" else ("HAL" if template_key == "strat_pcp_pro_v201" else "NSE:NIFTY")))
+    if template_key == "strat_pcp_pro_v201":
+        from backend.strategy_manager.registered.pcp_pro_v201 import resolve_future_contract, normalize_underlying_root
+        root = normalize_underlying_root(cfg.get("symbol") or cfg.get("underlying") or "HAL")
+        fut_roll = bool(cfg.get("fut_roll_last_friday", True))
+        symbol = resolve_future_contract(root, roll_last_friday=fut_roll)
     default_tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or ("3m" if "pcp_pro" in template_key else ("1m" if "ftx" in template_key else "5m"))).lower()
     if default_tf.isdigit():
         default_tf = f"{default_tf}m"

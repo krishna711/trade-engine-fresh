@@ -68,6 +68,14 @@ def check_and_migrate_db():
                 conn.execute(text("ALTER TABLE strategy_instances ADD COLUMN paper_mode BOOLEAN DEFAULT 1;"))
                 print("[DB Migration] Added paper_mode column to strategy_instances table.")
 
+            # Ensure PCP Pro strategy default template is migrated to HAL ITM-2 option buying
+            conn.execute(text("""
+                UPDATE strategy_templates
+                SET name_user = 'PivotChandelier Pro v2.0.1 (HAL Option Buy)',
+                    description = 'Dual-Chandelier trend & exit bands with day-frozen ATR, JMA(RWI) & ADX regime filters, cumulative volume delta quality gate, MAE hard stop, and ITM-2 Option execution from Future signals for HAL, RELIANCE, and BHARTIARTL.'
+                WHERE key = 'strat_pcp_pro_v201';
+            """))
+
             # Zero out stale positions where strategy is already CLOSED so past records do not tick
             conn.execute(text("""
                 UPDATE positions
@@ -193,11 +201,20 @@ def seed_initial_data():
             StrategyTemplate(
                 key="strat_pcp_pro_v201",
                 name_admin="PivotChandelier Pro v2.0.1 (PCP_Pro_v2_0_1)",
-                name_user="PivotChandelier Pro v2.0.1",
-                description="Dual-Chandelier trend & exit bands with day-frozen ATR, JMA(RWI) & ADX regime filters, cumulative volume delta quality gate, MAE hard stop, and risk-based position sizing.",
+                name_user="PivotChandelier Pro v2.0.1 (HAL Option Buy)",
+                description="Dual-Chandelier trend & exit bands with day-frozen ATR, JMA(RWI) & ADX regime filters, cumulative volume delta quality gate, MAE hard stop, and ITM-2 Option execution from Future signals for HAL, RELIANCE, and BHARTIARTL.",
                 default_config={
-                    "symbol": "NSE:NIFTY",
-                    "trade_instrument": "FUTURE",
+                    "symbol": "HAL",
+                    "underlying": "HAL",
+                    "trade_instrument": "OPTION",
+                    "data_source": "FUTURE",
+                    "itm_depth": 2,
+                    "opt_strike_step": 50.0,
+                    "round_lot_size": 150,
+                    "quantity_lots": 1,
+                    "max_lots": 8,
+                    "position_sizing_mode": "fixed",
+                    "equity_at_risk": 20000,
                     "timeframe": "3m",
                     "timeframe_min": 3,
                     "candle_count": 300,
@@ -205,7 +222,6 @@ def seed_initial_data():
                     "atr_period": 12,
                     "exit_atr_mult": 5.2,
                     "use_close_for_extremums": True,
-                    "equity_at_risk": 20000,
                     "target_long_pct": 0.027,
                     "target_short_pct": 0.023,
                     "jma_period": 16,
@@ -229,17 +245,13 @@ def seed_initial_data():
                     "vol_sma_lt_period": 180,
                     "delta_sma_period": 3,
                     "delta_momentum_period": 15,
-                    "round_lot_size": DEFAULT_LOT_SIZES.get("NIFTY", 65),
                     "max_trades_per_day": 0,
                     "reentry_cooldown_bars": 0,
-                    "position_sizing_mode": "risk",
-                    "quantity_lots": 1,
-                    "max_lots": 8,
-                    "opt_strike_step": 50,
                     "product": "NRML",
                     "order_type": "LIMIT",
                     "limit_buffer_pct": 0.015,
-                    "auto_chase": True
+                    "auto_chase": True,
+                    "fut_roll_last_friday": True
                 },
                 python_module="backend.strategy_manager.registered.pcp_pro_v201"
             ),
@@ -273,6 +285,12 @@ def seed_initial_data():
             existing = db.query(StrategyTemplate).filter(StrategyTemplate.key == tpl.key).first()
             if not existing:
                 db.add(tpl)
+            else:
+                existing.name_admin = tpl.name_admin
+                existing.name_user = tpl.name_user
+                existing.description = tpl.description
+                existing.default_config = tpl.default_config
+                existing.python_module = tpl.python_module
         db.commit()
 
         # 3. Strategy Instances: Clean state by default (no dummy instances seeded).
@@ -329,7 +347,35 @@ def seed_initial_data():
                     zerodha_token="738561",
                     dhan_token="1333",
                     kotak_token="RELIANCE",
-                    lot_size=1,
+                    lot_size=DEFAULT_LOT_SIZES.get("RELIANCE", 250),
+                    tick_size=0.05
+                ),
+                SymbolMapping(
+                    canonical_symbol="NSE:HAL",
+                    display_name="Hindustan Aeronautics Ltd",
+                    segment="NSE",
+                    exchange="NSE",
+                    xts_token="10940",
+                    shoonya_token="10940",
+                    fyers_token="NSE:HAL-EQ",
+                    zerodha_token="278785",
+                    dhan_token="10940",
+                    kotak_token="HAL",
+                    lot_size=DEFAULT_LOT_SIZES.get("HAL", 150),
+                    tick_size=0.05
+                ),
+                SymbolMapping(
+                    canonical_symbol="NSE:BHARTIARTL",
+                    display_name="Bharti Airtel Ltd",
+                    segment="NSE",
+                    exchange="NSE",
+                    xts_token="10604",
+                    shoonya_token="10604",
+                    fyers_token="NSE:BHARTIARTL-EQ",
+                    zerodha_token="271489",
+                    dhan_token="10604",
+                    kotak_token="BHARTIARTL",
+                    lot_size=DEFAULT_LOT_SIZES.get("BHARTIARTL", 475),
                     tick_size=0.05
                 ),
                 # BSE

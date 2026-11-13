@@ -968,49 +968,161 @@ def _snap_strike(spot: float, step: float) -> int:
     return int(round(spot / s) * s)
 
 
+SUPPORTED_STOCK_PROFILES: Dict[str, Dict[str, Any]] = {
+    "HAL": {
+        "underlying": "HAL",
+        "lot_size": 150,
+        "strike_step": 50.0,
+        "base_price": 4250.0,
+    },
+    "RELIANCE": {
+        "underlying": "RELIANCE",
+        "lot_size": 250,
+        "strike_step": 20.0,
+        "base_price": 2980.0,
+    },
+    "BHARTIARTL": {
+        "underlying": "BHARTIARTL",
+        "lot_size": 475,
+        "strike_step": 20.0,
+        "base_price": 1610.0,
+    },
+    "BHARTIAIRTEL": {
+        "underlying": "BHARTIARTL",
+        "lot_size": 475,
+        "strike_step": 20.0,
+        "base_price": 1610.0,
+    },
+    "NIFTY": {
+        "underlying": "NIFTY",
+        "lot_size": 65,
+        "strike_step": 50.0,
+        "base_price": 24925.0,
+    },
+    "BANKNIFTY": {
+        "underlying": "BANKNIFTY",
+        "lot_size": 30,
+        "strike_step": 100.0,
+        "base_price": 51860.0,
+    },
+}
+
+
+def normalize_underlying_root(raw_sym: str) -> str:
+    """Normalizes underlying ticker: strips segment prefixes, handles BHARTIAIRTEL -> BHARTIARTL."""
+    import re
+    s = str(raw_sym or "HAL").strip().upper()
+    if ":" in s:
+        s = s.split(":")[-1]
+    m = re.match(r"^([A-Z]+?)(\d{2}[A-Z]{3})?FUT$", s)
+    if m:
+        s = m.group(1)
+    if s in ["BHARTIAIRTEL", "AIRTEL"]:
+        s = "BHARTIARTL"
+    return s
+
+
+def resolve_future_contract(
+    underlying: str,
+    now_dt: Optional[datetime.datetime] = None,
+    roll_last_friday: bool = True
+) -> str:
+    """Resolves canonical current-month NSE Future contract symbol (e.g. NFO:HAL26NOVFUT)."""
+    now = now_dt or datetime.datetime.now(IST_TZ)
+    root = normalize_underlying_root(underlying)
+    if "MCX" in str(underlying).upper():
+        return f"MCX:{root}"
+    year, month = now.year, now.month
+    last_thu = _get_last_thursday(year, month)
+    roll_threshold = (last_thu - datetime.timedelta(days=6)) if roll_last_friday else last_thu
+    if now.date() >= roll_threshold:
+        month = month + 1 if month < 12 else 1
+        year = year if month > 1 else year + 1
+    year_str = str(year)[-2:]
+    month_code = MONTH_CODES[month]
+    return f"NFO:{root}{year_str}{month_code}FUT"
+
+
+def resolve_option_contract(
+    underlying: str,
+    strike: int,
+    opt_type: str,
+    now_dt: Optional[datetime.datetime] = None,
+    roll_last_friday: bool = False
+) -> str:
+    """Resolves canonical monthly NSE Option contract symbol (e.g. NFO:HAL26NOV4150CE)."""
+    now = now_dt or datetime.datetime.now(IST_TZ)
+    root = normalize_underlying_root(underlying)
+    year, month = now.year, now.month
+    last_thu = _get_last_thursday(year, month)
+    if now.date() > last_thu:
+        month = month + 1 if month < 12 else 1
+        year = year if month > 1 else year + 1
+    year_str = str(year)[-2:]
+    month_code = MONTH_CODES[month]
+    seg = "MCXFO" if "MCX" in str(underlying).upper() else "NFO"
+    return f"{seg}:{root}{year_str}{month_code}{int(strike)}{opt_type.upper()}"
+
+
 class PivotChandelierProV201Strategy(BaseStrategy):
     """
     Live / Paper Algorithmic Worker Container for PivotChandelier Pro v2.0.1.
+    - Signal Data Source: Current Month Future (e.g. NFO:HAL26NOVFUT).
+    - Tradable Instrument: ITM-2 Strike Option Buy (CE for Long, PE for Short).
+    - Multi-Stock Ready: Supports HAL (default), RELIANCE, and BHARTIARTL.
     """
 
     def on_init(self):
-        raw_sym = str(self.config.get("symbol", "NSE:NIFTY")).strip()
-        self.symbol = f"NSE:{raw_sym}" if ":" not in raw_sym else raw_sym
-        self.underlying_root = self.symbol.split(":")[-1]
+        raw_sym = str(self.config.get("symbol") or self.config.get("underlying") or "HAL").strip()
+        self.underlying_root = normalize_underlying_root(raw_sym)
+        self.symbol = f"NSE:{self.underlying_root}"
+
+        profile = SUPPORTED_STOCK_PROFILES.get(self.underlying_root, {})
+        default_step = float(profile.get("strike_step", 50.0))
+        default_lot = int(profile.get("lot_size", symbol_mapper.get_lot_size(self.symbol) or 150))
 
         tf_raw = str(self.config.get("timeframe") or self.config.get("timeframe_min") or "3m").strip().lower()
         if tf_raw.isdigit():
             tf_raw = f"{tf_raw}m"
         self.timeframe = tf_raw
 
-        inst_raw = str(self.config.get("trade_instrument", "FUTURE")).upper()
-        if "OPT" in inst_raw:
-            self.trade_instrument = "ATM_OPTION"
+        # Trade Instrument: Default is OPTION per user requirement
+        inst_raw = str(self.config.get("trade_instrument", "OPTION")).upper()
+        if "FUT" in inst_raw:
+            self.trade_instrument = "FUTURE"
         elif "SPOT" in inst_raw or "EQ" in inst_raw:
             self.trade_instrument = "SPOT"
         else:
-            self.trade_instrument = "FUTURE"
+            self.trade_instrument = "OPTION"
+
+        # Signal Data Source: Default is FUTURE per user requirement
+        self.data_source = str(self.config.get("data_source", "FUTURE")).upper()
 
         self.product = str(self.config.get("product", "NRML")).upper()
         self.order_type = str(self.config.get("order_type", "LIMIT")).upper()
         self.limit_buffer_pct = float(self.config.get("limit_buffer_pct", 0.015))
         self.auto_chase = bool(self.config.get("auto_chase", True))
 
-        # Lot sizing configuration
-        default_lot = symbol_mapper.get_lot_size(self.symbol)
+        # ITM Offset / Depth (Default 2 for ITM-2 strike buy, configurable)
+        self.itm_depth = int(self.config.get("itm_depth", 2))
+
+        # Option strike settings & lot sizing
+        self.opt_strike_step = float(self.config.get("opt_strike_step", default_step))
         self.round_lot_size = int(
             self.config.get("round_lot_size")
             or self.config.get("lot_size")
             or default_lot
-            or DEFAULT_LOT_SIZE
         )
-        self.position_sizing_mode = str(self.config.get("position_sizing_mode", "risk")).lower()
+        self.position_sizing_mode = str(self.config.get("position_sizing_mode", "fixed")).lower()
         self.quantity_lots = int(self.config.get("quantity_lots", self.config.get("lots", 1)))
         self.max_lots = int(self.config.get("max_lots", 8))
 
-        # Option strike settings (when trade_instrument == 'ATM_OPTION')
-        default_step = 100.0 if "BANKNIFTY" in self.underlying_root.upper() else 50.0
-        self.opt_strike_step = float(self.config.get("opt_strike_step", default_step))
+        # Expiry auto-roll setting
+        self.fut_roll_last_friday = bool(self.config.get("fut_roll_last_friday", True))
+
+        # Resolve Signal Future Contract (Current Month)
+        now_ist = datetime.datetime.now(IST_TZ)
+        self.signal_symbol = resolve_future_contract(self.underlying_root, now_ist, self.fut_roll_last_friday)
 
         # Resolve target pct (accepts float fraction like 0.027 or per-mille/pct override)
         tl_raw = float(self.config.get("target_long_pct", 27 / 1000))
@@ -1051,7 +1163,14 @@ class PivotChandelierProV201Strategy(BaseStrategy):
         }
 
         self.square_off_time_num = int(self.pcp_params["square_off_time"])
-        self.fut_roll_last_friday = bool(self.config.get("fut_roll_last_friday", True))
+
+        # Auto-subscribe Signal Future, Spot, and NFO base
+        self.request_subscribe([
+            self.signal_symbol,
+            self.symbol,
+            f"NFO:{self.underlying_root}",
+            self.underlying_root
+        ])
 
         # Live runtime state (preserved across config updates if already initialized)
         if not hasattr(self, "last_underlying_ltp"):
@@ -1067,11 +1186,12 @@ class PivotChandelierProV201Strategy(BaseStrategy):
 
         self.log_decision(
             "INIT",
-            f"PivotChandelier Pro v2.0.1 initialized for {self.symbol} ({self.timeframe}) | "
-            f"ATR {self.pcp_params['atr_period']}x{self.pcp_params['atr_multiplier']} "
-            f"(Exit {self.pcp_params['exit_atr_mult']}) | ADX>{self.pcp_params['adx_threshold']} | "
-            f"JMA({self.pcp_params['jma_period']})/RWI | Risk ₹{self.pcp_params['equity_at_risk']} | "
-            f"Window {self.square_off_time_num} EOD | Instrument: {self.trade_instrument}",
+            f"PivotChandelier Pro v2.0.1 initialized for {self.underlying_root} | "
+            f"Signal Future: {self.signal_symbol} ({self.timeframe}) | "
+            f"Instrument: {self.trade_instrument} (ITM-{self.itm_depth}) | "
+            f"Lot: {self.round_lot_size} | Strike Step: {self.opt_strike_step} | "
+            f"ATR {self.pcp_params['atr_period']}x{self.pcp_params['atr_multiplier']} | "
+            f"ADX>{self.pcp_params['adx_threshold']} | JMA/RWI Bias | Window {self.square_off_time_num} EOD",
         )
 
     def on_config_updated(self, new_config: Dict[str, Any]):
@@ -1101,9 +1221,10 @@ class PivotChandelierProV201Strategy(BaseStrategy):
             self.current_trade = {
                 "symbol": sym,
                 "underlying": self.symbol,
+                "signal_symbol": getattr(self, "signal_symbol", self.symbol),
                 "trade_instrument": self.trade_instrument,
                 "signal_side": side,
-                "order_side": "BUY" if self.trade_instrument == "ATM_OPTION" else side,
+                "order_side": "BUY" if self.trade_instrument == "OPTION" else side,
                 "entry_price": entry_p,
                 "entry_spot": entry_p,
                 "quantity": abs(raw_qty),
@@ -1125,40 +1246,41 @@ class PivotChandelierProV201Strategy(BaseStrategy):
                 level="SUCCESS",
             )
 
-    def _resolve_execution_symbol(self, side: str, spot: float, now_dt: datetime.datetime) -> Tuple[str, str]:
-        """Returns (canonical_trade_symbol, order_side) for entry."""
-        if self.trade_instrument == "ATM_OPTION":
-            opt_type = "CE" if side == "BUY" else "PE"
-            strike = _snap_strike(spot, self.opt_strike_step)
-            snapped = symbol_mapper.snap_to_nearest_option_strike(self.underlying_root, strike, opt_type)
-            use_strike = snapped if snapped else strike
-            seg = "MCXFO" if "MCX" in self.symbol.upper() else "NFO"
-            opt_sym = f"{seg}:{self.underlying_root}{use_strike}{opt_type}"
+    def _resolve_execution_symbol(self, side: str, spot: float, now_dt: datetime.datetime) -> Tuple[str, str, float]:
+        """
+        Resolves (canonical_trade_symbol, order_side, estimated_price) for entry.
+        - Long Signal: BUY ITM-2 Call Option (CE)
+        - Short Signal: BUY ITM-2 Put Option (PE)
+        """
+        if self.trade_instrument == "OPTION":
+            atm_strike = _snap_strike(spot, self.opt_strike_step)
+            if side == "BUY":  # Long Bullish signal -> BUY ITM Call
+                opt_type = "CE"
+                raw_strike = int(round(atm_strike - (self.itm_depth * self.opt_strike_step)))
+            else:  # Short Bearish signal -> BUY ITM Put
+                opt_type = "PE"
+                raw_strike = int(round(atm_strike + (self.itm_depth * self.opt_strike_step)))
+
+            snapped = symbol_mapper.snap_to_nearest_option_strike(self.underlying_root, raw_strike, opt_type)
+            use_strike = snapped if snapped else raw_strike
+
+            opt_sym = resolve_option_contract(self.underlying_root, use_strike, opt_type, now_dt)
             self.request_subscribe([opt_sym])
-            return opt_sym, "BUY"
+
+            # Realistic estimated option price for paper fills: intrinsic + time value
+            intrinsic = float(self.itm_depth * self.opt_strike_step)
+            time_val = max(10.0, float(self.opt_strike_step * 0.4))
+            est_opt_price = round(intrinsic + time_val, 2)
+
+            return opt_sym, "BUY", est_opt_price
 
         if self.trade_instrument == "SPOT":
-            return self.symbol, side
+            return self.symbol, side, spot
 
-        # FUTURE contract auto-resolution
-        if "FUT" in self.symbol.upper() and ("NFO:" in self.symbol or "MCX:" in self.symbol):
-            return self.symbol, side
-
-        if "MCX" in self.symbol.upper():
-            return self.symbol, side
-
-        year, month = now_dt.year, now_dt.month
-        last_thu = _get_last_thursday(year, month)
-        roll_fri = last_thu - datetime.timedelta(days=6)
-        if self.fut_roll_last_friday and now_dt.date() >= roll_fri:
-            month = month + 1 if month < 12 else 1
-            year = year if month > 1 else year + 1
-        fut_sym = f"NFO:{self.underlying_root}{str(year)[-2:]}{MONTH_CODES[month]}FUT"
-        # Ensure feed/order subscription exists if mapped
-        if symbol_mapper.get_broker_token(fut_sym, "XTS"):
-            self.request_subscribe([fut_sym])
-            return fut_sym, side
-        return f"NFO:{self.underlying_root}", side
+        # FUTURE contract execution
+        fut_sym = resolve_future_contract(self.underlying_root, now_dt, self.fut_roll_last_friday)
+        self.request_subscribe([fut_sym])
+        return fut_sym, side, spot
 
     def on_candle(self, candle: Dict[str, Any], history: List[Dict[str, Any]]):
         """Evaluates PivotChandelier Pro v2.0.1 signals on incoming OHLC bars."""
@@ -1360,7 +1482,7 @@ class PivotChandelierProV201Strategy(BaseStrategy):
         is_mcx = "MCX" in self.symbol.upper()
         order_qty = lots if is_mcx else (lots * self.round_lot_size)
 
-        trade_symbol, order_side = self._resolve_execution_symbol(sig_side, signal_spot, latest_dt)
+        trade_symbol, order_side, est_opt_price = self._resolve_execution_symbol(sig_side, signal_spot, latest_dt)
 
         tl_pct = float(self.pcp_params.get("target_long_pct", 0.027))
         ts_pct = float(self.pcp_params.get("target_short_pct", 0.023))
@@ -1368,11 +1490,13 @@ class PivotChandelierProV201Strategy(BaseStrategy):
 
         self.log_decision(
             "ENTRY CONDITION MATCH",
-            f"PCP v2.0.1 {sig_side} Trigger | Underlying Spot={signal_spot:.2f} | "
-            f"Contract={trade_symbol} ({order_side}) | Lots={lots} (Qty={order_qty}) | "
+            f"PCP v2.0.1 {sig_side} Signal on Future {self.signal_symbol} ({signal_spot:.2f}) | "
+            f"Contract={trade_symbol} ({order_side} ITM-{self.itm_depth}) | Lots={lots} (Qty={order_qty}) | "
             f"Trail SL={exit_line:.2f} | Target Spot={pt_spot:.2f}",
             level="SUCCESS",
         )
+
+        entry_order_price = est_opt_price if self.trade_instrument == "OPTION" else signal_spot
 
         # Dispatch Entry Order
         self.emit_order(
@@ -1380,7 +1504,7 @@ class PivotChandelierProV201Strategy(BaseStrategy):
             side=order_side,
             quantity=order_qty,
             order_type=self.order_type,
-            price=signal_spot if self.trade_instrument != "ATM_OPTION" else 0.0,
+            price=entry_order_price,
             product=self.product,
             leg_id="LEG_PRIMARY",
             buffer_pct=self.limit_buffer_pct,
@@ -1396,10 +1520,11 @@ class PivotChandelierProV201Strategy(BaseStrategy):
         self.current_trade = {
             "symbol": trade_symbol,
             "underlying": self.symbol,
+            "signal_symbol": self.signal_symbol,
             "trade_instrument": self.trade_instrument,
             "signal_side": sig_side,
             "order_side": order_side,
-            "entry_price": signal_spot,
+            "entry_price": entry_order_price,
             "entry_spot": signal_spot,
             "quantity": order_qty,
             "lots": lots,
@@ -1414,9 +1539,9 @@ class PivotChandelierProV201Strategy(BaseStrategy):
                 {
                     "leg": trade_symbol.split(":")[-1],
                     "symbol": trade_symbol,
-                    "entry": signal_spot if self.trade_instrument != "ATM_OPTION" else 0.0,
+                    "entry": entry_order_price,
                     "exit": None,
-                    "ltp": signal_spot if self.trade_instrument != "ATM_OPTION" else 0.0,
+                    "ltp": entry_order_price,
                     "qty": leg_qty,
                     "pnl": 0.0,
                     "status": "PENDING",
@@ -1434,19 +1559,19 @@ class PivotChandelierProV201Strategy(BaseStrategy):
 
         trade_symbol = self.current_trade["symbol"]
         sig_side = self.current_trade["signal_side"]
-        order_side = self.current_trade.get("order_side", sig_side)
+        order_side = self.current_trade.get("order_side", "BUY")
         exit_side = "SELL" if order_side == "BUY" else "BUY"
         qty = int(self.current_trade["quantity"])
 
         leg0 = self.current_trade["legs"][0]
         ep = float(leg0.get("entry") or self.current_trade.get("entry_price") or 0.0)
         cur_ltp = float(leg0.get("ltp") or (exit_spot if exit_spot else ep))
-        if self.trade_instrument != "ATM_OPTION" and exit_spot and exit_spot > 0:
+        if self.trade_instrument != "OPTION" and exit_spot and exit_spot > 0:
             cur_ltp = float(exit_spot)
 
         self.log_decision(
             "EXIT CONDITION MATCH",
-            f"Exit Reason={reason} | {exit_side} {qty} {trade_symbol} @ ~{cur_ltp:.2f} (Spot={self.last_underlying_ltp:.2f})",
+            f"Exit Reason={reason} | {exit_side} {qty} {trade_symbol} @ ~{cur_ltp:.2f} (Signal Future={self.last_underlying_ltp:.2f})",
             level="WARNING" if "STOP" in reason else "INFO",
         )
 
@@ -1455,7 +1580,7 @@ class PivotChandelierProV201Strategy(BaseStrategy):
             side=exit_side,
             quantity=qty,
             order_type=self.order_type,
-            price=cur_ltp if self.trade_instrument != "ATM_OPTION" else 0.0,
+            price=cur_ltp if self.trade_instrument != "OPTION" else 0.0,
             product=self.product,
             leg_id="EXIT_PRIMARY",
             buffer_pct=self.limit_buffer_pct,
@@ -1497,7 +1622,14 @@ class PivotChandelierProV201Strategy(BaseStrategy):
             return
 
         ltp_f = float(ltp)
-        if sym == self.symbol or sym.endswith(f":{self.underlying_root}"):
+        sig_sym = getattr(self, "signal_symbol", "")
+        is_signal_sym = (
+            (sym == sig_sym)
+            or (sym == self.symbol)
+            or (":" in sym and sym.split(":")[-1] == self.underlying_root)
+            or (self.underlying_root in sym.upper() and ("FUT" in sym.upper() or not (sym.endswith("CE") or sym.endswith("PE"))))
+        )
+        if is_signal_sym:
             self.last_underlying_ltp = ltp_f
 
         if self.trade_state != "IN_TRADE" or not self.current_trade:
@@ -1519,11 +1651,8 @@ class PivotChandelierProV201Strategy(BaseStrategy):
                 leg["pnl"] = pnl
                 self.current_trade["total_pnl"] = pnl
 
-        # Sub-second Profit Target check on underlying spot / future
-        check_spot = ltp_f if (sym == self.symbol or is_trade_sym) else self.last_underlying_ltp
-        if self.trade_instrument == "ATM_OPTION" and self.last_underlying_ltp > 0:
-            check_spot = self.last_underlying_ltp
-
+        # Sub-second Profit Target check on Signal Future LTP
+        check_spot = self.last_underlying_ltp
         pt_spot = self.current_trade.get("pt_spot")
         sig_side = self.current_trade.get("signal_side")
         if pt_spot is not None and check_spot > 0:
