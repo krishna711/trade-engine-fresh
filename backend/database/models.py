@@ -17,6 +17,7 @@ class Account(Base):
     paper_mode = Column(Boolean, default=True) # Paper vs Live mode
     is_active = Column(Boolean, default=True)
     is_logged_in = Column(Boolean, default=True)
+    static_ip = Column(String(50), nullable=True) # Dedicated outbound/static IP for broker requests
     credentials_json = Column(JSON, default=dict) # encrypted/masked creds
     margin_available = Column(Float, default=500000.0)
     margin_used = Column(Float, default=0.0)

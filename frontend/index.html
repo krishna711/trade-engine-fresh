@@ -933,6 +933,12 @@
                     </div>
                 </div>
 
+                <div>
+                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Outbound / Static IP Address (AWS Whitelisted IP)</label>
+                    <input type="text" id="new-account-static-ip" placeholder="e.g. 35.154.220.201, 13.206.90.155, 13.206.35.210" style="width: 100%; padding: 0.55rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; margin-top: 4px; font-family: var(--font-mono); font-size: 0.85rem;">
+                    <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">Used to bind all outgoing requests (login, orders, margins). Leave blank to use server default route.</div>
+                </div>
+
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
                     <div>
                         <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Trading Mode</label>

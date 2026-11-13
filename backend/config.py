@@ -20,6 +20,7 @@ FRONTEND_PORT = 3000
 XTS_FEED_URL = os.getenv("XTS_FEED_URL", "https://ttblaze.iifl.com/apibinarymarketdata")
 XTS_FEED_API_KEY = os.getenv("XTS_FEED_API_KEY", "")
 XTS_FEED_API_SECRET = os.getenv("XTS_FEED_API_SECRET", "")
+XTS_FEED_STATIC_IP = os.getenv("XTS_FEED_STATIC_IP", "")
 
 # Shoonya Credentials (Hot Failover)
 SHOONYA_USER_ID = os.getenv("SHOONYA_USER_ID", "")

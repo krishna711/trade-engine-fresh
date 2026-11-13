@@ -427,6 +427,7 @@ def list_accounts(db: Session = Depends(get_db), current_user: User = Depends(ge
             "broker": acc.broker,
             "client_id": acc.client_id,
             "client_name": acc.client_name,
+            "static_ip": acc.static_ip or creds.get("static_ip", ""),
             "paper_mode": acc.paper_mode,
             "is_active": acc.is_active,
             "is_logged_in": acc.is_logged_in if has_token_today else (acc.is_logged_in and not bool(token)),
@@ -510,14 +511,17 @@ async def generate_xts_token_endpoint(payload: Dict[str, Any] = Body(...), db: S
     api_secret = payload.get("api_secret", "").strip()
     base_url = payload.get("interactive_url", "https://ttblaze.iifl.com/interactive").strip().rstrip("/")
     source = payload.get("source", "WEBAPI")
+    static_ip = payload.get("static_ip", "").strip() or None
 
     acc = None
     if client_id:
         acc = db.query(Account).filter(Account.client_id == client_id).first()
-        if acc and acc.credentials_json:
-            api_key = api_key or acc.credentials_json.get("api_key", "")
-            api_secret = api_secret or acc.credentials_json.get("api_secret", "")
-            base_url = acc.credentials_json.get("interactive_url", base_url)
+        if acc:
+            static_ip = static_ip or acc.static_ip or (acc.credentials_json.get("static_ip") if acc.credentials_json else None)
+            if acc.credentials_json:
+                api_key = api_key or acc.credentials_json.get("api_key", "")
+                api_secret = api_secret or acc.credentials_json.get("api_secret", "")
+                base_url = acc.credentials_json.get("interactive_url", base_url)
 
     if not api_key or not api_secret:
         raise HTTPException(status_code=400, detail="XTS API Key (App Key) and API Secret are required to generate token")
@@ -537,7 +541,9 @@ async def generate_xts_token_endpoint(payload: Dict[str, Any] = Body(...), db: S
     }
 
     try:
-        resp = requests.post(
+        from backend.core.http_client import get_bound_requests_session
+        http_session = get_bound_requests_session(static_ip)
+        resp = http_session.post(
             login_url,
             json=req_body,
             headers={"Content-Type": "application/json"},
@@ -563,6 +569,9 @@ async def generate_xts_token_endpoint(payload: Dict[str, Any] = Body(...), db: S
                 creds["token_date"] = today_date
                 creds["user_id"] = user_id
                 creds["interactive_url"] = base_url
+                if static_ip:
+                    acc.static_ip = static_ip
+                    creds["static_ip"] = static_ip
                 acc.credentials_json = creds
                 acc.is_logged_in = True
                 acc.last_login_at = datetime.datetime.utcnow()
@@ -570,7 +579,7 @@ async def generate_xts_token_endpoint(payload: Dict[str, Any] = Body(...), db: S
                 # Immediately sync real live margin from XTS
                 try:
                     from backend.order_manager.brokers.broker_adapters import create_broker_order_adapter
-                    adapter = create_broker_order_adapter("XTS", acc.client_id, creds)
+                    adapter = create_broker_order_adapter("XTS", acc.client_id, creds, static_ip=acc.static_ip)
                     m_res = await adapter.get_margins()
                     if m_res.get("success"):
                         acc.margin_available = m_res["margin_available"]
@@ -639,6 +648,11 @@ def create_account(payload: Dict[str, Any] = Body(...), db: Session = Depends(ge
     paper_mode = payload.get("paper_mode", True)
     margin_available = float(payload.get("margin_available", 500000.0))
     credentials = dict(payload.get("credentials_json", {}))
+    static_ip = payload.get("static_ip", "").strip() or None
+    if not static_ip and credentials.get("static_ip"):
+        static_ip = credentials.get("static_ip", "").strip() or None
+    if static_ip:
+        credentials["static_ip"] = static_ip
 
     if not client_id or not client_name:
         raise HTTPException(status_code=400, detail="Client ID and Client Name are required")
@@ -664,6 +678,7 @@ def create_account(payload: Dict[str, Any] = Body(...), db: Session = Depends(ge
         user_id=target_user_id,
         client_id=client_id,
         client_name=client_name,
+        static_ip=static_ip,
         paper_mode=bool(paper_mode),
         is_active=True,
         is_logged_in=bool(credentials.get("token")) or True,
@@ -674,7 +689,7 @@ def create_account(payload: Dict[str, Any] = Body(...), db: Session = Depends(ge
     )
     db.add(acc)
     db.commit()
-    return {"success": True, "account": {"client_id": acc.client_id, "client_name": acc.client_name, "broker": acc.broker, "user_id": acc.user_id}}
+    return {"success": True, "account": {"client_id": acc.client_id, "client_name": acc.client_name, "broker": acc.broker, "static_ip": acc.static_ip, "user_id": acc.user_id}}
 
 @app.put("/api/accounts/{client_id}")
 def update_account(client_id: str, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -694,11 +709,20 @@ def update_account(client_id: str, payload: Dict[str, Any] = Body(...), db: Sess
         acc.total_balance = acc.margin_available + acc.margin_used
     if "is_active" in payload:
         acc.is_active = bool(payload["is_active"])
+    if "static_ip" in payload:
+        acc.static_ip = payload["static_ip"].strip() if payload["static_ip"] else None
+        curr_creds = dict(acc.credentials_json or {})
+        curr_creds["static_ip"] = acc.static_ip
+        acc.credentials_json = curr_creds
+    elif "credentials_json" in payload and isinstance(payload["credentials_json"], dict) and "static_ip" in payload["credentials_json"]:
+        acc.static_ip = payload["credentials_json"]["static_ip"].strip() if payload["credentials_json"]["static_ip"] else None
     if "credentials_json" in payload:
         new_creds = payload["credentials_json"]
         if isinstance(new_creds, dict):
             curr_creds = dict(acc.credentials_json or {})
             curr_creds.update(new_creds)
+            if acc.static_ip:
+                curr_creds["static_ip"] = acc.static_ip
             if curr_creds.get("token") and not curr_creds.get("token_date"):
                 curr_creds["token_date"] = datetime.date.today().isoformat()
             acc.credentials_json = curr_creds
@@ -706,7 +730,7 @@ def update_account(client_id: str, payload: Dict[str, Any] = Body(...), db: Sess
                 acc.is_logged_in = True
                 acc.last_login_at = datetime.datetime.utcnow()
     db.commit()
-    return {"success": True, "client_id": client_id}
+    return {"success": True, "client_id": client_id, "static_ip": acc.static_ip}
 
 @app.delete("/api/accounts/{client_id}")
 def delete_account(client_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -762,7 +786,7 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
     if acc and acc.broker == "XTS" and has_token_today:
         try:
             from backend.order_manager.brokers.broker_adapters import create_broker_order_adapter
-            adapter = create_broker_order_adapter("XTS", acc.client_id, creds)
+            adapter = create_broker_order_adapter("XTS", acc.client_id, creds, static_ip=acc.static_ip)
             
             # 1. Fetch live margins from broker
             m_res = await adapter.get_margins()
@@ -903,6 +927,7 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
         "client_id": client_id,
         "broker": acc.broker if acc else "XTS",
         "client_name": acc.client_name if acc else "",
+        "static_ip": acc.static_ip or (creds.get("static_ip", "") if creds else ""),
         "paper_mode": acc.paper_mode if acc else True,
         "credentials": {
             "api_key": creds.get("api_key", ""),

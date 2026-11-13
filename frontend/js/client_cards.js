@@ -42,6 +42,7 @@ class ClientCardsManager {
     openAddClientModal() {
         const idInput = document.getElementById("new-account-client-id");
         const nameInput = document.getElementById("new-account-name");
+        const ipInput = document.getElementById("new-account-static-ip");
         const marginInput = document.getElementById("new-account-margin");
         const xtsKey = document.getElementById("xts-api-key");
         const xtsSecret = document.getElementById("xts-api-secret");
@@ -51,6 +52,7 @@ class ClientCardsManager {
 
         if (idInput) idInput.value = "";
         if (nameInput) nameInput.value = "";
+        if (ipInput) ipInput.value = "";
         if (marginInput) marginInput.value = "500000";
         if (xtsKey) xtsKey.value = "";
         if (xtsSecret) xtsSecret.value = "";
@@ -108,6 +110,9 @@ class ClientCardsManager {
         const apiKey = (clientId ? "" : document.getElementById("xts-api-key")?.value?.trim()) || "";
         const apiSecret = (clientId ? "" : document.getElementById("xts-api-secret")?.value?.trim()) || "";
         const interactiveUrl = document.getElementById("xts-interactive-url")?.value?.trim() || "https://ttblaze.iifl.com/interactive";
+        const staticIp = (clientId 
+            ? document.getElementById("drawer-xts-static-ip")?.value?.trim() 
+            : document.getElementById("new-account-static-ip")?.value?.trim()) || "";
         const feedbackEl = document.getElementById(clientId ? "drawer-xts-token-feedback" : "xts-token-feedback");
         const btn = document.getElementById(clientId ? "drawer-btn-generate-token" : "btn-generate-xts-token");
 
@@ -121,7 +126,7 @@ class ClientCardsManager {
             btn.innerText = "⏳ Generating...";
         }
         if (feedbackEl) {
-            feedbackEl.innerHTML = `<span style="color: var(--accent-blue);">Contacting XTS server to authenticate and generate session token...</span>`;
+            feedbackEl.innerHTML = `<span style="color: var(--accent-blue);">Contacting XTS server to authenticate and generate session token${staticIp ? ` (from IP: ${staticIp})` : ''}...</span>`;
         }
 
         try {
@@ -132,7 +137,8 @@ class ClientCardsManager {
                     client_id: clientId,
                     api_key: apiKey,
                     api_secret: apiSecret,
-                    interactive_url: interactiveUrl
+                    interactive_url: interactiveUrl,
+                    static_ip: staticIp
                 })
             });
             const data = await res.json();
@@ -174,10 +180,14 @@ class ClientCardsManager {
         const broker = document.getElementById("new-account-broker")?.value || "XTS";
         const clientId = document.getElementById("new-account-client-id")?.value?.trim();
         const clientName = document.getElementById("new-account-name")?.value?.trim();
+        const staticIp = document.getElementById("new-account-static-ip")?.value?.trim() || "";
         const mode = document.getElementById("new-account-mode")?.value || "paper";
         const margin = parseFloat(document.getElementById("new-account-margin")?.value) || 500000;
 
         let credentials_json = {};
+        if (staticIp) {
+            credentials_json.static_ip = staticIp;
+        }
         if (broker === "XTS") {
             const apiKey = document.getElementById("xts-api-key")?.value?.trim() || "";
             const apiSecret = document.getElementById("xts-api-secret")?.value?.trim() || "";
@@ -186,15 +196,17 @@ class ClientCardsManager {
             const todayStr = new Date().toISOString().slice(0, 10);
 
             credentials_json = {
+                ...credentials_json,
                 api_key: apiKey,
                 api_secret: apiSecret,
                 token: token,
                 token_date: token ? todayStr : "",
-                interactive_url: interactiveUrl
+                interactive_url: interactiveUrl,
+                static_ip: staticIp
             };
         } else {
             const apiKey = document.getElementById("other-broker-api-key")?.value?.trim() || "";
-            credentials_json = { api_key: apiKey };
+            credentials_json = { ...credentials_json, api_key: apiKey, static_ip: staticIp };
         }
 
         if (!clientId || !clientName) {
@@ -212,6 +224,7 @@ class ClientCardsManager {
                     client_name: clientName,
                     paper_mode: mode === "paper",
                     margin_available: margin,
+                    static_ip: staticIp,
                     credentials_json: credentials_json
                 })
             });
@@ -310,6 +323,7 @@ class ClientCardsManager {
                     <div class="card-top-row">
                         <div class="card-name-wrap">
                             <span class="card-title" title="${acc.client_id}">${acc.client_name || acc.client_id}</span>
+                            ${acc.static_ip ? `<span class="card-static-ip" title="Outbound IP: ${acc.static_ip}">${acc.static_ip}</span>` : ''}
                             ${ownerBadge}
                         </div>
                         <span class="card-status-badge ${isActive ? 'status-active' : 'status-inactive'}" 
@@ -459,6 +473,7 @@ class ClientCardsManager {
 
     async saveDrawerToken(clientId) {
         const tokenVal = document.getElementById("drawer-xts-token-val")?.value?.trim() || "";
+        const staticIp = document.getElementById("drawer-xts-static-ip")?.value?.trim() || "";
         const feedbackEl = document.getElementById("drawer-xts-token-feedback");
 
         try {
@@ -467,18 +482,22 @@ class ClientCardsManager {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                    static_ip: staticIp,
                     credentials_json: {
                         token: tokenVal,
-                        token_date: tokenVal ? todayStr : ""
+                        token_date: tokenVal ? todayStr : "",
+                        static_ip: staticIp
                     }
                 })
             });
             const data = await res.json();
             if (data.success) {
                 if (feedbackEl) {
-                    feedbackEl.innerHTML = `<span style="color: var(--accent-green); font-weight: 600;">✓ Token saved successfully for today (${todayStr})! Valid for broker API calls.</span>`;
+                    feedbackEl.innerHTML = `<span style="color: var(--accent-green); font-weight: 600;">✓ Settings & Token saved successfully for today (${todayStr})! ${staticIp ? `Bound Outbound IP: ${staticIp}` : ''}</span>`;
                 }
                 await this.syncBrokerDataNow(clientId);
+                await this.loadAccounts();
+            } else {
             } else {
                 alert("Failed to update token: " + (data.detail || data.error));
             }
@@ -835,7 +854,7 @@ class ClientCardsManager {
                                 </div>
                             </div>
 
-                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; font-size: 0.8rem;">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; font-size: 0.8rem;">
                                 <div>
                                     <span style="color: var(--text-muted); font-size: 0.72rem;">API Key (App Key):</span>
                                     <div style="font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); word-break: break-all;">
@@ -848,11 +867,25 @@ class ClientCardsManager {
                                         ${creds.token_date || '<span style="color: var(--text-muted);">None</span>'}
                                     </div>
                                 </div>
+                                <div>
+                                    <span style="color: var(--text-muted); font-size: 0.72rem;">Outbound IP:</span>
+                                    <div style="font-family: var(--font-mono); font-weight: 600; color: #60a5fa;">
+                                        ${data.static_ip || '<span style="color: var(--text-muted);">Default Route</span>'}
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
                         <!-- Token Management & Generation -->
                         <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.75rem;">
+                            <div>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+                                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Outbound / Static IP Address (AWS Whitelisted IP)</label>
+                                    <span style="font-size: 0.7rem; color: var(--text-muted);">Required if broker enforces IP restriction</span>
+                                </div>
+                                <input type="text" id="drawer-xts-static-ip" value="${data.static_ip || ''}" placeholder="e.g. 35.154.220.201, 13.206.90.155, 13.206.35.210" style="width: 100%; padding: 0.45rem 0.6rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem;">
+                            </div>
+
                             <div style="display: flex; justify-content: space-between; align-items: center;">
                                 <label style="font-size: 0.8rem; font-weight: 700; color: var(--text-primary);">Today's Session Token</label>
                                 <span style="font-size: 0.7rem; color: var(--text-muted);">Used for all broker API calls</span>

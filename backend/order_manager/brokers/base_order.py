@@ -4,10 +4,11 @@ from typing import Dict, Any, List, Optional
 class BaseOrderBroker(ABC):
     """Abstract interface for all broker order execution adapters"""
 
-    def __init__(self, broker_name: str, client_id: str, credentials: Optional[Dict[str, Any]] = None):
+    def __init__(self, broker_name: str, client_id: str, credentials: Optional[Dict[str, Any]] = None, static_ip: Optional[str] = None):
         self.broker_name = broker_name
         self.client_id = client_id
         self.credentials = credentials or {}
+        self.static_ip = static_ip or (self.credentials.get("static_ip") if isinstance(self.credentials, dict) else None)
 
     @abstractmethod
     async def place_order(self, order_dict: Dict[str, Any]) -> Dict[str, Any]:

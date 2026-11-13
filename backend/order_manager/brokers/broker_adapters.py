@@ -11,6 +11,10 @@ class GenericBrokerOrderAdapter(BaseOrderBroker):
     Standardized adapter for Indian stock & derivative brokers:
     Supports XTS, KOTAKNEO, SHOONYA, ZERODHA, DHAN, FYERS.
     """
+    def __init__(self, broker_name: str, client_id: str, credentials: Optional[Dict[str, Any]] = None, static_ip: Optional[str] = None):
+        super().__init__(broker_name, client_id, credentials, static_ip=static_ip)
+        from backend.core.http_client import get_bound_requests_session
+        self.session = get_bound_requests_session(self.static_ip)
 
     async def place_order(self, order_dict: Dict[str, Any]) -> Dict[str, Any]:
         canonical_symbol = order_dict["symbol"]
@@ -70,8 +74,8 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
     - Validates that the token was generated for the current trading day.
     - If expired/missing, uses API Key & Secret to automatically refresh today's session.
     """
-    def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None):
-        super().__init__("XTS", client_id, credentials)
+    def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None, static_ip: Optional[str] = None):
+        super().__init__("XTS", client_id, credentials, static_ip=static_ip)
         creds = self.credentials or {}
         self.api_key = creds.get("api_key", "")
         self.api_secret = creds.get("api_secret", "")
@@ -79,6 +83,10 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
         self.token_date = creds.get("token_date", "")
         self.interactive_url = creds.get("interactive_url", "https://ttblaze.iifl.com/interactive").rstrip("/")
         self.user_id = creds.get("user_id", "") or client_id
+        if not self.static_ip and creds.get("static_ip"):
+            self.static_ip = creds.get("static_ip")
+            from backend.core.http_client import get_bound_requests_session
+            self.session = get_bound_requests_session(self.static_ip)
         self.last_holdings_debug = {}
         self.last_margins_debug = {}
         self.last_positions_debug = {}
@@ -106,10 +114,9 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
         # Attempt auto-login if API key and secret are present
         if self.api_key and self.api_secret:
             try:
-                import requests
                 base = self.interactive_url
                 login_url = f"{base}/user/session" if base.endswith("/interactive") else f"{base}/interactive/user/session"
-                resp = requests.post(
+                resp = self.session.post(
                     login_url,
                     json={"appKey": self.api_key, "secretKey": self.api_secret, "source": "WEBAPI"},
                     headers={"Content-Type": "application/json"},
@@ -168,7 +175,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                     "xtsMessageCode": 1502,
                     "publishFormat": "JSON"
                 }
-                resp = requests.post(url, json=payload, headers={"authorization": token, "Content-Type": "application/json"}, timeout=4)
+                resp = self.session.post(url, json=payload, headers={"authorization": token, "Content-Type": "application/json"}, timeout=4)
                 if resp.status_code == 200:
                     data = resp.json()
                     quotes = data.get("result", {}).get("listQuotes", [])
@@ -303,7 +310,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
 
             print(f"[XTS Order] Dispatching live order for {self.client_id} to {order_url} | Symbol: {canonical_symbol} ({broker_symbol}, Token: {broker_token}) | Segment: {exchange_seg} | Side: {side} | Qty: {order_dict['quantity']} | Product: {prod_type} | Type: {req_order_type} @ {req_price}")
 
-            resp = requests.post(
+            resp = self.session.post(
                 order_url,
                 json=payload,
                 headers={"Authorization": token, "Content-Type": "application/json"},
@@ -596,7 +603,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 "modifiedTimeInForce": "DAY",
                 "orderUniqueIdentifier": order_uid
             }
-            resp = requests.put(
+            resp = self.session.put(
                 url,
                 json=payload,
                 headers={"Authorization": token, "Content-Type": "application/json"},
@@ -608,6 +615,26 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             return {"success": False, "error": data.get("description") or resp.text}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    async def cancel_order(self, broker_order_id: str) -> bool:
+        """Cancels open order via XTS API: DELETE /interactive/orders?appOrderID=..."""
+        token = self.get_valid_token()
+        if not token:
+            return False
+        try:
+            url = self._get_url("orders")
+            target_id = int(broker_order_id) if str(broker_order_id).isdigit() else broker_order_id
+            resp = self.session.delete(
+                url,
+                params={"appOrderID": target_id},
+                headers={"Authorization": token, "Content-Type": "application/json"},
+                timeout=10
+            )
+            data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            return bool(resp.status_code == 200 and data.get("type") == "success")
+        except Exception as e:
+            print(f"[XTS Order Broker] Cancel order error for {broker_order_id}: {e}")
+            return False
 
     async def get_order_status(self, broker_order_id: str) -> Dict[str, Any]:
         """Queries single order status from XTS: GET /interactive/orders with tradebook and position book fallback"""
@@ -633,7 +660,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             result = []
             for p in param_candidates:
                 try:
-                    resp = requests.get(
+                    resp = self.session.get(
                         url,
                         params=p,
                         headers={"Authorization": token, "Content-Type": "application/json"},
@@ -818,7 +845,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             attempts = []
             if self.client_id:
                 try:
-                    resp = requests.get(url, params={"clientID": self.client_id}, headers=headers, timeout=8)
+                    resp = self.session.get(url, params={"clientID": self.client_id}, headers=headers, timeout=8)
                     attempts.append({
                         "url": url,
                         "params": {"clientID": self.client_id},
@@ -831,7 +858,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
 
             if resp is None or resp.status_code != 200:
                 try:
-                    resp = requests.get(url, params={}, headers=headers, timeout=8)
+                    resp = self.session.get(url, params={}, headers=headers, timeout=8)
                     attempts.append({
                         "url": url,
                         "params": {},
@@ -938,7 +965,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 for p in candidate_params:
                     attempt_info = {"url": url, "params": p}
                     try:
-                        resp = requests.get(url, params=p, headers=headers, timeout=8)
+                        resp = self.session.get(url, params=p, headers=headers, timeout=8)
                         attempt_info["status_code"] = resp.status_code
                         try:
                             data = resp.json()
@@ -1182,7 +1209,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                         "response_json": None
                     }
                     try:
-                        resp = requests.get(url, params=params, headers=headers, timeout=8)
+                        resp = self.session.get(url, params=params, headers=headers, timeout=8)
                         attempt_info["status_code"] = resp.status_code
                         data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
                         attempt_info["response_json"] = data
@@ -1346,7 +1373,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                         "response_json": None
                     }
                     try:
-                        resp = requests.get(url, params=params, headers=headers, timeout=8)
+                        resp = self.session.get(url, params=params, headers=headers, timeout=8)
                         attempt_info["status_code"] = resp.status_code
                         data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
                         attempt_info["response_json"] = data
@@ -1453,7 +1480,7 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                         "response_json": None
                     }
                     try:
-                        resp = requests.get(url, params=params, headers=headers, timeout=8)
+                        resp = self.session.get(url, params=params, headers=headers, timeout=8)
                         attempt_info["status_code"] = resp.status_code
                         data = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
                         attempt_info["response_json"] = data
@@ -1544,37 +1571,49 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
             return []
 
 class ShoonyaOrderBroker(GenericBrokerOrderAdapter):
-    def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None):
-        super().__init__("SHOONYA", client_id, credentials)
+    def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None, static_ip: Optional[str] = None):
+        super().__init__("SHOONYA", client_id, credentials, static_ip=static_ip)
 
 class KotakNeoOrderBroker(GenericBrokerOrderAdapter):
-    def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None):
-        super().__init__("KOTAKNEO", client_id, credentials)
+    def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None, static_ip: Optional[str] = None):
+        super().__init__("KOTAKNEO", client_id, credentials, static_ip=static_ip)
 
 class ZerodhaOrderBroker(GenericBrokerOrderAdapter):
-    def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None):
-        super().__init__("ZERODHA", client_id, credentials)
+    def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None, static_ip: Optional[str] = None):
+        super().__init__("ZERODHA", client_id, credentials, static_ip=static_ip)
 
 class DhanOrderBroker(GenericBrokerOrderAdapter):
-    def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None):
-        super().__init__("DHAN", client_id, credentials)
+    def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None, static_ip: Optional[str] = None):
+        super().__init__("DHAN", client_id, credentials, static_ip=static_ip)
 
 class FyersOrderBroker(GenericBrokerOrderAdapter):
-    def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None):
-        super().__init__("FYERS", client_id, credentials)
+    def __init__(self, client_id: str, credentials: Optional[Dict[str, Any]] = None, static_ip: Optional[str] = None):
+        super().__init__("FYERS", client_id, credentials, static_ip=static_ip)
 
-def create_broker_order_adapter(broker: str, client_id: str, credentials: Optional[Dict[str, Any]] = None) -> BaseOrderBroker:
+def create_broker_order_adapter(broker: str, client_id: str, credentials: Optional[Dict[str, Any]] = None, static_ip: Optional[str] = None) -> BaseOrderBroker:
     broker_upper = broker.upper()
+    resolved_ip = static_ip or (credentials.get("static_ip") if isinstance(credentials, dict) else None)
+    if not resolved_ip:
+        try:
+            from backend.database.connection import SessionLocal
+            from backend.database.models import Account
+            with SessionLocal() as db:
+                acc = db.query(Account).filter(Account.client_id == client_id).first()
+                if acc and acc.static_ip:
+                    resolved_ip = acc.static_ip
+        except Exception:
+            pass
+
     if "XTS" in broker_upper:
-        return XTSOrderBroker(client_id, credentials)
+        return XTSOrderBroker(client_id, credentials, static_ip=resolved_ip)
     elif "SHOONYA" in broker_upper:
-        return ShoonyaOrderBroker(client_id, credentials)
+        return ShoonyaOrderBroker(client_id, credentials, static_ip=resolved_ip)
     elif "KOTAK" in broker_upper:
-        return KotakNeoOrderBroker(client_id, credentials)
+        return KotakNeoOrderBroker(client_id, credentials, static_ip=resolved_ip)
     elif "ZERODHA" in broker_upper:
-        return ZerodhaOrderBroker(client_id, credentials)
+        return ZerodhaOrderBroker(client_id, credentials, static_ip=resolved_ip)
     elif "DHAN" in broker_upper:
-        return DhanOrderBroker(client_id, credentials)
+        return DhanOrderBroker(client_id, credentials, static_ip=resolved_ip)
     elif "FYERS" in broker_upper:
-        return FyersOrderBroker(client_id, credentials)
-    return GenericBrokerOrderAdapter(broker, client_id, credentials)
+        return FyersOrderBroker(client_id, credentials, static_ip=resolved_ip)
+    return GenericBrokerOrderAdapter(broker, client_id, credentials, static_ip=resolved_ip)

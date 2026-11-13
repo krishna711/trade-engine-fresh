@@ -82,6 +82,9 @@ class XTSFeedBroker(BaseFeedBroker):
         self._current_prices: Dict[str, float] = dict(BASE_PRICES)
         self._cached_ohlc: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
         self.latency_ms = 1.2
+        self.static_ip = self.config.get("static_ip") or os.getenv("XTS_FEED_STATIC_IP") or os.getenv("FEED_STATIC_IP")
+        from backend.core.http_client import get_bound_requests_session
+        self.session = get_bound_requests_session(self.static_ip)
         # Automatically clean up subscriptions on process exit
         atexit.register(self._clean_unsubscribe_all)
 
@@ -102,7 +105,7 @@ class XTSFeedBroker(BaseFeedBroker):
                 }
                 
                 try:
-                    resp = requests.post(login_url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
+                    resp = self.session.post(login_url, json=payload, headers={"Content-Type": "application/json"}, timeout=10)
                     data = resp.json()
                     if resp.status_code == 200 and data.get("type") == "success":
                         result = data.get("result", {})
@@ -371,7 +374,7 @@ class XTSFeedBroker(BaseFeedBroker):
                 "Content-Type": "application/json"
             }
 
-            resp = requests.post(quotes_url, json=payload, headers=headers, timeout=8)
+            resp = self.session.post(quotes_url, json=payload, headers=headers, timeout=8)
             if resp.status_code == 200:
                 data = resp.json()
                 quotes = data.get("result", {}).get("listQuotes", [])
@@ -446,7 +449,7 @@ class XTSFeedBroker(BaseFeedBroker):
                 "publishFormat": "JSON"
             }
             headers = {"authorization": self.token, "Content-Type": "application/json"}
-            resp = requests.post(quotes_url, json=payload, headers=headers, timeout=5)
+            resp = self.session.post(quotes_url, json=payload, headers=headers, timeout=5)
             if resp.status_code == 200:
                 data = resp.json()
                 quotes = data.get("result", {}).get("listQuotes", [])
@@ -520,21 +523,21 @@ class XTSFeedBroker(BaseFeedBroker):
                     }
                     # Step 1: Always unsubscribe first (PUT) to clear stale server subscription
                     try:
-                        r_unsub = requests.put(sub_url, json=sub_payload, headers=sub_headers, timeout=5)
+                        r_unsub = self.session.put(sub_url, json=sub_payload, headers=sub_headers, timeout=5)
                         print(f"[XTS] Segment {seg_code} pre-unsubscribe (PUT Status: {r_unsub.status_code}) -> {r_unsub.text[:100]}")
                     except Exception as unsub_err:
                         print(f"[XTS] Segment {seg_code} pre-unsubscribe note: {unsub_err}")
 
                     # Step 2: Subscribe cleanly (POST)
                     try:
-                        r = requests.post(sub_url, json=sub_payload, headers=sub_headers, timeout=6)
+                        r = self.session.post(sub_url, json=sub_payload, headers=sub_headers, timeout=6)
                         print(f"[XTS] Segment {seg_code} subscription for {len(insts)} instruments (Status: {r.status_code}) -> {r.text[:120]}")
 
                         # Step 3: Fallback safety if broker still reported Already Subscribed
                         if r.status_code == 400 or "Already Subscribed" in r.text or "e-session-0002" in r.text:
                             print(f"[XTS] Retrying unsubscription followed by fresh subscription for segment {seg_code}...")
-                            requests.put(sub_url, json=sub_payload, headers=sub_headers, timeout=5)
-                            r_retry = requests.post(sub_url, json=sub_payload, headers=sub_headers, timeout=6)
+                            self.session.put(sub_url, json=sub_payload, headers=sub_headers, timeout=5)
+                            r_retry = self.session.post(sub_url, json=sub_payload, headers=sub_headers, timeout=6)
                             print(f"[XTS] Segment {seg_code} retry result: (Status: {r_retry.status_code}) -> {r_retry.text[:120]}")
                     except Exception as sub_err:
                         print(f"[XTS] Subscription error for segment {seg_code}: {sub_err}")
@@ -574,7 +577,7 @@ class XTSFeedBroker(BaseFeedBroker):
             for seg_code, insts in segment_groups.items():
                 try:
                     sub_payload = {"instruments": insts, "xtsMessageCode": 1502}
-                    requests.put(sub_url, json=sub_payload, headers=sub_headers, timeout=4)
+                    self.session.put(sub_url, json=sub_payload, headers=sub_headers, timeout=4)
                 except Exception:
                     pass
         except Exception:
@@ -630,7 +633,7 @@ class XTSFeedBroker(BaseFeedBroker):
                         })
                 sub_headers = {"authorization": self.token, "Content-Type": "application/json"}
                 for seg_code, insts in segment_groups.items():
-                    requests.put(sub_url, json={"instruments": insts, "xtsMessageCode": 1502}, headers=sub_headers, timeout=4)
+                    self.session.put(sub_url, json={"instruments": insts, "xtsMessageCode": 1502}, headers=sub_headers, timeout=4)
             except Exception:
                 pass
 

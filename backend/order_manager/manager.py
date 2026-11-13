@@ -122,7 +122,7 @@ class OrderManager:
             db.commit()
 
             # Dispatch order
-            adapter = create_broker_order_adapter(account.broker, client_id, account.credentials_json)
+            adapter = create_broker_order_adapter(account.broker, client_id, account.credentials_json, static_ip=account.static_ip)
             order_dict = {
                 "order_id": engine_order_id,
                 "symbol": symbol,

@@ -50,6 +50,14 @@ def check_and_migrate_db():
             if acc_cols and "user_id" not in acc_cols:
                 conn.execute(text("ALTER TABLE accounts ADD COLUMN user_id INTEGER;"))
                 print("[DB Migration] Added user_id column to accounts table.")
+            if acc_cols and "static_ip" not in acc_cols:
+                conn.execute(text("ALTER TABLE accounts ADD COLUMN static_ip VARCHAR(50);"))
+                print("[DB Migration] Added static_ip column to accounts table.")
+
+            # Seed known outbound IPs for pre-configured AWS accounts if empty
+            conn.execute(text("UPDATE accounts SET static_ip = '35.154.220.201' WHERE (static_ip IS NULL OR static_ip = '') AND UPPER(client_id) = 'QUANTZEN';"))
+            conn.execute(text("UPDATE accounts SET static_ip = '13.206.35.210' WHERE (static_ip IS NULL OR static_ip = '') AND UPPER(client_id) = 'PCG6032A';"))
+            conn.execute(text("UPDATE accounts SET static_ip = '13.206.90.155' WHERE (static_ip IS NULL OR static_ip = '') AND UPPER(client_id) = 'XTS';"))
             
             # Check strategy_instances table columns
             strat_cols = [row[1] for row in conn.execute(text("PRAGMA table_info(strategy_instances)")).fetchall()]
