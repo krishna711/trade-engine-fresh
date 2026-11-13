@@ -107,9 +107,15 @@ class ClientCardsManager {
     }
 
     async generateXtsTokenNow(clientId = null) {
-        const apiKey = (clientId ? "" : document.getElementById("xts-api-key")?.value?.trim()) || "";
-        const apiSecret = (clientId ? "" : document.getElementById("xts-api-secret")?.value?.trim()) || "";
-        const interactiveUrl = document.getElementById("xts-interactive-url")?.value?.trim() || "https://ttblaze.iifl.com/interactive";
+        const apiKey = (clientId 
+            ? (document.getElementById("drawer-xts-api-key")?.value?.trim() || "") 
+            : document.getElementById("xts-api-key")?.value?.trim()) || "";
+        const apiSecret = (clientId 
+            ? (document.getElementById("drawer-xts-api-secret")?.value?.trim() || "") 
+            : document.getElementById("xts-api-secret")?.value?.trim()) || "";
+        const interactiveUrl = (clientId 
+            ? (document.getElementById("drawer-xts-interactive-url")?.value?.trim() || "") 
+            : document.getElementById("xts-interactive-url")?.value?.trim()) || "https://ttblaze.iifl.com/interactive";
         const staticIp = (clientId 
             ? document.getElementById("drawer-xts-static-ip")?.value?.trim() 
             : document.getElementById("new-account-static-ip")?.value?.trim()) || "";
@@ -147,12 +153,13 @@ class ClientCardsManager {
                     const tokenInput = document.getElementById("xts-today-token");
                     if (tokenInput) tokenInput.value = data.token;
                 }
-                if (feedbackEl) {
-                    feedbackEl.innerHTML = `<span style="color: var(--accent-green); font-weight: 600;">✓ Token generated successfully for today (${data.token_date})! Valid for all broker API calls.</span>`;
-                }
                 if (clientId) {
                     await this.loadDrawerDetails(clientId);
                     await this.loadAccounts();
+                }
+                const updatedFeedbackEl = document.getElementById(clientId ? "drawer-xts-token-feedback" : "xts-token-feedback");
+                if (updatedFeedbackEl) {
+                    updatedFeedbackEl.innerHTML = `<span style="color: var(--accent-green, #10b981); font-weight: 600;">✓ Token generated successfully for today (${data.token_date})! Valid for all broker API calls.</span>`;
                 }
             } else {
                 const errMsg = data.error || data.detail || "Authentication failed";
@@ -305,6 +312,7 @@ class ClientCardsManager {
 
             const brokerDisplay = acc.broker ? acc.broker.toUpperCase() : "XTS";
             const isActive = Boolean(acc.is_active);
+            const safeName = (acc.client_name || acc.client_id || '').replace(/'/g, "\\'");
 
             // Owner badge if admin and owned by another user
             const ownerBadge = (window.app && window.app.currentRole === "ADMIN" && acc.owner_username)
@@ -315,7 +323,7 @@ class ClientCardsManager {
             const isXts = (acc.broker || '').toUpperCase() === 'XTS';
             const tokenActive = isXts ? acc.has_token_today : true;
             const tokenTooltip = isXts
-                ? (acc.has_token_today ? `XTS Session Active for Today (${acc.token_date}). Click to view.` : '⚠️ XTS Session Token required today. Click to generate.')
+                ? (acc.has_token_today ? `XTS Session Active for Today (${acc.token_date}). Click to view/edit.` : '⚠️ XTS Session Token required today. Click to generate or edit credentials.')
                 : 'API Credentials & Session';
 
             return `
@@ -353,9 +361,15 @@ class ClientCardsManager {
 
                         <div class="card-action-icons">
                             <button class="btn-tool-icon ${tokenActive ? 'tool-token-active' : 'tool-token-warn'}" 
-                                    onclick="clientCardsManager.openDrawer('${acc.client_id}', '${acc.client_name.replace(/'/g, "\\'")}', 'credentials')" 
+                                    onclick="clientCardsManager.openDrawer('${acc.client_id}', '${safeName}', 'credentials')" 
                                     title="${tokenTooltip}">
                                 ➔
+                            </button>
+                            <button class="btn-tool-icon" 
+                                    onclick="clientCardsManager.openDrawer('${acc.client_id}', '${safeName}', 'credentials')" 
+                                    title="Edit Account Credentials & IP"
+                                    style="color: var(--accent-blue, #60a5fa); font-size: 0.82rem;">
+                                ✏️
                             </button>
                             <button class="btn-tool-icon ${isActive ? 'tool-power-active' : 'tool-power-off'}" 
                                     onclick="clientCardsManager.toggleActive('${acc.client_id}')" 
@@ -368,7 +382,7 @@ class ClientCardsManager {
                                 ✕
                             </button>
                             <button class="btn-tool-icon tool-more" 
-                                    onclick="clientCardsManager.openDrawer('${acc.client_id}', '${acc.client_name.replace(/'/g, "\\'")}', 'positions')" 
+                                    onclick="clientCardsManager.openDrawer('${acc.client_id}', '${safeName}', 'positions')" 
                                     title="Account Settings & Details (Positions, Orders, Margins)">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                             </button>
@@ -471,39 +485,60 @@ class ClientCardsManager {
         this.currentClientId = null;
     }
 
-    async saveDrawerToken(clientId) {
-        const tokenVal = document.getElementById("drawer-xts-token-val")?.value?.trim() || "";
+    async saveDrawerCredentials(clientId) {
+        const clientName = document.getElementById("drawer-client-name-input")?.value?.trim();
         const staticIp = document.getElementById("drawer-xts-static-ip")?.value?.trim() || "";
+        const apiKey = document.getElementById("drawer-xts-api-key")?.value?.trim() || "";
+        const apiSecret = document.getElementById("drawer-xts-api-secret")?.value?.trim() || "";
+        const interactiveUrl = document.getElementById("drawer-xts-interactive-url")?.value?.trim() || "https://ttblaze.iifl.com/interactive";
+        const tokenVal = document.getElementById("drawer-xts-token-val")?.value?.trim() || "";
         const feedbackEl = document.getElementById("drawer-xts-token-feedback");
 
         try {
             const todayStr = new Date().toISOString().slice(0, 10);
+            const payload = {
+                static_ip: staticIp,
+                credentials_json: {
+                    api_key: apiKey,
+                    api_secret: apiSecret,
+                    interactive_url: interactiveUrl,
+                    static_ip: staticIp,
+                    token: tokenVal,
+                    token_date: tokenVal ? todayStr : ""
+                }
+            };
+            if (clientName) {
+                payload.client_name = clientName;
+            }
+
             const res = await fetch(`/api/accounts/${clientId}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    static_ip: staticIp,
-                    credentials_json: {
-                        token: tokenVal,
-                        token_date: tokenVal ? todayStr : "",
-                        static_ip: staticIp
-                    }
-                })
+                body: JSON.stringify(payload)
             });
             const data = await res.json();
             if (data.success) {
-                if (feedbackEl) {
-                    feedbackEl.innerHTML = `<span style="color: var(--accent-green); font-weight: 600;">✓ Settings & Token saved successfully for today (${todayStr})! ${staticIp ? `Bound Outbound IP: ${staticIp}` : ''}</span>`;
-                }
-                await this.syncBrokerDataNow(clientId);
                 await this.loadAccounts();
+                await this.loadDrawerDetails(clientId);
+                const updatedFeedbackEl = document.getElementById("drawer-xts-token-feedback");
+                if (updatedFeedbackEl) {
+                    updatedFeedbackEl.innerHTML = `<span style="color: var(--accent-green, #10b981); font-weight: 600;">✓ Account credentials and outbound IP saved successfully! ${staticIp ? `(Bound IP: ${staticIp})` : ''}</span>`;
+                }
             } else {
-            } else {
-                alert("Failed to update token: " + (data.detail || data.error));
+                const err = data.detail || data.error || "Failed to save";
+                if (feedbackEl) {
+                    feedbackEl.innerHTML = `<span style="color: var(--accent-red); font-weight: 600;">✗ Failed to save: ${err}</span>`;
+                } else {
+                    alert("Failed to update credentials: " + err);
+                }
             }
         } catch (e) {
-            alert("Error updating token: " + e);
+            alert("Error updating credentials: " + e);
         }
+    }
+
+    async saveDrawerToken(clientId) {
+        return this.saveDrawerCredentials(clientId);
     }
 
     async syncBrokerDataNow(clientId) {
@@ -835,6 +870,8 @@ class ClientCardsManager {
             } else if (this.activeDrawerTab === "credentials") {
                 const creds = data.credentials || {};
                 const isValid = creds.is_valid_today;
+                const isXts = (data.broker || '').toUpperCase() === 'XTS';
+                const currentStaticIp = data.static_ip || creds.static_ip || '';
 
                 bodyEl.innerHTML = `
                     <div style="display: flex; flex-direction: column; gap: 1rem; padding: 0.5rem;">
@@ -842,68 +879,103 @@ class ClientCardsManager {
                         <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color);">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
                                 <div>
-                                    <span style="font-size: 0.72rem; color: var(--text-muted);">Broker Platform</span>
-                                    <div style="font-weight: 700; color: var(--text-primary); font-size: 1rem;">
-                                        ${data.broker} ${data.broker === 'XTS' ? '(IIFL Securities)' : ''}
+                                    <span style="font-size: 0.72rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Broker Platform</span>
+                                    <div style="font-weight: 700; color: var(--text-primary); font-size: 1.05rem;">
+                                        ${data.broker} ${isXts ? '<span style="font-size: 0.85rem; color: var(--text-muted);">(IIFL Securities)</span>' : ''}
                                     </div>
                                 </div>
                                 <div>
                                     ${isValid 
-                                        ? `<span style="padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700; font-size: 0.75rem;">🟢 Token Active Today</span>`
+                                        ? `<span style="padding: 4px 10px; border-radius: 20px; background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-weight: 700; font-size: 0.75rem;">🟢 Session Active Today (${creds.token_date || 'Today'})</span>`
                                         : `<span style="padding: 4px 10px; border-radius: 20px; background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); font-weight: 700; font-size: 0.75rem;">🔴 Token Expired / Missing</span>`}
                                 </div>
                             </div>
 
-                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; font-size: 0.8rem;">
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; font-size: 0.8rem; background: var(--bg-secondary); padding: 0.65rem 0.85rem; border-radius: 6px; border: 1px solid var(--border-color);">
                                 <div>
-                                    <span style="color: var(--text-muted); font-size: 0.72rem;">API Key (App Key):</span>
-                                    <div style="font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); word-break: break-all;">
-                                        ${creds.api_key || '<span style="color: var(--text-muted);">Not Configured</span>'}
+                                    <span style="color: var(--text-muted); font-size: 0.72rem;">Client ID (Permanent):</span>
+                                    <div style="font-family: var(--font-mono); font-weight: 700; color: var(--accent-cyan, #06b6d4); font-size: 0.88rem;">
+                                        ${data.client_id}
                                     </div>
                                 </div>
                                 <div>
-                                    <span style="color: var(--text-muted); font-size: 0.72rem;">Token Date:</span>
-                                    <div style="font-family: var(--font-mono); font-weight: 600; color: var(--text-primary);">
-                                        ${creds.token_date || '<span style="color: var(--text-muted);">None</span>'}
-                                    </div>
-                                </div>
-                                <div>
-                                    <span style="color: var(--text-muted); font-size: 0.72rem;">Outbound IP:</span>
-                                    <div style="font-family: var(--font-mono); font-weight: 600; color: #60a5fa;">
-                                        ${data.static_ip || '<span style="color: var(--text-muted);">Default Route</span>'}
+                                    <span style="color: var(--text-muted); font-size: 0.72rem;">Bound Outbound IP:</span>
+                                    <div style="font-family: var(--font-mono); font-weight: 700; color: #60a5fa; font-size: 0.88rem;">
+                                        ${currentStaticIp || '<span style="color: var(--text-muted); font-weight: 400;">Default Route</span>'}
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- Token Management & Generation -->
-                        <div style="background: var(--bg-tertiary); padding: 1rem; border-radius: 8px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.75rem;">
+                        <!-- Editable Credentials & Static IP Form -->
+                        <div style="background: var(--bg-tertiary); padding: 1.1rem; border-radius: 8px; border: 1px solid var(--border-color); display: flex; flex-direction: column; gap: 0.85rem;">
+                            <div style="font-weight: 700; color: var(--text-primary); font-size: 0.88rem; border-bottom: 1px solid var(--border-color); padding-bottom: 0.5rem; display: flex; justify-content: space-between; align-items: center;">
+                                <span>⚙️ Account Credentials & Outbound IP Configuration</span>
+                                <span style="font-size: 0.7rem; color: var(--text-muted); font-weight: 400;">Edit & save anytime</span>
+                            </div>
+
+                            <!-- Desk / Client Name -->
                             <div>
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
-                                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Outbound / Static IP Address (AWS Whitelisted IP)</label>
-                                    <span style="font-size: 0.7rem; color: var(--text-muted);">Required if broker enforces IP restriction</span>
+                                <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">Desk / Account Display Name</label>
+                                <input type="text" id="drawer-client-name-input" value="${(data.client_name || '').replace(/"/g, '&quot;')}" placeholder="e.g. QUANTZEN, Trader Desk Alpha" style="width: 100%; padding: 0.5rem 0.65rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-size: 0.82rem;">
+                            </div>
+
+                            <!-- Outbound Static IP Address -->
+                            <div>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                    <label style="font-size: 0.75rem; font-weight: 600; color: #60a5fa;">Outbound / Static IP Address (AWS Whitelisted IP)</label>
+                                    <span style="font-size: 0.68rem; color: var(--text-muted);">Required if broker restricts IP</span>
                                 </div>
-                                <input type="text" id="drawer-xts-static-ip" value="${data.static_ip || ''}" placeholder="e.g. 35.154.220.201, 13.206.90.155, 13.206.35.210" style="width: 100%; padding: 0.45rem 0.6rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem;">
+                                <input type="text" id="drawer-xts-static-ip" value="${currentStaticIp}" placeholder="e.g. 35.154.220.201, 13.206.90.155, 13.206.35.210" style="width: 100%; padding: 0.5rem 0.65rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: #60a5fa; border-radius: 6px; font-family: var(--font-mono); font-size: 0.82rem; font-weight: 600;">
+                                <div style="font-size: 0.68rem; color: var(--text-muted); margin-top: 3px;">
+                                    Every broker API call (token auth, orders, margins) for this client will bind to this source IP.
+                                </div>
                             </div>
 
-                            <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <label style="font-size: 0.8rem; font-weight: 700; color: var(--text-primary);">Today's Session Token</label>
-                                <span style="font-size: 0.7rem; color: var(--text-muted);">Used for all broker API calls</span>
-                            </div>
-
+                            <!-- API Key / App Key -->
                             <div>
-                                <textarea id="drawer-xts-token-val" rows="3" style="width: 100%; padding: 0.5rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-family: var(--font-mono); font-size: 0.78rem; resize: vertical;" placeholder="Paste today's session token here...">${creds.token || ''}</textarea>
+                                <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">API Key (App Key)</label>
+                                <input type="text" id="drawer-xts-api-key" value="${(creds.api_key || '').replace(/"/g, '&quot;')}" placeholder="e.g. 8a3c721319a71182e8b359" style="width: 100%; padding: 0.5rem 0.65rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-family: var(--font-mono); font-size: 0.82rem;">
                             </div>
 
-                            <div style="display: flex; gap: 0.5rem; justify-content: flex-end; align-items: center; flex-wrap: wrap;">
-                                <button type="button" class="action-btn-sm" onclick="clientCardsManager.saveDrawerToken('${data.client_id}')" style="background: var(--accent-green, #10b981); color: white; font-weight: 600; cursor: pointer; padding: 0.5rem 0.85rem; border-radius: 6px; border: none;">
-                                    💾 Save / Update Token
+                            <!-- API Secret Key (Password field with toggle) -->
+                            <div>
+                                <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">API Secret Key</label>
+                                <div style="position: relative;">
+                                    <input type="password" id="drawer-xts-api-secret" value="${(creds.api_secret || '').replace(/"/g, '&quot;')}" placeholder="Enter API secret key" style="width: 100%; padding: 0.5rem 2.2rem 0.5rem 0.65rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-family: var(--font-mono); font-size: 0.82rem;">
+                                    <button type="button" onclick="clientCardsManager.toggleSecretVisibility('drawer-xts-api-secret')" style="position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: transparent; border: none; cursor: pointer; font-size: 0.9rem; opacity: 0.75;" title="Toggle visibility">
+                                        👁️
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Interactive URL -->
+                            <div>
+                                <label style="display: block; font-size: 0.75rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">Interactive / API Endpoint URL</label>
+                                <input type="text" id="drawer-xts-interactive-url" value="${(creds.interactive_url || 'https://ttblaze.iifl.com/interactive').replace(/"/g, '&quot;')}" placeholder="https://ttblaze.iifl.com/interactive" style="width: 100%; padding: 0.5rem 0.65rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-family: var(--font-mono); font-size: 0.8rem;">
+                            </div>
+
+                            <!-- Today's Session Token -->
+                            <div>
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                    <label style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">Today's Session Token</label>
+                                    <span style="font-size: 0.7rem; color: var(--text-muted);">${creds.token_date ? `Date: ${creds.token_date}` : 'No active token'}</span>
+                                </div>
+                                <textarea id="drawer-xts-token-val" rows="3" style="width: 100%; padding: 0.5rem; background: var(--bg-secondary); border: 1px solid var(--border-color); color: var(--text-primary); border-radius: 6px; font-family: var(--font-mono); font-size: 0.76rem; resize: vertical;" placeholder="Paste today's session token here or click 'Generate Token Now'...">${creds.token || ''}</textarea>
+                            </div>
+
+                            <!-- Action Buttons -->
+                            <div style="display: flex; gap: 0.6rem; justify-content: flex-end; align-items: center; flex-wrap: wrap; margin-top: 0.35rem;">
+                                <button type="button" class="action-btn-sm" onclick="clientCardsManager.saveDrawerCredentials('${data.client_id}')" style="background: var(--accent-green, #10b981); color: white; font-weight: 600; cursor: pointer; padding: 0.5rem 0.95rem; border-radius: 6px; border: none; font-size: 0.82rem; display: flex; align-items: center; gap: 5px;">
+                                    💾 Save Credentials & IP
                                 </button>
-                                <button type="button" id="drawer-btn-generate-token" class="action-btn-sm" onclick="clientCardsManager.generateXtsTokenNow('${data.client_id}')" style="background: var(--accent-blue, #2563eb); color: white; font-weight: 600; cursor: pointer; padding: 0.5rem 0.85rem; border-radius: 6px; border: none; display: flex; align-items: center; gap: 4px;">
+                                ${isXts ? `
+                                <button type="button" id="drawer-btn-generate-token" class="action-btn-sm" onclick="clientCardsManager.generateXtsTokenNow('${data.client_id}')" style="background: var(--accent-blue, #2563eb); color: white; font-weight: 600; cursor: pointer; padding: 0.5rem 0.95rem; border-radius: 6px; border: none; font-size: 0.82rem; display: flex; align-items: center; gap: 5px;">
                                     🔑 Generate Token Now
                                 </button>
+                                ` : ''}
                             </div>
-                            <div id="drawer-xts-token-feedback" style="font-size: 0.75rem; color: var(--text-muted); line-height: 1.3;"></div>
+                            <div id="drawer-xts-token-feedback" style="font-size: 0.75rem; min-height: 1.2rem; line-height: 1.3;"></div>
                         </div>
                     </div>
                 `;

@@ -168,3 +168,4 @@ def get_bound_requests_session(static_ip: Optional[str] = None) -> requests.Sess
         session.mount("http://", adapter)
         session.mount("https://", adapter)
     return session
+

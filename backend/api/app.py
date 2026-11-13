@@ -442,9 +442,11 @@ def list_accounts(db: Session = Depends(get_db), current_user: User = Depends(ge
             "token_date": token_date,
             "credentials": {
                 "api_key": creds.get("api_key", ""),
+                "api_secret": creds.get("api_secret", ""),
                 "token": token,
                 "token_date": token_date,
                 "interactive_url": creds.get("interactive_url", "https://ttblaze.iifl.com/interactive"),
+                "static_ip": acc.static_ip or creds.get("static_ip", ""),
                 "is_valid_today": has_token_today
             },
             "last_login_at": acc.last_login_at.isoformat() if acc.last_login_at else None,
@@ -931,9 +933,11 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
         "paper_mode": acc.paper_mode if acc else True,
         "credentials": {
             "api_key": creds.get("api_key", ""),
+            "api_secret": creds.get("api_secret", ""),
             "token": token,
             "token_date": token_date,
             "interactive_url": creds.get("interactive_url", "https://ttblaze.iifl.com/interactive"),
+            "static_ip": acc.static_ip or creds.get("static_ip", ""),
             "is_valid_today": has_token_today
         },
         "margins": margins_data,
