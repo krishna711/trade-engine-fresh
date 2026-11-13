@@ -424,13 +424,32 @@ class ChartsPageManager {
         const overlays = data.overlays || {};
         const osc = data.oscillators || {};
         const isPcp = data.template_key === "strat_pcp_pro_v201";
+        const isSupertrend = data.template_key === "strat_supertrend_momentum_v1";
         const lastC = candles.length ? candles[candles.length - 1] : null;
         const lastIdx = candles.length - 1;
 
         // Metrics Strip
         const metricsEl = document.getElementById("charts-metrics-strip");
         if (metricsEl) {
-            if (isPcp) {
+            if (isSupertrend) {
+                const stDir = (overlays.supertrend_direction && lastIdx >= 0) ? overlays.supertrend_direction[lastIdx] : 0;
+                const stVal = overlays.supertrend && lastIdx >= 0 ? overlays.supertrend[lastIdx] : null;
+                const rsiVal = osc.rsi && lastIdx >= 0 ? osc.rsi[lastIdx] : null;
+                const r1Val = overlays.pivot_r1 && lastIdx >= 0 ? overlays.pivot_r1[lastIdx] : null;
+                const s1Val = overlays.pivot_s1 && lastIdx >= 0 ? overlays.pivot_s1[lastIdx] : null;
+                const bbUVal = overlays.bb_upper && lastIdx >= 0 ? overlays.bb_upper[lastIdx] : null;
+                const bbLVal = overlays.bb_lower && lastIdx >= 0 ? overlays.bb_lower[lastIdx] : null;
+                metricsEl.innerHTML = `
+                    <span><strong>${data.strategy_name}</strong> (<code>${data.symbol}</code> • ${data.resolution})</span>
+                    <span>Close: <strong>₹${lastC ? lastC.close.toFixed(2) : '-'}</strong></span>
+                    ${stVal !== null ? `<span style="color: ${stDir === 1 ? '#10b981' : '#ef4444'}; font-weight: 700;">Supertrend: ₹${stVal.toFixed(2)} (${stDir === 1 ? '▲ LONG' : '▼ SHORT'})</span>` : ""}
+                    ${rsiVal !== null ? `<span style="color: ${rsiVal >= 70 ? '#10b981' : (rsiVal <= 30 ? '#ef4444' : '#38bdf8')}; font-weight: 600;">RSI(14): ${rsiVal.toFixed(1)}</span>` : ""}
+                    ${r1Val !== null ? `<span style="color: #a855f7;">R1: ₹${r1Val.toFixed(2)}</span>` : ""}
+                    ${s1Val !== null ? `<span style="color: #f59e0b;">S1: ₹${s1Val.toFixed(2)}</span>` : ""}
+                    ${(bbUVal !== null && bbLVal !== null) ? `<span style="color: #60a5fa;">BB: [₹${bbLVal.toFixed(2)} - ₹${bbUVal.toFixed(2)}]</span>` : ""}
+                    <span>Signals: <strong>${(data.signals || []).length}</strong></span>
+                `;
+            } else if (isPcp) {
                 const td = osc.trend_direction && lastIdx >= 0 ? osc.trend_direction[lastIdx] : 0;
                 const adxLast = osc.adx && lastIdx >= 0 ? osc.adx[lastIdx] : null;
                 const lsLast = overlays.long_stop && lastIdx >= 0 ? overlays.long_stop[lastIdx] : null;
@@ -462,7 +481,17 @@ class ChartsPageManager {
         // Legend Strip
         const legendEl = document.getElementById("charts-legend-strip");
         if (legendEl) {
-            if (isPcp) {
+            if (isSupertrend) {
+                legendEl.innerHTML = `
+                    <span style="color: #10b981;">━ Supertrend (Long)</span>
+                    <span style="color: #ef4444;">━ Supertrend (Short)</span>
+                    <span style="color: #60a5fa;">┄ BB Upper / Lower</span>
+                    <span style="color: #a855f7;">┄ Pivot R1</span>
+                    <span style="color: #f59e0b;">┄ Pivot S1</span>
+                    <span style="color: #fbbf24;">┄ OR High / Low</span>
+                    <span style="color: #94a3b8;">▲ BUY / COVER | ▼ SHORT / SELL</span>
+                `;
+            } else if (isPcp) {
                 legendEl.innerHTML = `
                     <span style="color: #10b981;">━ LongStop</span>
                     <span style="color: #ef4444;">━ ShortStop</span>
@@ -525,7 +554,19 @@ class ChartsPageManager {
                 }
             };
 
-            if (isPcp) {
+            if (isSupertrend) {
+                addOverlayLine(overlays.supertrend, "#10b981", "Supertrend", LightweightCharts.LineStyle.Solid, 2);
+                addOverlayLine(overlays.bb_upper, "#60a5fa", "BB Upper", LightweightCharts.LineStyle.Dotted, 1.5);
+                addOverlayLine(overlays.bb_lower, "#60a5fa", "BB Lower", LightweightCharts.LineStyle.Dotted, 1.5);
+                addOverlayLine(overlays.pivot_r1, "#a855f7", "Pivot R1", LightweightCharts.LineStyle.Dashed, 1.5);
+                addOverlayLine(overlays.pivot_s1, "#f59e0b", "Pivot S1", LightweightCharts.LineStyle.Dashed, 1.5);
+                addOverlayLine(overlays.opening_range_high, "#fbbf24", "OR High", LightweightCharts.LineStyle.Dotted, 1);
+                addOverlayLine(overlays.opening_range_low, "#fbbf24", "OR Low", LightweightCharts.LineStyle.Dotted, 1);
+                addOverlayLine(overlays.long_stop, "#ef4444", "Long SL", LightweightCharts.LineStyle.Dashed, 1.5);
+                addOverlayLine(overlays.short_stop, "#ef4444", "Short SL", LightweightCharts.LineStyle.Dashed, 1.5);
+                addOverlayLine(overlays.long_target, "#10b981", "Target R:R", LightweightCharts.LineStyle.Dashed, 1.5);
+                addOverlayLine(overlays.short_target, "#10b981", "Target R:R", LightweightCharts.LineStyle.Dashed, 1.5);
+            } else if (isPcp) {
                 addOverlayLine(overlays.long_stop, "#10b981", "LongStop");
                 addOverlayLine(overlays.short_stop, "#ef4444", "ShortStop");
                 addOverlayLine(overlays.trend_long_stop, "rgba(16, 185, 129, 0.45)", "TrendLong", LightweightCharts.LineStyle.Dotted, 1);
@@ -585,12 +626,48 @@ class ChartsPageManager {
             });
         }
 
-        // Sub-Chart: ADX & JMA(RWI) for PivotChandelier OR ATR for FTX
+        // Sub-Chart: RSI & ADX for Supertrend OR ADX & JMA(RWI) for PivotChandelier OR ATR for FTX
         const subTitle = document.getElementById("charts-subchart-title");
         const subCanvas = document.getElementById("charts-subchart-canvas");
         if (subCanvas) {
             const labels = candles.map(c => c.label);
-            if (isPcp) {
+            if (isSupertrend) {
+                if (subTitle) subTitle.innerText = `Momentum Oscillators: RSI(14) [Overbought 70 / Oversold 30] & ADX(14) [Threshold ${osc.adx_threshold || 25}]`;
+                this.subChart = new Chart(subCanvas.getContext("2d"), {
+                    type: "line",
+                    data: {
+                        labels,
+                        datasets: [
+                            { label: "RSI(14)", data: osc.rsi || [], borderColor: "#a855f7", yAxisID: "yRsi", tension: 0.2, pointRadius: 0 },
+                            { label: "ADX(14)", data: osc.adx || [], borderColor: "#60a5fa", yAxisID: "yAdx", tension: 0.2, pointRadius: 0 },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: "index", intersect: false },
+                        scales: {
+                            x: { grid: { color: theme.grid } },
+                            yRsi: {
+                                type: "linear",
+                                position: "left",
+                                min: 0,
+                                max: 100,
+                                grid: { color: theme.grid },
+                                title: { display: true, text: "RSI (0-100)" }
+                            },
+                            yAdx: {
+                                type: "linear",
+                                position: "right",
+                                min: 0,
+                                max: 80,
+                                grid: { drawOnChartArea: false },
+                                title: { display: true, text: "ADX" }
+                            },
+                        },
+                    },
+                });
+            } else if (isPcp) {
                 if (subTitle) subTitle.innerText = `Regime Oscillators: ADX(14) [Threshold ${osc.adx_threshold || 18}] & JMA(RWI High / Low) [Threshold 0.6]`;
                 this.subChart = new Chart(subCanvas.getContext("2d"), {
                     type: "line",

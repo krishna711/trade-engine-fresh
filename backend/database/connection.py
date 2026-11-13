@@ -276,6 +276,41 @@ def seed_initial_data():
                     "auto_chase": True
                 },
                 python_module="backend.strategy_manager.registered.time_atm_seller"
+            ),
+            StrategyTemplate(
+                key="strat_supertrend_momentum_v1",
+                name_admin="Supertrend RSI Bollinger Momentum (NIFTY)",
+                name_user="Nifty Supertrend RSI Bollinger Alpha",
+                description="Long/short Supertrend (10, 3.0), RSI (14 > 70 / < 30), daily Floor Pivot (R1/S1), Bollinger Bands (20, 2.0 std), and 15m Opening Range momentum strategy with 1:2 R:R target and 15:10 EOD exit.",
+                default_config={
+                    "symbol": "NSE:NIFTY",
+                    "trade_instrument": "FUTURE",
+                    "timeframe": "5m",
+                    "timeframe_min": 5,
+                    "supertrend_period": 10,
+                    "supertrend_multiplier": 3.0,
+                    "rsi_period": 14,
+                    "rsi_threshold": 70.0,
+                    "rsi_short_threshold": 30.0,
+                    "adx_period": 14,
+                    "adx_threshold": 25.0,
+                    "adx_slope_bars": 1,
+                    "opening_range_minutes": 15,
+                    "risk_reward": 2.0,
+                    "use_adx_filter": False,
+                    "bb_period": 20,
+                    "bb_std_dev": 2.0,
+                    "square_off_time": 151000,
+                    "round_lot_size": 65,
+                    "quantity_lots": 1,
+                    "max_lots": 8,
+                    "max_trades_per_day": 0,
+                    "product": "NRML",
+                    "order_type": "LIMIT",
+                    "limit_buffer_pct": 0.015,
+                    "auto_chase": True
+                },
+                python_module="backend.strategy_manager.registered.supertrend_momentum"
             )
         ]
         allowed_keys = [t.key for t in templates]

@@ -1517,6 +1517,13 @@ async def get_strategy_chart_data(
         root = normalize_underlying_root(cfg.get("symbol") or cfg.get("underlying") or "HAL")
         fut_roll = bool(cfg.get("fut_roll_last_friday", True))
         symbol = resolve_future_contract(root, roll_last_friday=fut_roll)
+    elif template_key == "strat_supertrend_momentum_v1":
+        trade_inst = str(cfg.get("trade_instrument") or "FUTURE").upper()
+        if trade_inst == "FUTURE":
+            from backend.strategy_manager.registered.supertrend_momentum import resolve_future_contract
+            symbol = resolve_future_contract("NIFTY")
+        else:
+            symbol = "NSE:NIFTY"
     default_tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or ("3m" if "pcp_pro" in template_key else ("1m" if "ftx" in template_key else "5m"))).lower()
     if default_tf.isdigit():
         default_tf = f"{default_tf}m"
@@ -1708,12 +1715,15 @@ async def get_strategy_chart_data(
         }
 
     # ------------------------------------------------------------------
-    # 2. PivotChandelier Pro v2.0.1 / FTX Paper Research (OHLC + Indicators)
+    # 2. PivotChandelier Pro / Supertrend Momentum / FTX (OHLC + Indicators)
     # ------------------------------------------------------------------
     bars = await feed_manager.get_ohlc(symbol, resolution=tf, count=240)
     if template_key == "strat_pcp_pro_v201":
         from backend.strategy_manager.registered.pcp_pro_v201 import compute_pcp_chart_payload
         payload = compute_pcp_chart_payload(bars, cfg)
+    elif template_key == "strat_supertrend_momentum_v1":
+        from backend.strategy_manager.registered.supertrend_momentum import compute_supertrend_chart_payload
+        payload = compute_supertrend_chart_payload(bars, cfg)
     else:
         from backend.strategy_manager.registered.ftx_paper_research import compute_ftx_chart_payload
         payload = compute_ftx_chart_payload(bars, cfg)

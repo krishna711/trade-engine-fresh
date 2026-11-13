@@ -14,6 +14,7 @@ MODULE_CLASS_MAP = {
     "strat_ftx_paper_v1": ("backend.strategy_manager.registered.ftx_paper_research", "FTXPaperResearchStrategy"),
     "strat_time_atm_seller_v1": ("backend.strategy_manager.registered.time_atm_seller", "TimeBasedATMSellerStrategy"),
     "strat_pcp_pro_v201": ("backend.strategy_manager.registered.pcp_pro_v201", "PivotChandelierProV201Strategy"),
+    "strat_supertrend_momentum_v1": ("backend.strategy_manager.registered.supertrend_momentum", "SupertrendMomentumStrategy"),
 }
 
 
@@ -173,6 +174,21 @@ class StrategySupervisor:
                 fut_sym = resolve_future_contract(root, roll_last_friday=fut_roll)
                 worker_sym = fut_sym
                 extra_symbols.update([fut_sym, f"NSE:{root}", f"NFO:{root}", root])
+                try:
+                    from backend.feed_manager.manager import feed_manager
+                    asyncio.create_task(feed_manager.subscribe(list(extra_symbols)))
+                except Exception:
+                    pass
+            elif "supertrend_momentum" in inst.template_key:
+                from backend.strategy_manager.registered.supertrend_momentum import resolve_future_contract
+                trade_inst = str(effective_config.get("trade_instrument") or "FUTURE").upper()
+                if trade_inst == "FUTURE":
+                    fut_sym = resolve_future_contract("NIFTY")
+                    worker_sym = fut_sym
+                    extra_symbols.update([fut_sym, "NSE:NIFTY", "NFO:NIFTY"])
+                else:
+                    worker_sym = "NSE:NIFTY"
+                    extra_symbols.update(["NSE:NIFTY"])
                 try:
                     from backend.feed_manager.manager import feed_manager
                     asyncio.create_task(feed_manager.subscribe(list(extra_symbols)))
@@ -354,6 +370,9 @@ class StrategySupervisor:
                 from backend.strategy_manager.registered.pcp_pro_v201 import normalize_underlying_root
                 root = normalize_underlying_root(worker.get("config", {}).get("underlying") or worker.get("config", {}).get("symbol") or "HAL")
                 if root.upper() in sym.upper():
+                    matched = True
+            elif not matched and worker.get("template_key") == "strat_supertrend_momentum_v1":
+                if "NIFTY" in sym.upper():
                     matched = True
 
             if matched:
