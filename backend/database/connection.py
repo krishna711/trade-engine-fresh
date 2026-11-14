@@ -7,7 +7,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from backend.config import DB_URL, DEFAULT_FEED_PRIORITY, DEFAULT_LOT_SIZES
 from backend.database.models import (
     Base, Account, StrategyTemplate, StrategyInstance,
-    SymbolMapping, FeedBrokerStatus, SystemLog, Position, Order, Trade, TradeReport, User, TelegramSetting
+    SymbolMapping, FeedBrokerStatus, SystemLog, Position, Order, Trade, TradeReport, User, TelegramSetting, HistoricalCandle
 )
 
 
@@ -83,6 +83,14 @@ def check_and_migrate_db():
                 WHERE strategy_instance_id IN (
                     SELECT id FROM strategy_instances WHERE last_trade_status = 'CLOSED'
                 );
+            """))
+
+            # Migrate any existing high-frequency Candle Fetch logs into dedicated CANDLE_FETCH category
+            conn.execute(text("""
+                UPDATE system_logs
+                SET category = 'CANDLE_FETCH'
+                WHERE category = 'STRATEGY_DECISION'
+                  AND (message LIKE '%Candle Fetch%' OR message LIKE '%bar close:%');
             """))
     except Exception as e:
         print(f"[DB Migration Warning] {e}")

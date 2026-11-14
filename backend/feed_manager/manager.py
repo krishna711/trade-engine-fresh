@@ -13,7 +13,7 @@ from backend.feed_manager.brokers.fyers_feed import FyersFeedBroker
 from backend.core.events import event_bus
 from backend.core.symbol_mapper import symbol_mapper
 from backend.database.connection import SessionLocal
-from backend.database.models import FeedBrokerStatus, SystemLog
+from backend.database.models import FeedBrokerStatus, SystemLog, HistoricalCandle
 
 class OHLCBuilder:
     """In-memory streaming OHLC candle aggregator for 1m, 5m, 15m, 1h intervals"""
@@ -65,6 +65,35 @@ class OHLCBuilder:
     def get_bars(self, symbol: str, resolution: str = "5m", count: int = 50) -> List[Dict[str, Any]]:
         sym_candles = self.candles.get(symbol, {}).get(resolution, [])
         bars = [dict(b) for b in sym_candles[-count:]]
+
+        # If RAM cache has fewer than 10 bars, attempt to load persisted historical bars from DB
+        if len(bars) < 10:
+            try:
+                db = SessionLocal()
+                db_rows = db.query(HistoricalCandle).filter(
+                    HistoricalCandle.symbol == symbol,
+                    HistoricalCandle.resolution == resolution
+                ).order_by(HistoricalCandle.timestamp.desc()).limit(count).all()
+                if db_rows:
+                    db_rows.reverse()
+                    loaded = [
+                        {
+                            "symbol": r.symbol,
+                            "time": r.timestamp.isoformat(),
+                            "open": float(r.open),
+                            "high": float(r.high),
+                            "low": float(r.low),
+                            "close": float(r.close),
+                            "volume": int(r.volume or 0)
+                        }
+                        for r in db_rows
+                    ]
+                    self.candles.setdefault(symbol, {})[resolution] = loaded
+                    bars = [dict(b) for b in loaded[-count:]]
+                db.close()
+            except Exception:
+                pass
+
         # Include currently building bar if present
         curr = self.current_bars.get(symbol, {}).get(resolution)
         if curr:
@@ -354,6 +383,40 @@ class FeedManager:
                     self.ohlc_builder.candles[canonical_symbol][resolution] = [dict(b) for b in broker_bars[:-1]]
                     if broker_bars:
                         self.ohlc_builder.current_bars.setdefault(canonical_symbol, {})[resolution] = dict(broker_bars[-1])
+
+                # Asynchronously / safely persist into SQLite historical_candles
+                try:
+                    db = SessionLocal()
+                    for b in broker_bars:
+                        raw_t = b.get("time")
+                        if isinstance(raw_t, str):
+                            try:
+                                dt_val = datetime.datetime.fromisoformat(raw_t.replace("Z", "+00:00"))
+                            except Exception:
+                                continue
+                        else:
+                            dt_val = raw_t
+                        exists = db.query(HistoricalCandle.id).filter(
+                            HistoricalCandle.symbol == canonical_symbol,
+                            HistoricalCandle.resolution == resolution,
+                            HistoricalCandle.timestamp == dt_val
+                        ).first()
+                        if not exists:
+                            db.add(HistoricalCandle(
+                                symbol=canonical_symbol,
+                                resolution=resolution,
+                                timestamp=dt_val,
+                                open=float(b.get("open", 0.0)),
+                                high=float(b.get("high", 0.0)),
+                                low=float(b.get("low", 0.0)),
+                                close=float(b.get("close", 0.0)),
+                                volume=int(b.get("volume", 0))
+                            ))
+                    db.commit()
+                    db.close()
+                except Exception:
+                    pass
+
             return broker_bars
         return bars
 

@@ -94,29 +94,10 @@ class FyersFeedBroker(BaseFeedBroker):
         count: int = 50
     ) -> List[Dict[str, Any]]:
         base_price = self._current_prices.get(canonical_symbol, BASE_PRICES.get(canonical_symbol, 1000.0))
-        now = datetime.datetime.utcnow()
-        bars = []
-        step_min = 5 if "5" in resolution else (60 if "1h" in resolution or "60" in resolution else 1)
-
-        p = base_price * 0.98
-        for i in range(count, 0, -1):
-            bar_time = now - datetime.timedelta(minutes=i * step_min)
-            delta = (random.random() - 0.48) * (base_price * 0.005)
-            open_p = p
-            close_p = round(open_p + delta, 2)
-            high_p = round(max(open_p, close_p) + abs(random.random() * (base_price * 0.002)), 2)
-            low_p = round(min(open_p, close_p) - abs(random.random() * (base_price * 0.002)), 2)
-            vol = random.randint(1000, 50000)
-
-            bars.append({
-                "symbol": canonical_symbol,
-                "time": bar_time.isoformat(),
-                "open": open_p,
-                "high": high_p,
-                "low": low_p,
-                "close": close_p,
-                "volume": vol
-            })
-            p = close_p
-
-        return bars
+        from backend.feed_manager.market_hours import build_market_session_bars
+        return build_market_session_bars(
+            symbol=canonical_symbol,
+            resolution=resolution,
+            count=max(count, 120),
+            base_price=float(base_price)
+        )[-count:]

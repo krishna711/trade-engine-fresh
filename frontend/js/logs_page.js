@@ -84,14 +84,16 @@ class LogsManager {
             const isErr = l.level === "ERROR";
             const isSucc = l.level === "SUCCESS";
             const isData = l.level === "DATA_RECEIVING";
+            const isCandle = l.category === "CANDLE_FETCH";
 
-            const badgeCls = isErr ? 'status-error' : (isSucc ? 'status-running' : (isData ? 'status-pill' : 'status-stopped'));
+            const badgeCls = isErr ? 'status-error' : (isSucc ? 'status-running' : (isData ? 'status-pill' : (isCandle ? 'status-stopped' : 'status-stopped')));
             const rowHighlight = (isErr && !l.is_dismissed) ? 'style="background: rgba(239,68,68,0.08);"' : '';
+            const catColor = isCandle ? 'color: #818cf8;' : (l.category === 'STRATEGY_DECISION' ? 'color: #38bdf8;' : 'color: var(--text-secondary);');
 
             return `
                 <tr ${rowHighlight}>
                     <td style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted);">${l.timestamp}</td>
-                    <td><span style="font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);">${l.category}</span></td>
+                    <td><span style="font-size: 0.75rem; font-weight: 600; ${catColor}">${l.category}</span></td>
                     <td><span class="status-pill ${badgeCls}">${l.level}</span></td>
                     <td>
                         <span style="font-family: var(--font-mono); font-size: 0.8rem;">

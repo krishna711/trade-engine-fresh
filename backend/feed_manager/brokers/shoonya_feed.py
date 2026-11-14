@@ -129,39 +129,13 @@ class ShoonyaFeedBroker(BaseFeedBroker):
                 last_bar["low"] = min(last_bar["low"], curr_price)
             return [dict(b) for b in bars[-count:]]
 
-        now = datetime.datetime.utcnow()
-        bars = []
-        step_min = 3 if "3" in resolution else (5 if "5" in resolution else (60 if "1h" in resolution or "60" in resolution else 1))
-
-        seed_src = f"{canonical_symbol}_{now.strftime('%Y%m%d')}_{resolution}"
-        seed_int = int(hashlib.md5(seed_src.encode()).hexdigest()[:8], 16)
-        rng = random.Random(seed_int)
-
-        p = curr_price * 0.99
-        for i in range(count, 0, -1):
-            bar_time = now - datetime.timedelta(minutes=i * step_min)
-            delta = (rng.random() - 0.49) * (curr_price * 0.003)
-            open_p = p
-            close_p = round(open_p + delta, 2)
-            high_p = round(max(open_p, close_p) + abs(rng.random() * (curr_price * 0.0015)), 2)
-            low_p = round(min(open_p, close_p) - abs(rng.random() * (curr_price * 0.0015)), 2)
-            vol = rng.randint(1000, 50000)
-
-            bars.append({
-                "symbol": canonical_symbol,
-                "time": bar_time.isoformat(),
-                "open": open_p,
-                "high": high_p,
-                "low": low_p,
-                "close": close_p,
-                "volume": vol
-            })
-            p = close_p
-
-        if bars and curr_price > 0:
-            bars[-1]["close"] = curr_price
-            bars[-1]["high"] = max(bars[-1]["high"], curr_price)
-            bars[-1]["low"] = min(bars[-1]["low"], curr_price)
+        from backend.feed_manager.market_hours import build_market_session_bars
+        bars = build_market_session_bars(
+            symbol=canonical_symbol,
+            resolution=resolution,
+            count=max(count, 120),
+            base_price=curr_price
+        )
 
         self._cached_ohlc[cache_key] = bars
         return [dict(b) for b in bars[-count:]]

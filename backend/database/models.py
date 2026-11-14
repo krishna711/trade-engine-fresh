@@ -1,6 +1,6 @@
 import datetime
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, DateTime, Text, JSON, ForeignKey, Enum
+    Column, Integer, String, Float, Boolean, DateTime, Text, JSON, ForeignKey, Enum, UniqueConstraint, Index
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -302,4 +302,29 @@ class TelegramSetting(Base):
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
     user = relationship("User", back_populates="telegram_setting")
+
+
+class HistoricalCandle(Base):
+    """
+    Persistent store for completed OHLC candles across sessions and engine restarts.
+    Allows accurate weekend and non-market hours charting, Floor Pivot calculation,
+    and technical analysis without active market data feed connection.
+    """
+    __tablename__ = "historical_candles"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(100), nullable=False, index=True)
+    resolution = Column(String(10), nullable=False, index=True)  # "1m", "3m", "5m", "15m", "1h"
+    timestamp = Column(DateTime, nullable=False, index=True)
+    open = Column(Float, nullable=False)
+    high = Column(Float, nullable=False)
+    low = Column(Float, nullable=False)
+    close = Column(Float, nullable=False)
+    volume = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("symbol", "resolution", "timestamp", name="uq_candle_sym_res_time"),
+        Index("ix_candle_query", "symbol", "resolution", "timestamp"),
+    )
 

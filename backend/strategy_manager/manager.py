@@ -393,10 +393,12 @@ class StrategySupervisor:
 
                         if msg_type == "DECISION_LOG":
                             log_data = msg["data"]
-                            step = log_data.get("step")
-                            details = log_data.get("details")
+                            step = str(log_data.get("step") or "")
+                            details = str(log_data.get("details") or "")
                             level = "SUCCESS" if ("MATCH" in step or "FILLED" in step or "ACTIVE" in step) else "INFO"
-                            self._log_strategy_decision(inst_id, level, f"{step} - {details}")
+                            is_candle_fetch = ("Candle Fetch" in step) or ("bar close:" in details)
+                            category = "CANDLE_FETCH" if is_candle_fetch else "STRATEGY_DECISION"
+                            self._log_strategy_decision(inst_id, level, f"{step} - {details}", category=category)
 
                         elif msg_type == "ORDER":
                             ord_data = msg["data"]
@@ -924,11 +926,18 @@ class StrategySupervisor:
                 print(f"[StrategySupervisor] MTM loop error: {e}")
 
 
-    def _log_strategy_decision(self, strategy_id: int, level: str, message: str, is_dismissed: bool = True):
+    def _log_strategy_decision(
+        self,
+        strategy_id: int,
+        level: str,
+        message: str,
+        is_dismissed: bool = True,
+        category: str = "STRATEGY_DECISION"
+    ):
         db = SessionLocal()
         try:
             log = SystemLog(
-                category="STRATEGY_DECISION",
+                category=category,
                 level=level,
                 message=message,
                 strategy_id=strategy_id,
@@ -942,6 +951,7 @@ class StrategySupervisor:
             asyncio.create_task(event_bus.publish("strategy.event", {
                 "id": log.id,
                 "strategy_id": strategy_id,
+                "category": category,
                 "level": level,
                 "message": message,
                 "timestamp": log.timestamp.isoformat(),

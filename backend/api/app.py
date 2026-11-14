@@ -1347,19 +1347,23 @@ async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
 
     ohlc = await feed_manager.get_ohlc(symbol, resolution=tf, count=40)
     
-    # Calculate strategy intraday PnL series
+    # Calculate strategy intraday / session PnL series
+    ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    now_ist = datetime.datetime.now(ist_tz)
     today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    # Look back 7 days on weekends or pre-market so completed trading sessions show analysis
+    lookback = datetime.timedelta(days=7) if (now_ist.weekday() >= 5 or now_ist.hour < 9) else datetime.timedelta(days=1)
     
-    # Check trade reports for this strategy today
+    # Check trade reports for this strategy
     reports = db.query(TradeReport).filter(
         TradeReport.strategy_instance_id == id,
-        TradeReport.created_at >= today_start
+        TradeReport.created_at >= today_start - lookback
     ).order_by(TradeReport.created_at.asc()).all()
     
     # Also check trades table
     trades = db.query(Trade).filter(
         Trade.strategy_instance_id == id,
-        Trade.timestamp >= today_start
+        Trade.timestamp >= today_start - lookback
     ).order_by(Trade.timestamp.asc()).all()
     
     has_active_legs = any(
@@ -1373,8 +1377,6 @@ async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
     unrealized_pnl = float(inst.unrealized_pnl or 0.0)
     
     # Build PnL progression
-    ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
-    now_ist = datetime.datetime.now(ist_tz)
     
     if not has_trades or (total_pnl == 0.0 and not reports):
         # Flat 0.00 curve for today when no trade has occurred
@@ -1541,7 +1543,7 @@ async def get_strategy_chart_data(
         today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         db_trades = db.query(Trade).filter(
             Trade.strategy_instance_id == inst.id,
-            Trade.timestamp >= today_start - datetime.timedelta(days=2),
+            Trade.timestamp >= today_start - datetime.timedelta(days=7),
         ).order_by(Trade.timestamp.asc()).all()
         for t in db_trades:
             dt_t = t.timestamp.replace(tzinfo=datetime.timezone.utc).astimezone(ist_tz) if t.timestamp else datetime.datetime.now(ist_tz)
@@ -1775,15 +1777,17 @@ def get_strategy_recent_trades(id: int, db: Session = Depends(get_db)):
     }
 
 @app.get("/api/strategies/{id}/logs")
-def get_strategy_chronological_logs(id: int, db: Session = Depends(get_db)):
-    """Consolidated strategy-level audit timeline with step-by-step progress"""
-    logs = db.query(SystemLog).filter(
-        SystemLog.strategy_id == id
-    ).order_by(SystemLog.id.desc()).limit(100).all()
+def get_strategy_chronological_logs(id: int, include_candle_fetch: bool = False, db: Session = Depends(get_db)):
+    """Consolidated strategy-level audit timeline with step-by-step progress, isolating candle fetch noise"""
+    q = db.query(SystemLog).filter(SystemLog.strategy_id == id)
+    if not include_candle_fetch:
+        q = q.filter(SystemLog.category != "CANDLE_FETCH")
+    logs = q.order_by(SystemLog.id.desc()).limit(100).all()
 
     return [
         {
             "id": l.id,
+            "category": l.category,
             "level": l.level,
             "message": l.message,
             "timestamp": l.timestamp.strftime("%H:%M:%S")
@@ -1996,7 +2000,7 @@ def update_lot_sizes_config(payload: Dict[str, int] = Body(...), db: Session = D
 # ----------------- LOGS & EVENTS PAGE -----------------
 @app.get("/api/logs")
 def get_system_logs(
-    category: Optional[str] = None, # BROKER_API, FEED_SUBSCRIPTION, STRATEGY_DECISION
+    category: Optional[str] = None, # BROKER_API, FEED_SUBSCRIPTION, STRATEGY_DECISION, CANDLE_FETCH
     level: Optional[str] = None,
     strategy_id: Optional[int] = None,
     limit: int = 150,
@@ -2004,14 +2008,18 @@ def get_system_logs(
 ):
     """
     Clear Log - No Noise.
-    Divided into three parts:
+    Divided into four categories:
     1. Broker API Log - ERROR / SUCCESS
     2. Feed Subscription - ERROR / SUCCESS / DATA RECEIVING (Includes OHLC fetch)
-    3. Strategy Decision Log
+    3. Strategy Decision Log (Actionable trade signals, entries, exits, order updates)
+    4. Candle Fetch Log (Isolated periodic polling bars)
     """
     q = db.query(SystemLog)
     if category:
         q = q.filter(SystemLog.category == category.upper())
+    else:
+        # Default 'All Logs' view excludes high-frequency CANDLE_FETCH logs to eliminate clutter
+        q = q.filter(SystemLog.category != "CANDLE_FETCH")
     if level:
         q = q.filter(SystemLog.level == level.upper())
     if strategy_id:

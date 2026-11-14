@@ -42,7 +42,7 @@ Client Cards
 
 Strategy Lists
 -- Columns to show
--- -- Client Name(with status active/inactive
+-- -- Client Name(with status active/inactive)
 -- -- Strategy Name Admin (admin user will see this name)
 -- -- Strategy Name User (non admin user will see this only without slug everywhere in the application)
 -- -- Status - Running/Stopped
