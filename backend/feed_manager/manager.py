@@ -231,15 +231,17 @@ class FeedManager:
         
         await event_bus.publish("feed.status", self.get_status())
 
-        # Telegram notification: Feed failover event (Critical)
+        # Telegram notification: Feed failover event (Critical) - Only during active market hours
         try:
-            from backend.core.telegram_notifier import telegram_notifier
-            asyncio.create_task(telegram_notifier.notify_critical(
-                title=f"Market Feed Failover: {old_broker_name} ➔ {next_broker_name}",
-                details=f"Reason: {reason}. All {len(self.subscribed_symbols)} subscriptions migrated to {next_broker_name}.",
-                component="Market Data Feed Manager",
-                entity=f"Primary Feed: {next_broker_name}"
-            ))
+            from backend.feed_manager.market_hours import is_any_market_open
+            if is_any_market_open():
+                from backend.core.telegram_notifier import telegram_notifier
+                asyncio.create_task(telegram_notifier.notify_critical(
+                    title=f"Market Feed Failover: {old_broker_name} ➔ {next_broker_name}",
+                    details=f"Reason: {reason}. All {len(self.subscribed_symbols)} subscriptions migrated to {next_broker_name}.",
+                    component="Market Data Feed Manager",
+                    entity=f"Primary Feed: {next_broker_name}"
+                ))
         except Exception as tg_err:
             pass
 
@@ -342,20 +344,26 @@ class FeedManager:
                     asyncio.run_coroutine_threadsafe(self._select_best_broker(), self._loop)
 
     async def _health_monitor_loop(self):
-        """Continuously checks broker heartbeats and performs automatic failover if hung"""
+        """Continuously checks broker heartbeats and performs automatic failover if hung during active market hours"""
         while self._is_running:
             try:
                 await asyncio.sleep(2.0)
                 # Check expiry auto-roll once every 5 minutes
                 symbol_mapper.check_and_roll_expiries()
 
-                if self.active_broker:
+                from backend.feed_manager.market_hours import is_any_market_open
+                market_active = is_any_market_open()
+
+                if market_active and self.active_broker:
                     hb = self.active_broker.last_heartbeat
                     if hb:
                         diff = (datetime.datetime.utcnow() - hb).total_seconds()
                         if diff > FEED_HEARTBEAT_TIMEOUT_SEC:
                             print(f"[FeedManager] Active broker {self.active_broker_name} heartbeat timed out ({diff:.1f}s)! Triggering failover...")
                             await self.failover_to_next(f"Heartbeat timeout ({diff:.1f}s)")
+                elif not market_active and self.active_broker:
+                    # During non-market hours and weekends, keep heartbeat fresh so broker doesn't failover due to zero market ticks
+                    self.active_broker.last_heartbeat = datetime.datetime.utcnow()
 
                 self._update_db_broker_status()
             except asyncio.CancelledError:

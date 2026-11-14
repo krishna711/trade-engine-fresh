@@ -61,6 +61,19 @@ def is_market_open(symbol: str, now_dt: Optional[datetime.datetime] = None) -> b
     return open_time <= curr_time <= close_time
 
 
+def is_any_market_open(now_dt: Optional[datetime.datetime] = None) -> bool:
+    """
+    Returns True if ANY Indian financial exchange (NSE, BSE, MCX) is currently in an active trading session.
+    Returns False on weekends (Saturday & Sunday) and overnight hours (between 23:30 and 09:00 IST).
+    """
+    dt_ist = get_current_ist(now_dt)
+    if dt_ist.weekday() >= 5:  # Saturday (5) or Sunday (6)
+        return False
+    curr_time = dt_ist.time()
+    # MCX opens earliest (09:00 IST) and closes latest (23:30 IST) among Indian exchanges
+    return MCX_MARKET_OPEN <= curr_time <= MCX_MARKET_CLOSE
+
+
 def get_last_completed_trading_session_anchor(
     symbol: str,
     resolution: str = "5m",
