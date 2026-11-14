@@ -11,6 +11,22 @@ from backend.database.models import User, TelegramSetting, Account, StrategyInst
 
 logger = logging.getLogger("TelegramNotifier")
 
+IST_TZ = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+def get_now_ist() -> datetime.datetime:
+    """Returns current datetime in Indian Standard Time (IST)"""
+    return datetime.datetime.now(IST_TZ)
+
+def is_market_trading_day(dt: Optional[datetime.date] = None) -> bool:
+    """
+    Returns True if the date is a regular exchange trading day (Mon-Fri).
+    Returns False on Saturdays and Sundays when all financial markets are closed.
+    """
+    d = dt or get_now_ist().date()
+    if d.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+        return False
+    return True
+
 
 class TelegramNotifier:
     """
@@ -76,7 +92,7 @@ class TelegramNotifier:
         🚨 CRITICAL Format:
         System-related failures, feed dropouts, strategy crashes, unhandled engine exceptions.
         """
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = get_now_ist().strftime("%Y-%m-%d %H:%M:%S")
         safe_title = html.escape(str(title))
         safe_details = html.escape(str(details))
         safe_comp = html.escape(str(component))
@@ -108,7 +124,7 @@ class TelegramNotifier:
         ⚠️ WARNING Format:
         Pre-market checks, token expiry, 1-hour pre-strategy start login reminders.
         """
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = get_now_ist().strftime("%Y-%m-%d %H:%M:%S")
         safe_title = html.escape(str(title))
         safe_acc = html.escape(str(account_info))
         safe_strat = html.escape(str(strategy_name))
@@ -147,7 +163,7 @@ class TelegramNotifier:
         ℹ️ INFO Format for Orders:
         Order placed, filled, or updated.
         """
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = get_now_ist().strftime("%Y-%m-%d %H:%M:%S")
         side_upper = str(side).upper()
         status_upper = str(status).upper()
         mode_upper = str(mode).upper()
@@ -186,7 +202,7 @@ class TelegramNotifier:
         """
         ℹ️ / 🟢 / 🔴 INFO Format for Closed Trade Cycles with PnL.
         """
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_str = get_now_ist().strftime("%Y-%m-%d %H:%M:%S")
         safe_strat = html.escape(str(strategy_name))
         safe_client = html.escape(str(client_id))
         safe_sym = html.escape(str(symbol))
@@ -410,16 +426,22 @@ class TelegramNotifier:
         token = str(creds.get("token") or "").strip()
         token_date = str(creds.get("token_date") or "").strip()
 
-        today_iso = datetime.date.today().isoformat()
-        today_compact = datetime.date.today().strftime("%Y%m%d")
+        today_ist = get_now_ist().date()
+        today_iso = today_ist.isoformat()
+        today_compact = today_ist.strftime("%Y%m%d")
 
         # 1. Primary check: token exists and token_date matches today
         has_token_today = bool(token) and (token_date == today_iso or token_date == today_compact)
 
-        # 2. Secondary check: token exists and last_login_at is today
+        # 2. Secondary check: token exists and last_login_at is today (in IST)
         if not has_token_today and token and acc.last_login_at:
             try:
-                if acc.last_login_at.date() == datetime.date.today():
+                dt_login = acc.last_login_at
+                if dt_login.tzinfo is None:
+                    dt_login = dt_login.replace(tzinfo=datetime.timezone.utc).astimezone(IST_TZ)
+                else:
+                    dt_login = dt_login.astimezone(IST_TZ)
+                if dt_login.date() == today_ist:
                     has_token_today = True
             except Exception:
                 pass
@@ -445,13 +467,18 @@ class TelegramNotifier:
         Synchronous check for strategies starting within 1 hour.
         Warns if mapped broker accounts are not logged in or have missing tokens.
         Skips:
+        - Weekends (Saturday & Sunday) when financial markets are closed
         - Paper trading strategies (inst.paper_mode == True)
         - Stopped strategies (inst.status == 'STOPPED')
         - Paper trading accounts (acc.paper_mode == True)
         - Inactive accounts (acc.is_active == False)
         - Accounts that already have a valid session token generated for today.
         """
-        now = datetime.datetime.now()
+        now = get_now_ist()
+        # Financial markets are completely closed on weekends; never send login alerts
+        if not is_market_trading_day(now.date()):
+            return []
+
         today_date = now.strftime("%Y%m%d")
 
         db = SessionLocal()
@@ -529,13 +556,18 @@ class TelegramNotifier:
 
     def _check_premarket_sync(self):
         """
-        Pre-market morning check (runs between 08:30 and 09:15 AM).
+        Pre-market morning check (runs between 08:30 and 09:15 AM IST).
         Warns for any active LIVE broker account missing today's token.
+        Skips weekends (Saturday & Sunday) when financial markets are closed.
         """
-        now = datetime.datetime.now()
+        now = get_now_ist()
+        # Financial markets are completely closed on weekends; never send pre-market alerts
+        if not is_market_trading_day(now.date()):
+            return []
+
         today_date = now.strftime("%Y%m%d")
 
-        # Only check between 08:30:00 and 09:14:59
+        # Only check between 08:30:00 and 09:14:59 IST
         if not (datetime.time(8, 30) <= now.time() < datetime.time(9, 15)):
             return []
 
