@@ -34,6 +34,7 @@ class StatusManager {
         try {
             const res = await fetch("/api/status/feed");
             const status = await res.json();
+            this.lastStatus = status;
             this.renderFeedBrokers(status);
         } catch (e) {
             console.error("Failed to load feed status:", e);
@@ -42,6 +43,7 @@ class StatusManager {
 
     renderFeedBrokers(status) {
         if (!this.brokerCardsEl) return;
+        this.lastStatus = status;
         const brokers = Object.values(status.brokers || {});
 
         this.brokerCardsEl.innerHTML = brokers.map(b => {
@@ -50,10 +52,13 @@ class StatusManager {
             const priorityIdx = (status.priority || []).indexOf(b.name) + 1;
 
             return `
-                <div class="client-card" style="border: ${isAct ? '2px solid var(--accent-green)' : '1px solid var(--border-color)'};">
+                <div class="client-card feed-broker-card ${isAct ? 'feed-card-active' : ''}" 
+                     onclick="statusManager.switchToBroker('${b.name}')"
+                     title="${isAct ? 'Currently Active Feed Source' : 'Click to switch active feed to ' + b.name}"
+                     style="border: ${isAct ? '2px solid var(--accent-green)' : '1px solid var(--border-color)'}; cursor: pointer; transition: all 0.2s ease;">
                     <div class="client-card-header">
                         <div>
-                            <h3>
+                            <h3 style="display: flex; align-items: center; gap: 0.5rem;">
                                 ${b.name}
                                 ${isAct ? '<span class="status-pill status-running" style="font-size:0.65rem;">ACTIVE SOURCE</span>' : '<span style="font-size:0.65rem; color:var(--text-muted);">(Standby)</span>'}
                             </h3>
@@ -75,12 +80,66 @@ class StatusManager {
                         </div>
                     </div>
 
-                    <div style="font-size:0.7rem; color:var(--text-muted);">
+                    <div style="font-size:0.7rem; color:var(--text-muted); margin-bottom: 0.75rem;">
                         Last Heartbeat: ${b.last_heartbeat ? new Date(b.last_heartbeat).toLocaleTimeString() : 'N/A'}
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end; align-items: center; padding-top: 0.25rem;">
+                        ${isAct ? `
+                            <span class="action-btn-sm" style="background: rgba(16, 185, 129, 0.15); color: var(--accent-green); border: 1px solid var(--accent-green); pointer-events: none; font-size: 0.75rem; font-weight: 600;">
+                                ✓ Active Feed Source
+                            </span>
+                        ` : `
+                            <button class="action-btn-sm btn-switch-broker" id="btn-switch-${b.name.toLowerCase()}"
+                                    style="background: var(--accent-blue); color: white; border: none; cursor: pointer; font-size: 0.75rem; padding: 4px 12px; border-radius: 4px; font-weight: 500;"
+                                    onclick="event.stopPropagation(); statusManager.switchToBroker('${b.name}')">
+                                ⚡ Switch to ${b.name}
+                            </button>
+                        `}
                     </div>
                 </div>
             `;
         }).join("");
+    }
+
+    async switchToBroker(brokerName) {
+        if (!brokerName) return;
+        const currentActive = (this.lastStatus && this.lastStatus.active_broker) || "";
+        if (currentActive.toUpperCase() === brokerName.toUpperCase()) {
+            return;
+        }
+
+        const btn = document.getElementById(`btn-switch-${brokerName.toLowerCase()}`);
+        const originalText = btn ? btn.innerText : "";
+        if (btn) {
+            btn.innerText = "Switching...";
+            btn.disabled = true;
+        }
+
+        try {
+            const res = await fetch("/api/status/feed/switch", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ broker: brokerName })
+            });
+            const data = await res.json();
+            if (data.success) {
+                await this.loadFeedStatus();
+            } else {
+                alert("Failed to switch broker: " + (data.detail || data.error || "Unknown error"));
+                if (btn) {
+                    btn.innerText = originalText;
+                    btn.disabled = false;
+                }
+            }
+        } catch (e) {
+            console.error("Failed to switch broker:", e);
+            alert("Error switching to " + brokerName + ": " + e);
+            if (btn) {
+                btn.innerText = originalText;
+                btn.disabled = false;
+            }
+        }
     }
 
     async triggerFailover() {

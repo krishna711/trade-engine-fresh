@@ -1811,6 +1811,42 @@ async def trigger_feed_failover(db: Session = Depends(get_db)):
         next_broker = st.get("active_broker", "SHOONYA")
     return {"success": True, "active_broker": next_broker}
 
+@app.post("/api/status/feed/switch")
+async def switch_active_feed_broker(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """
+    Directly switches the active feed source to the specified broker (XTS, SHOONYA, FYERS).
+    Updates priority list so the chosen broker becomes primary (#1).
+    Works in both unified in-process mode and multi-terminal IPC mode.
+    """
+    target = str(payload.get("broker") or payload.get("target") or "XTS").strip().upper()
+    valid_brokers = ["XTS", "SHOONYA", "FYERS"]
+    if target not in valid_brokers:
+        raise HTTPException(status_code=400, detail=f"Invalid broker '{target}'. Must be one of: {valid_brokers}")
+
+    # 1. Update database priority and statuses immediately
+    statuses = db.query(FeedBrokerStatus).all()
+    if statuses:
+        for st in statuses:
+            if st.broker.upper() == target:
+                st.is_active = True
+                st.priority = 1
+            else:
+                st.is_active = False
+                if st.priority == 1:
+                    st.priority = 2
+        db.commit()
+
+    # 2. In-process FeedManager or Multi-Terminal EventBus IPC
+    if feed_manager._is_running and feed_manager.brokers:
+        active = await feed_manager.switch_broker(target, "Triggered via Status Card Selection")
+    else:
+        await event_bus.publish("feed.switch", target)
+        await asyncio.sleep(0.5)
+        st = get_effective_feed_status(db)
+        active = st.get("active_broker", target)
+
+    return {"success": True, "active_broker": active, "message": f"Feed source switched to {active}"}
+
 @app.post("/api/status/feed/priority")
 async def set_feed_priority(payload: Dict[str, Any] = Body(...)):
     new_priority = payload.get("priority", [])

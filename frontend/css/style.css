@@ -614,6 +614,27 @@ main.main-content {
     border-color: rgba(59, 130, 246, 0.35);
 }
 
+.feed-broker-card {
+    cursor: pointer;
+    position: relative;
+    user-select: none;
+}
+
+.feed-broker-card:hover {
+    border-color: var(--accent-blue) !important;
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.22);
+}
+
+.feed-broker-card.feed-card-active {
+    border: 2px solid var(--accent-green) !important;
+    background: linear-gradient(180deg, rgba(16, 185, 129, 0.05) 0%, rgba(15, 20, 31, 1) 100%);
+}
+
+.feed-broker-card.feed-card-active:hover {
+    border-color: var(--accent-green) !important;
+    box-shadow: 0 6px 18px rgba(16, 185, 129, 0.25);
+}
+
 .card-top-row {
     display: flex;
     align-items: center;

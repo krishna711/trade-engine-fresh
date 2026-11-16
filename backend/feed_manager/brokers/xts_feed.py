@@ -79,6 +79,7 @@ class XTSFeedBroker(BaseFeedBroker):
         self.token: Optional[str] = None
         self.user_id: Optional[str] = None
         self.is_live_connected: bool = False
+        self._should_reconnect: bool = True
         self._last_real_tick_time: Optional[datetime.datetime] = None
         self._streaming_task: Optional[asyncio.Task] = None
         self._sio_client = None
@@ -100,6 +101,7 @@ class XTSFeedBroker(BaseFeedBroker):
         - Launches live Socket.IO connection in dedicated daemon thread to stream real decompressed binary ticks
         - Automatically subscribes to all default and active engine instruments
         """
+        self._should_reconnect = True
         try:
             if self.api_key and self.api_secret:
                 login_url = f"{self.api_url}/auth/login"
@@ -125,12 +127,13 @@ class XTSFeedBroker(BaseFeedBroker):
                         # Fetch initial real exchange quotes snapshot
                         await self._fetch_initial_snapshot_quotes()
                         # Start live Socket.IO connection via synchronous client in a background daemon thread
-                        self._sio_thread = threading.Thread(
-                            target=self._run_live_socketio_sync,
-                            name="XTS-SocketIO-Thread",
-                            daemon=True
-                        )
-                        self._sio_thread.start()
+                        if not self._sio_thread or not self._sio_thread.is_alive():
+                            self._sio_thread = threading.Thread(
+                                target=self._run_live_socketio_sync,
+                                name="XTS-SocketIO-Thread",
+                                daemon=True
+                            )
+                            self._sio_thread.start()
                     else:
                         error_msg = data.get("description") or data.get("message") or resp.text
                         print(f"[XTS] Live Auth Failed ({resp.status_code}): {error_msg}. Using fallback simulation.")
@@ -163,7 +166,7 @@ class XTSFeedBroker(BaseFeedBroker):
         base_host = f"{parsed.scheme}://{parsed.netloc}"
         socket_path = "apibinarymarketdata/socket.io"
 
-        while self.is_connected and self.is_live_connected:
+        while self._should_reconnect and self.is_live_connected:
             try:
                 sio = socketio.Client(
                     reconnection=True,
@@ -310,7 +313,7 @@ class XTSFeedBroker(BaseFeedBroker):
                 print(f"[XTS Socket.IO] Connecting to {base_host} (path: {socket_path}, transports: websocket)...")
 
                 def _keepalive_loop():
-                    while self.is_connected and self.is_live_connected:
+                    while self._should_reconnect and self.is_live_connected:
                         import time
                         time.sleep(10)
                         try:
@@ -331,7 +334,7 @@ class XTSFeedBroker(BaseFeedBroker):
                 )
                 sio.wait()
             except Exception as e:
-                if not self.is_connected or not self.is_live_connected:
+                if not self._should_reconnect or not self.is_live_connected:
                     break
                 print(f"[XTS Socket.IO] Client loop error: {e}. Retrying in 5 seconds...")
                 import time
@@ -589,6 +592,7 @@ class XTSFeedBroker(BaseFeedBroker):
             pass
 
     async def disconnect(self):
+        self._should_reconnect = False
         self.is_connected = False
         self.is_live_connected = False
         self._clean_unsubscribe_all()

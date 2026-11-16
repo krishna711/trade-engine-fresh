@@ -20,6 +20,7 @@ async def main():
     print("=" * 65)
     await event_bus.start_ipc_server()
     event_bus.subscribe("feed.failover", lambda reason: asyncio.create_task(feed_manager.failover_to_next(reason)))
+    event_bus.subscribe("feed.switch", lambda target: asyncio.create_task(feed_manager.switch_broker(target, "User selected from UI card")))
     await feed_manager.start()
     print("[*] Feed Manager active. Press CTRL+C to stop.")
     try:

@@ -247,6 +247,37 @@ class FeedManager:
 
         return self.active_broker_name
 
+    async def switch_broker(self, target_broker: str, reason: str = "Manual user selection") -> str:
+        """Explicitly switches active feed source to the designated broker (e.g. XTS, SHOONYA, FYERS)"""
+        target = target_broker.upper().strip()
+        if target not in self.brokers:
+            print(f"[FeedManager] Invalid target broker: {target}")
+            return self.active_broker_name or "XTS"
+
+        old_broker_name = self.active_broker_name
+        self.active_broker_name = target
+        self.active_broker = self.brokers[target]
+
+        # Connect target broker if not connected
+        if not self.active_broker.is_connected:
+            await self.active_broker.connect()
+
+        self.active_broker.last_heartbeat = datetime.datetime.utcnow()
+
+        if self.subscribed_symbols:
+            await self.active_broker.subscribe(self.subscribed_symbols)
+
+        # Place target at index 0 of priority_list so it remains primary priority
+        if target in self.priority_list:
+            self.priority_list.remove(target)
+            self.priority_list.insert(0, target)
+
+        self._update_db_broker_status()
+        self._log_event("SUCCESS", f"Feed source switched to {target} (Previous: {old_broker_name}). {reason}")
+
+        await event_bus.publish("feed.status", self.get_status())
+        return self.active_broker_name
+
     async def set_priority(self, new_priority: List[str]):
         """Dynamically update priority order"""
         self.priority_list = [p.upper() for p in new_priority if p.upper() in self.brokers]
