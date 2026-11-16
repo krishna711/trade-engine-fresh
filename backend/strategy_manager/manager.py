@@ -78,8 +78,9 @@ class StrategySupervisor:
             self._mtm_sync_task.cancel()
 
         for inst_id in list(self.active_workers.keys()):
-            await self.stop_strategy(inst_id)
-        print("[StrategyManager] Supervisor stopped.")
+            # Terminate child worker container cleanly without wiping database status to STOPPED
+            await self.stop_strategy(inst_id, update_db=False)
+        print("[StrategyManager] Supervisor stopped (persistent strategy statuses maintained).")
 
 
     async def _auto_start_saved_strategies(self):
@@ -96,6 +97,40 @@ class StrategySupervisor:
 
         for sid in strat_ids:
             await self.start_strategy(sid)
+
+    async def start_all_strategies(self) -> List[int]:
+        """Starts all saved strategy instances and ensures their persistent status is RUNNING"""
+        strat_ids = []
+        db = SessionLocal()
+        try:
+            instances = db.query(StrategyInstance).all()
+            strat_ids = [inst.id for inst in instances]
+        finally:
+            db.close()
+
+        started = []
+        for sid in strat_ids:
+            ok = await self.start_strategy(sid)
+            if ok:
+                started.append(sid)
+        return started
+
+    async def stop_all_strategies(self) -> List[int]:
+        """Stops all strategy instances explicitly and sets their persistent status to STOPPED"""
+        strat_ids = []
+        db = SessionLocal()
+        try:
+            instances = db.query(StrategyInstance).all()
+            strat_ids = [inst.id for inst in instances]
+        finally:
+            db.close()
+
+        stopped = []
+        for sid in strat_ids:
+            ok = await self.stop_strategy(sid, update_db=True)
+            if ok:
+                stopped.append(sid)
+        return stopped
 
     async def start_strategy(self, instance_id: int) -> bool:
         if instance_id in self.active_workers:
@@ -221,9 +256,19 @@ class StrategySupervisor:
         finally:
             db.close()
 
-    async def stop_strategy(self, instance_id: int) -> bool:
+    async def stop_strategy(self, instance_id: int, update_db: bool = True) -> bool:
         worker = self.active_workers.get(instance_id)
         if not worker:
+            if update_db:
+                # Still ensure DB status is STOPPED if requested explicitly
+                db = SessionLocal()
+                try:
+                    inst = db.query(StrategyInstance).filter(StrategyInstance.id == instance_id).first()
+                    if inst and inst.status != "STOPPED":
+                        inst.status = "STOPPED"
+                        db.commit()
+                finally:
+                    db.close()
             return True
 
         try:
@@ -238,27 +283,28 @@ class StrategySupervisor:
 
         self.active_workers.pop(instance_id, None)
 
-        db = SessionLocal()
-        try:
-            inst = db.query(StrategyInstance).filter(StrategyInstance.id == instance_id).first()
-            if inst:
-                inst.status = "STOPPED"
-                # If there are no actively filled legs, mark trade status CLOSED and clear unrealized MTM
-                has_filled = any(l.get("status") == "FILLED" and l.get("exit") is None for l in (inst.legs_info or []))
-                if not has_filled:
-                    inst.last_trade_status = "CLOSED"
-                    inst.unrealized_pnl = 0.0
-                    inst.total_pnl = inst.realized_pnl
-                    if inst.legs_info:
-                        for l in inst.legs_info:
-                            if l.get("status") in ["PENDING", "SENT"]:
-                                l["status"] = "CLOSED"
-                        flag_modified(inst, "legs_info")
-                db.commit()
-        finally:
-            db.close()
+        if update_db:
+            db = SessionLocal()
+            try:
+                inst = db.query(StrategyInstance).filter(StrategyInstance.id == instance_id).first()
+                if inst:
+                    inst.status = "STOPPED"
+                    # If there are no actively filled legs, mark trade status CLOSED and clear unrealized MTM
+                    has_filled = any(l.get("status") == "FILLED" and l.get("exit") is None for l in (inst.legs_info or []))
+                    if not has_filled:
+                        inst.last_trade_status = "CLOSED"
+                        inst.unrealized_pnl = 0.0
+                        inst.total_pnl = inst.realized_pnl
+                        if inst.legs_info:
+                            for l in inst.legs_info:
+                                if l.get("status") in ["PENDING", "SENT"]:
+                                    l["status"] = "CLOSED"
+                            flag_modified(inst, "legs_info")
+                    db.commit()
+            finally:
+                db.close()
 
-        self._log_strategy_decision(instance_id, "INFO", "Strategy process container stopped")
+            self._log_strategy_decision(instance_id, "INFO", "Strategy process container stopped")
         return True
 
     async def update_strategy_config(self, instance_id: int, new_config: Dict[str, Any]) -> bool:

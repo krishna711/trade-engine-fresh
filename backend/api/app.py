@@ -1213,6 +1213,16 @@ async def stop_strategy_instance(id: int):
     success = await strategy_supervisor.stop_strategy(id)
     return {"success": success, "strategy_id": id}
 
+@app.post("/api/strategies/start-all")
+async def start_all_strategy_instances():
+    started = await strategy_supervisor.start_all_strategies()
+    return {"success": True, "started_count": len(started), "strategy_ids": started}
+
+@app.post("/api/strategies/stop-all")
+async def stop_all_strategy_instances():
+    stopped = await strategy_supervisor.stop_all_strategies()
+    return {"success": True, "stopped_count": len(stopped), "strategy_ids": stopped}
+
 @app.post("/api/strategies/{id}/toggle-mode")
 def toggle_strategy_paper_mode(id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Toggles strategy paper mode vs live mode"""

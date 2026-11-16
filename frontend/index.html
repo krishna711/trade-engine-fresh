@@ -209,7 +209,13 @@
                             <button class="view-mode-btn" id="btn-mode-by-client" data-mode="by-client">👥 Group by Client</button>
                         </div>
                     </div>
-                    <div class="section-actions">
+                    <div class="section-actions" style="display: flex; align-items: center; gap: 0.5rem;">
+                        <button class="action-btn-sm" id="btn-start-all-strategies" onclick="strategiesManager.startAllStrategies()" style="background: rgba(16, 185, 129, 0.15); color: var(--accent-green); border: 1px solid var(--accent-green); padding: 0.4rem 0.8rem; font-weight: 600; cursor: pointer;" title="Start all strategy instances">
+                            ▶ Start All
+                        </button>
+                        <button class="action-btn-sm" id="btn-stop-all-strategies" onclick="strategiesManager.stopAllStrategies()" style="background: rgba(239, 68, 68, 0.15); color: var(--accent-red); border: 1px solid var(--accent-red); padding: 0.4rem 0.8rem; font-weight: 600; cursor: pointer;" title="Stop all strategy instances">
+                            ■ Stop All
+                        </button>
                         <button class="action-btn-sm" id="btn-deploy-new-strategy" style="background: var(--accent-blue); color: white; padding: 0.4rem 0.8rem;">
                             + Deploy Strategy
                         </button>

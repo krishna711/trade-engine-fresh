@@ -776,6 +776,57 @@ class StrategiesManager {
         }
     }
 
+    async startAllStrategies() {
+        const btn = document.getElementById("btn-start-all-strategies");
+        const origText = btn ? btn.innerText : "";
+        if (btn) {
+            btn.innerText = "Starting All...";
+            btn.disabled = true;
+        }
+        try {
+            const res = await fetch("/api/strategies/start-all", { method: "POST" });
+            const data = await res.json();
+            if (data.success) {
+                await this.loadInstances();
+            } else {
+                alert("Failed to start all strategies: " + (data.error || "Unknown error"));
+            }
+        } catch (e) {
+            alert("Error starting all strategies: " + e);
+        } finally {
+            if (btn) {
+                btn.innerText = origText;
+                btn.disabled = false;
+            }
+        }
+    }
+
+    async stopAllStrategies() {
+        if (!confirm("Are you sure you want to STOP ALL active strategies?")) return;
+        const btn = document.getElementById("btn-stop-all-strategies");
+        const origText = btn ? btn.innerText : "";
+        if (btn) {
+            btn.innerText = "Stopping All...";
+            btn.disabled = true;
+        }
+        try {
+            const res = await fetch("/api/strategies/stop-all", { method: "POST" });
+            const data = await res.json();
+            if (data.success) {
+                await this.loadInstances();
+            } else {
+                alert("Failed to stop all strategies: " + (data.error || "Unknown error"));
+            }
+        } catch (e) {
+            alert("Error stopping all strategies: " + e);
+        } finally {
+            if (btn) {
+                btn.innerText = origText;
+                btn.disabled = false;
+            }
+        }
+    }
+
     async squareOff(id) {
         if (!confirm(`Are you sure you want to SQUARE OFF all open positions and close trades for Strategy #${id}?`)) return;
         try {
