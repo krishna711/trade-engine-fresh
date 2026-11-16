@@ -188,7 +188,10 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
     def on_candle(self, candle: Dict[str, Any], history: List[Dict[str, Any]]):
         close_p = float(candle.get("close") or self.last_underlying_ltp)
         self.last_underlying_ltp = close_p
-        self.log_decision("Candle Fetch Success", f"Underlying {self.symbol} bar close: {close_p}")
+        bar_time = str(candle.get("time") or "")
+        if getattr(self, "_last_candle_logged_time", None) != bar_time:
+            self._last_candle_logged_time = bar_time
+            self.log_decision("Candle Fetch Success", f"Underlying {self.symbol} bar close: {close_p}")
         if self.trade_state == "IDLE":
             self._check_entry_and_exit(close_p)
         elif self.trade_state in ["IN_TRADE", "ENTRY_SENT"] and self.current_trade:

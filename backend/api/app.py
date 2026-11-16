@@ -1085,6 +1085,21 @@ def list_strategy_instances(db: Session = Depends(get_db), current_user: User = 
         # Multi-leg prices of last trade
         legs = inst.legs_info or []
 
+        # Convert last_signal_time to IST string
+        last_sig_dt = getattr(inst, "last_signal_time", None)
+        if not last_sig_dt:
+            from backend.strategy_manager.manager import strategy_supervisor
+            w = strategy_supervisor.active_workers.get(inst.id)
+            if w and w.get("last_signal_time"):
+                last_sig_dt = w["last_signal_time"]
+
+        last_sig_str = None
+        if last_sig_dt:
+            if last_sig_dt.tzinfo is None:
+                ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+                last_sig_dt = last_sig_dt.replace(tzinfo=datetime.timezone.utc).astimezone(ist_tz)
+            last_sig_str = last_sig_dt.strftime("%H:%M:%S")
+
         result.append({
             "id": inst.id,
             "template_key": inst.template_key, # Admin sees this
@@ -1096,6 +1111,7 @@ def list_strategy_instances(db: Session = Depends(get_db), current_user: User = 
             "mapped_clients": mapped_clients,
             "last_trade_status": inst.last_trade_status,
             "last_trade_at": inst.last_trade_at.strftime("%Y-%m-%d %H:%M:%S") if inst.last_trade_at else None,
+            "last_signal_time": last_sig_str,
             "start_time": inst.start_time,
             "end_time": inst.end_time,
             "pnl": {
@@ -1320,7 +1336,7 @@ async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Strategy not found")
     
     cfg = inst.config or {}
-    symbol = cfg.get("symbol")
+    symbol = cfg.get("symbol") or cfg.get("underlying")
     if not symbol and inst.template and inst.template.default_config:
         symbol = inst.template.default_config.get("symbol")
     if not symbol:
@@ -1332,12 +1348,22 @@ async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
                 symbol = "MCX:CRUDEOILM"
             elif "RELIANCE" in leg_sym:
                 symbol = "NSE:RELIANCE"
+            elif "HAL" in leg_sym:
+                symbol = "NSE:HAL"
+            elif "BHARTI" in leg_sym:
+                symbol = "NSE:BHARTIARTL"
             elif "NIFTY" in leg_sym:
                 symbol = "NSE:NIFTY"
             else:
                 symbol = leg_sym
         else:
             symbol = "NSE:NIFTY"
+
+    if symbol and ":" not in symbol:
+        if "CRUDE" in symbol.upper():
+            symbol = f"MCX:{symbol}"
+        else:
+            symbol = f"NSE:{symbol}"
 
     tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or "5m").strip().lower()
     if tf.isdigit():
@@ -1777,12 +1803,21 @@ def get_strategy_recent_trades(id: int, db: Session = Depends(get_db)):
     }
 
 @app.get("/api/strategies/{id}/logs")
-def get_strategy_chronological_logs(id: int, include_candle_fetch: bool = False, db: Session = Depends(get_db)):
-    """Consolidated strategy-level audit timeline with step-by-step progress, isolating candle fetch noise"""
-    q = db.query(SystemLog).filter(SystemLog.strategy_id == id)
-    if not include_candle_fetch:
-        q = q.filter(SystemLog.category != "CANDLE_FETCH")
-    logs = q.order_by(SystemLog.id.desc()).limit(100).all()
+def get_strategy_chronological_logs(id: int, include_candle_fetch: bool = True, db: Session = Depends(get_db)):
+    """Consolidated strategy-level audit timeline with step-by-step progress, including recent signal checks"""
+    trade_logs = db.query(SystemLog).filter(
+        SystemLog.strategy_id == id,
+        SystemLog.category != "CANDLE_FETCH"
+    ).order_by(SystemLog.id.desc()).limit(60).all()
+
+    candle_logs = []
+    if include_candle_fetch:
+        candle_logs = db.query(SystemLog).filter(
+            SystemLog.strategy_id == id,
+            SystemLog.category == "CANDLE_FETCH"
+        ).order_by(SystemLog.id.desc()).limit(15).all()
+
+    combined = sorted(trade_logs + candle_logs, key=lambda l: l.id, reverse=True)
 
     return [
         {
@@ -1791,7 +1826,7 @@ def get_strategy_chronological_logs(id: int, include_candle_fetch: bool = False,
             "level": l.level,
             "message": l.message,
             "timestamp": l.timestamp.strftime("%H:%M:%S")
-        } for l in logs
+        } for l in combined
     ]
 
 

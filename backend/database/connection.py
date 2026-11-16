@@ -67,6 +67,9 @@ def check_and_migrate_db():
             if strat_cols and "paper_mode" not in strat_cols:
                 conn.execute(text("ALTER TABLE strategy_instances ADD COLUMN paper_mode BOOLEAN DEFAULT 1;"))
                 print("[DB Migration] Added paper_mode column to strategy_instances table.")
+            if strat_cols and "last_signal_time" not in strat_cols:
+                conn.execute(text("ALTER TABLE strategy_instances ADD COLUMN last_signal_time TIMESTAMP;"))
+                print("[DB Migration] Added last_signal_time column to strategy_instances table.")
 
             # Ensure PCP Pro strategy default template is migrated to HAL ITM-2 option buying
             conn.execute(text("""

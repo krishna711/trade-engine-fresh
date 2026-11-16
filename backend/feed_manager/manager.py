@@ -76,20 +76,27 @@ class OHLCBuilder:
                 ).order_by(HistoricalCandle.timestamp.desc()).limit(count).all()
                 if db_rows:
                     db_rows.reverse()
-                    loaded = [
-                        {
-                            "symbol": r.symbol,
-                            "time": r.timestamp.isoformat(),
-                            "open": float(r.open),
-                            "high": float(r.high),
-                            "low": float(r.low),
-                            "close": float(r.close),
-                            "volume": int(r.volume or 0)
-                        }
-                        for r in db_rows
-                    ]
-                    self.candles.setdefault(symbol, {})[resolution] = loaded
-                    bars = [dict(b) for b in loaded[-count:]]
+                    from backend.feed_manager.market_hours import get_last_completed_trading_session_anchor, IST_TZ
+                    anchor = get_last_completed_trading_session_anchor(symbol, resolution)
+                    last_row_t = db_rows[-1].timestamp
+                    if last_row_t.tzinfo is None:
+                        last_row_t = last_row_t.replace(tzinfo=datetime.timezone.utc).astimezone(IST_TZ)
+                    # Only accept cached DB rows if they align with the current session date
+                    if last_row_t.date() >= anchor.date():
+                        loaded = [
+                            {
+                                "symbol": r.symbol,
+                                "time": r.timestamp.isoformat(),
+                                "open": float(r.open),
+                                "high": float(r.high),
+                                "low": float(r.low),
+                                "close": float(r.close),
+                                "volume": int(r.volume or 0)
+                            }
+                            for r in db_rows
+                        ]
+                        self.candles.setdefault(symbol, {})[resolution] = loaded
+                        bars = [dict(b) for b in loaded[-count:]]
                 db.close()
             except Exception:
                 pass
@@ -410,18 +417,58 @@ class FeedManager:
 
     async def get_ohlc(self, canonical_symbol: str, resolution: str = "5m", count: int = 50) -> List[Dict[str, Any]]:
         bars = self.ohlc_builder.get_bars(canonical_symbol, resolution, count)
-        broker = self.active_broker or self.brokers.get("XTS") or (list(self.brokers.values())[0] if self.brokers else None)
-        if len(bars) < 10 and broker:
-            # Fallback to broker history generator if building buffer is still small
-            broker_bars = await broker.fetch_ohlc(canonical_symbol, resolution, count)
+
+        # Check if returned bars are stale (older than current session anchor)
+        from backend.feed_manager.market_hours import (
+            get_last_completed_trading_session_anchor,
+            parse_resolution_minutes,
+            build_market_session_bars,
+            IST_TZ
+        )
+        anchor = get_last_completed_trading_session_anchor(canonical_symbol, resolution)
+        step_min = parse_resolution_minutes(resolution)
+
+        is_stale = False
+        if bars:
+            try:
+                last_t_str = str(bars[-1].get("time") or "")
+                if "T" in last_t_str:
+                    last_dt = datetime.datetime.fromisoformat(last_t_str)
+                    if last_dt.tzinfo is None:
+                        last_dt = last_dt.replace(tzinfo=datetime.timezone.utc).astimezone(IST_TZ)
+                    else:
+                        last_dt = last_dt.astimezone(IST_TZ)
+                    # If last candle is from an older day or more than 3 candle intervals behind current anchor
+                    if last_dt.date() < anchor.date() or (anchor - last_dt) > datetime.timedelta(minutes=step_min * 3):
+                        is_stale = True
+            except Exception:
+                is_stale = False
+
+        if len(bars) < 10 or is_stale:
+            broker = self.active_broker or self.brokers.get("XTS") or (list(self.brokers.values())[0] if self.brokers else None)
+            broker_bars = None
+            if broker:
+                try:
+                    broker_bars = await broker.fetch_ohlc(canonical_symbol, resolution, count)
+                except Exception as e_br:
+                    print(f"[FeedManager] Error fetching OHLC from broker {broker.name}: {e_br}")
+
+            # If no broker connected or broker returned empty, fallback to deterministic market session bars
+            if not broker_bars:
+                curr_price = float(self.ticks_cache.get(canonical_symbol, {}).get("ltp", 0.0))
+                broker_bars = build_market_session_bars(
+                    symbol=canonical_symbol,
+                    resolution=resolution,
+                    count=max(count, 60),
+                    base_price=curr_price
+                )
+
             if broker_bars:
                 if canonical_symbol not in self.ohlc_builder.candles:
                     self.ohlc_builder.candles[canonical_symbol] = {"1m": [], "3m": [], "5m": [], "15m": [], "1h": []}
-                existing = self.ohlc_builder.candles[canonical_symbol].get(resolution, [])
-                if not existing:
-                    self.ohlc_builder.candles[canonical_symbol][resolution] = [dict(b) for b in broker_bars[:-1]]
-                    if broker_bars:
-                        self.ohlc_builder.current_bars.setdefault(canonical_symbol, {})[resolution] = dict(broker_bars[-1])
+                self.ohlc_builder.candles[canonical_symbol][resolution] = [dict(b) for b in broker_bars[:-1]]
+                if broker_bars:
+                    self.ohlc_builder.current_bars.setdefault(canonical_symbol, {})[resolution] = dict(broker_bars[-1])
 
                 # Asynchronously / safely persist into SQLite historical_candles
                 try:
@@ -456,7 +503,7 @@ class FeedManager:
                 except Exception:
                     pass
 
-            return broker_bars
+                return broker_bars[-count:]
         return bars
 
     def get_status(self) -> Dict[str, Any]:

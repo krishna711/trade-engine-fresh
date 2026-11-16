@@ -746,6 +746,11 @@ class FTXPaperResearchStrategy(BaseStrategy):
             return
 
         self.session_bars.append(bar)
+        self.log_decision(
+            "Candle Fetch Success",
+            f"Underlying {self.symbol} bar close: {bar.close:.2f} | Bars: {len(self.session_bars)} | Evaluating Alpha Cells",
+            level="INFO"
+        )
         if len(self.session_bars) < 2:
             return
 

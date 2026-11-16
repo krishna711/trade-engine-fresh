@@ -66,6 +66,7 @@ class StrategyInstance(Base):
     # State tracking
     last_trade_status = Column(String(20), default="CLOSED") # OPEN, CLOSED
     last_trade_at = Column(DateTime, nullable=True)
+    last_signal_time = Column(DateTime, nullable=True) # Timestamp of last candle / signal evaluation
     
     # Consolidated PnL
     unrealized_pnl = Column(Float, default=0.0)

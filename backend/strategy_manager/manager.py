@@ -376,6 +376,7 @@ class StrategySupervisor:
                     matched = True
 
             if matched:
+                worker["last_signal_time"] = datetime.datetime.utcnow()
                 try:
                     worker["in_queue"].put({"type": "TICK", "data": tick})
                 except Exception:
@@ -825,14 +826,12 @@ class StrategySupervisor:
                     if tf not in ["1m", "3m", "5m", "15m", "1h"]:
                         tf = "3m" if "pcp_pro" in str(worker.get("template_key", "")) else ("1m" if "ftx" in str(worker.get("template_key", "")) else "5m")
                     count = int(cfg.get("candle_count", 60))
-                    bars = feed_manager.ohlc_builder.get_bars(sym, resolution=tf, count=count)
-                    if len(bars) < 18:
-                        fallback_bars = await feed_manager.get_ohlc(sym, resolution=tf, count=count)
-                        if fallback_bars and len(fallback_bars) > len(bars):
-                            bars = fallback_bars
+                    bars = await feed_manager.get_ohlc(sym, resolution=tf, count=count)
                     if bars:
                         latest_bar = bars[-1]
                         history = bars[:-1]
+                        worker["last_signal_time"] = datetime.datetime.utcnow()
+                        self._update_instance_signal_time(inst_id)
                         try:
                             worker["in_queue"].put({"type": "CANDLE", "candle": latest_bar, "history": history})
                         except Exception:
@@ -926,6 +925,18 @@ class StrategySupervisor:
                 print(f"[StrategySupervisor] MTM loop error: {e}")
 
 
+    def _update_instance_signal_time(self, instance_id: int):
+        """Updates last_signal_time for a running strategy instance"""
+        try:
+            db = SessionLocal()
+            inst = db.query(StrategyInstance).filter(StrategyInstance.id == instance_id).first()
+            if inst:
+                inst.last_signal_time = datetime.datetime.utcnow()
+                db.commit()
+            db.close()
+        except Exception:
+            pass
+
     def _log_strategy_decision(
         self,
         strategy_id: int,
@@ -936,15 +947,24 @@ class StrategySupervisor:
     ):
         db = SessionLocal()
         try:
+            now_dt = datetime.datetime.utcnow()
             log = SystemLog(
                 category=category,
                 level=level,
                 message=message,
                 strategy_id=strategy_id,
                 is_dismissed=is_dismissed,
-                timestamp=datetime.datetime.utcnow()
+                timestamp=now_dt
             )
             db.add(log)
+
+            inst = db.query(StrategyInstance).filter(StrategyInstance.id == strategy_id).first()
+            if inst:
+                inst.last_signal_time = now_dt
+
+            if strategy_id in self.active_workers:
+                self.active_workers[strategy_id]["last_signal_time"] = now_dt
+
             db.commit()
 
             # Broadcast to event bus for real-time UI logging

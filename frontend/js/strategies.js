@@ -133,6 +133,27 @@ class StrategiesManager {
         }
     }
 
+    getSignalTrackingBadge(inst) {
+        const isRunning = inst.status === "RUNNING";
+        if (!isRunning) {
+            return `<span style="font-size: 0.68rem; color: var(--text-muted); margin-left: 6px;">• Stopped</span>`;
+        }
+        if (inst.last_signal_time) {
+            return `
+                <span style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.68rem; color: var(--accent-green); font-weight: 500; margin-left: 6px;" title="Strategy actively tracking live signals">
+                    <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-green); box-shadow: 0 0 6px var(--accent-green);"></span>
+                    Last Tracked: ${inst.last_signal_time}
+                </span>
+            `;
+        }
+        return `
+            <span style="display: inline-flex; align-items: center; gap: 4px; font-size: 0.68rem; color: var(--accent-blue); font-weight: 500; margin-left: 6px;" title="Strategy container running and listening for market ticks">
+                <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-blue);"></span>
+                Tracking Active
+            </span>
+        `;
+    }
+
     // =========================================================================
     // MODE 1: GROUP BY STRATEGY (Consolidated View)
     // =========================================================================
@@ -204,7 +225,10 @@ class StrategiesManager {
                     </td>
                     <td>
                         <strong>${isAdmin ? inst.name_admin : inst.name_user}</strong>
-                        ${isAdmin ? `<div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">${inst.template_key}</div>` : ''}
+                        <div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono); display: flex; align-items: center; flex-wrap: wrap; margin-top: 2px;">
+                            ${isAdmin ? `<span>${inst.template_key}</span>` : ''}
+                            ${this.getSignalTrackingBadge(inst)}
+                        </div>
                     </td>
                     <td>
                         <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
@@ -316,7 +340,10 @@ class StrategiesManager {
                         </td>
                         <td>
                             <strong>${isAdmin ? inst.name_admin : inst.name_user}</strong>
-                            ${isAdmin ? `<div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">${inst.template_key}</div>` : ''}
+                            <div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono); display: flex; align-items: center; flex-wrap: wrap; margin-top: 2px;">
+                                ${isAdmin ? `<span>${inst.template_key}</span>` : ''}
+                                ${this.getSignalTrackingBadge(inst)}
+                            </div>
                         </td>
                         <td>
                             <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
@@ -377,7 +404,10 @@ class StrategiesManager {
                         </td>
                         <td>
                             <strong>${isAdmin ? inst.name_admin : inst.name_user}</strong>
-                            ${isAdmin ? `<div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono);">${inst.template_key}</div>` : ''}
+                            <div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono); display: flex; align-items: center; flex-wrap: wrap; margin-top: 2px;">
+                                ${isAdmin ? `<span>${inst.template_key}</span>` : ''}
+                                ${this.getSignalTrackingBadge(inst)}
+                            </div>
                         </td>
                         <td>
                             <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
@@ -488,7 +518,10 @@ class StrategiesManager {
                     <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
                         <td style="padding: 0.6rem 0.75rem;">
                             <strong>${isAdmin ? inst.name_admin : inst.name_user}</strong>
-                            ${isAdmin ? `<div style="font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono);">${inst.template_key}</div>` : ''}
+                            <div style="font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono); display: flex; align-items: center; flex-wrap: wrap; margin-top: 2px;">
+                                ${isAdmin ? `<span>${inst.template_key}</span>` : ''}
+                                ${this.getSignalTrackingBadge(inst)}
+                            </div>
                         </td>
                         <td style="padding: 0.6rem 0.75rem;">
                             <div style="display: flex; flex-direction: column; gap: 4px; align-items: flex-start;">
@@ -941,7 +974,17 @@ class StrategiesManager {
                 if (noTradesOverlay) noTradesOverlay.style.display = "none";
             }
 
-            const labels = ohlc.map(b => b.time ? (b.time.includes("T") ? (b.time.split("T")[1]?.slice(0, 5) || b.time) : b.time.slice(0, 5)) : "");
+            const labels = ohlc.map(b => {
+                if (!b.time) return "";
+                try {
+                    const d = new Date(b.time);
+                    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+                    const dateStr = d.toLocaleDateString([], { day: 'numeric', month: 'short' });
+                    return `${dateStr} ${timeStr}`;
+                } catch (e) {
+                    return b.time.includes("T") ? (b.time.split("T")[1]?.slice(0, 5) || b.time) : b.time.slice(0, 5);
+                }
+            });
             const prices = ohlc.map(b => b.close);
 
             this.chartInstance = new Chart(ctx, {
@@ -1063,19 +1106,43 @@ class StrategiesManager {
             const res = await fetch(`/api/strategies/${id}/logs`);
             const logs = await res.json();
 
-            container.innerHTML = logs.length ? logs.map(l => {
+            const inst = (this.latestInstances || []).find(i => i.id === id);
+            const isRun = inst && inst.status === "RUNNING";
+            const sym = (inst && inst.config && (inst.config.symbol || inst.config.underlying)) || "N/A";
+            const tf = (inst && inst.config && (inst.config.timeframe || inst.config.timeframe_min)) || "5m";
+            const lastTracked = (inst && inst.last_signal_time) ? `${inst.last_signal_time} IST` : (isRun ? "Listening for ticks" : "Stopped");
+
+            const headerCard = `
+                <div style="background: rgba(30, 41, 59, 0.6); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:${isRun ? 'var(--accent-green)' : 'var(--text-muted)'}; box-shadow:0 0 6px ${isRun ? 'var(--accent-green)' : 'transparent'};"></span>
+                            Signal Engine: ${isRun ? 'Actively Monitoring Market Signals' : 'Stopped'}
+                        </div>
+                        <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 3px;">
+                            Target: <strong style="color:var(--text-primary);">${sym}</strong> | Timeframe: <strong>${tf}</strong> | Last Signal Check: <strong style="color:${isRun ? 'var(--accent-green)' : 'var(--text-muted)'};">${lastTracked}</strong>
+                        </div>
+                    </div>
+                    <span class="status-pill status-${isRun ? 'running' : 'stopped'}">${inst ? inst.status : 'IDLE'}</span>
+                </div>
+            `;
+
+            const stepsHtml = logs.length ? logs.map(l => {
                 const isSuccess = l.level === "SUCCESS";
                 const isErr = l.level === "ERROR";
+                const isCandle = l.category === "CANDLE_FETCH";
                 const cls = isSuccess ? "success" : (isErr ? "error" : "");
 
                 return `
                     <div class="timeline-step ${cls}">
-                        <div class="timeline-dot"></div>
+                        <div class="timeline-dot" style="${isCandle ? 'background: #3b82f6; border-color: #60a5fa;' : ''}"></div>
                         <div class="timeline-time">${l.timestamp}</div>
                         <div class="timeline-title">${l.message}</div>
                     </div>
                 `;
-            }).join("") : '<div style="color: var(--text-muted);">No decision logs recorded yet</div>';
+            }).join("") : '<div style="color: var(--text-muted); padding: 1rem 0;">No trade events recorded yet. Strategy is monitoring live candles.</div>';
+
+            container.innerHTML = headerCard + stepsHtml;
         } catch (e) {
             container.innerHTML = `<div style="color: var(--accent-red);">Failed to load logs: ${e}</div>`;
         }
