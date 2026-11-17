@@ -35,8 +35,8 @@ class FyersFeedBroker(BaseFeedBroker):
         for s in symbols:
             if s not in self.subscribed_symbols:
                 self.subscribed_symbols.append(s)
-                if s not in self._current_prices:
-                    self._current_prices[s] = 100.0
+                if s not in self._current_prices and s in BASE_PRICES:
+                    self._current_prices[s] = BASE_PRICES[s]
 
         if not self._streaming_task or self._streaming_task.done():
             self._streaming_task = asyncio.create_task(self._run_ticker_loop())
@@ -52,9 +52,16 @@ class FyersFeedBroker(BaseFeedBroker):
         while self.is_connected:
             try:
                 for symbol in list(self.subscribed_symbols):
-                    base = self._current_prices.get(symbol, 100.0)
+                    # Never simulate option strikes (CE / PE)
+                    if symbol.endswith("CE") or symbol.endswith("PE"):
+                        continue
+                    if symbol not in BASE_PRICES:
+                        continue
+
+                    base = BASE_PRICES[symbol]
+                    curr = self._current_prices.get(symbol, base)
                     delta_pct = (random.random() - 0.498) * 0.003
-                    new_ltp = round(base * (1 + delta_pct), 2)
+                    new_ltp = round(curr * (1 + delta_pct), 2)
                     self._current_prices[symbol] = new_ltp
 
                     mapping = symbol_mapper.get_mapping(symbol)
@@ -68,14 +75,15 @@ class FyersFeedBroker(BaseFeedBroker):
                         "broker": "FYERS",
                         "ltp": new_ltp,
                         "change": round(new_ltp - base, 2),
-                        "change_pct": round((delta_pct * 100), 2),
+                        "change_pct": round(((new_ltp - base) / base) * 100, 2),
                         "high": round(new_ltp * 1.015, 2),
                         "low": round(new_ltp * 0.985, 2),
                         "volume": random.randint(500, 25000),
                         "bid": round(new_ltp - 0.05, 2),
                         "ask": round(new_ltp + 0.05, 2),
                         "timestamp": datetime.datetime.utcnow().isoformat(),
-                        "latency_ms": round(random.uniform(16.0, 28.0), 1)
+                        "latency_ms": round(random.uniform(16.0, 28.0), 1),
+                        "is_real_feed": False
                     }
                     self.emit_tick(tick)
                     self.latency_ms = tick["latency_ms"]

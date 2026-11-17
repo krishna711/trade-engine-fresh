@@ -366,12 +366,13 @@ class FeedManager:
                     self.ticks_cache[symbol] = q
                     return q
 
+        default_p = BASE_PRICES.get(symbol, 0.0)
         return {
             "symbol": symbol,
-            "ltp": 100.0,
-            "bid": 99.5,
-            "ask": 100.5,
-            "close": 100.0
+            "ltp": default_p,
+            "bid": default_p,
+            "ask": default_p,
+            "close": default_p
         }
 
     def _handle_broker_status(self, broker_name: str, is_connected: bool, message: str):

@@ -675,12 +675,26 @@ class XTSFeedBroker(BaseFeedBroker):
         return True
 
     async def _run_fallback_loop(self):
-        """Maintains smooth simulation for standby/synthetic test symbols when real market is closed"""
+        """Maintains smooth simulation for standby/synthetic test symbols when real market is closed or offline"""
         while self.is_connected:
             try:
+                # CRITICAL: When connected to the live broker feed, NEVER emit fake/synthetic ticks!
+                # Real options and illiquid contracts routinely have seconds/minutes without trades.
+                # Fabricating synthetic ticks with fixed anchors causes catastrophic false stop-loss exits.
+                if self.is_live_connected:
+                    self.last_heartbeat = datetime.datetime.utcnow()
+                    await asyncio.sleep(2.0)
+                    continue
+
                 for symbol in list(self.subscribed_symbols):
-                    # Mean-reverting drift towards anchor price to prevent exponential runaway
-                    base_anchor = BASE_PRICES.get(symbol, 100.0)
+                    # Never simulate option strikes (CE / PE) with fixed/fake anchor prices
+                    if symbol.endswith("CE") or symbol.endswith("PE"):
+                        continue
+                    
+                    if symbol not in BASE_PRICES:
+                        continue
+
+                    base_anchor = BASE_PRICES[symbol]
                     curr = self._current_prices.get(symbol, base_anchor)
                     reversion = (base_anchor - curr) * 0.05
                     noise = (random.random() - 0.50) * (base_anchor * 0.001)
@@ -691,27 +705,24 @@ class XTSFeedBroker(BaseFeedBroker):
                     display = mapping.display_name if mapping else symbol
                     segment = mapping.segment if mapping else symbol.split(":")[0]
 
-                    # If live binary ticks haven't arrived in the last 4 seconds (e.g. market pause, off-hours, or low liquidity), keep feed ticking & heartbeat alive
-                    time_since_real = (datetime.datetime.utcnow() - self._last_real_tick_time).total_seconds() if self._last_real_tick_time else 999.0
-                    if not self.is_live_connected or time_since_real > 4.0:
-                        tick = {
-                            "symbol": symbol,
-                            "display_name": display,
-                            "segment": segment,
-                            "broker": "XTS",
-                            "ltp": new_ltp,
-                            "change": round(new_ltp - base, 2),
-                            "change_pct": round((delta_pct * 100), 2),
-                            "high": round(new_ltp * 1.015, 2),
-                            "low": round(new_ltp * 0.985, 2),
-                            "volume": random.randint(500, 25000),
-                            "bid": round(new_ltp - 0.05, 2),
-                            "ask": round(new_ltp + 0.05, 2),
-                            "timestamp": datetime.datetime.utcnow().isoformat(),
-                            "latency_ms": round(random.uniform(0.8, 2.2), 1),
-                            "is_real_feed": self.is_live_connected
-                        }
-                        self.emit_tick(tick)
+                    tick = {
+                        "symbol": symbol,
+                        "display_name": display,
+                        "segment": segment,
+                        "broker": "XTS",
+                        "ltp": new_ltp,
+                        "change": round(new_ltp - base_anchor, 2),
+                        "change_pct": round(((new_ltp - base_anchor) / base_anchor) * 100, 2),
+                        "high": round(new_ltp * 1.015, 2),
+                        "low": round(new_ltp * 0.985, 2),
+                        "volume": random.randint(500, 25000),
+                        "bid": round(new_ltp - 0.05, 2),
+                        "ask": round(new_ltp + 0.05, 2),
+                        "timestamp": datetime.datetime.utcnow().isoformat(),
+                        "latency_ms": round(random.uniform(0.8, 2.2), 1),
+                        "is_real_feed": False
+                    }
+                    self.emit_tick(tick)
 
                 await asyncio.sleep(1.0)
             except asyncio.CancelledError:

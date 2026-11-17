@@ -54,11 +54,6 @@ class ShoonyaFeedBroker(BaseFeedBroker):
                 if s not in self._current_prices:
                     if s in BASE_PRICES:
                         self._current_prices[s] = BASE_PRICES[s]
-                    elif s.endswith("CE") or s.endswith("PE"):
-                        self._current_prices[s] = 135.0
-                    else:
-                        self._current_prices[s] = 100.0
-
 
         if not self._streaming_task or self._streaming_task.done():
             self._streaming_task = asyncio.create_task(self._run_ticker_loop())
@@ -74,7 +69,13 @@ class ShoonyaFeedBroker(BaseFeedBroker):
         while self.is_connected:
             try:
                 for symbol in list(self.subscribed_symbols):
-                    base_anchor = BASE_PRICES.get(symbol, 135.0 if (symbol.endswith("CE") or symbol.endswith("PE")) else 100.0)
+                    # Never simulate option strikes (CE / PE)
+                    if symbol.endswith("CE") or symbol.endswith("PE"):
+                        continue
+                    if symbol not in BASE_PRICES:
+                        continue
+
+                    base_anchor = BASE_PRICES[symbol]
                     curr = self._current_prices.get(symbol, base_anchor)
                     reversion = (base_anchor - curr) * 0.05
                     noise = (random.random() - 0.50) * (base_anchor * 0.001)
@@ -91,15 +92,16 @@ class ShoonyaFeedBroker(BaseFeedBroker):
                         "segment": segment,
                         "broker": "SHOONYA",
                         "ltp": new_ltp,
-                        "change": round(new_ltp - base, 2),
-                        "change_pct": round((delta_pct * 100), 2),
+                        "change": round(new_ltp - base_anchor, 2),
+                        "change_pct": round(((new_ltp - base_anchor) / base_anchor) * 100, 2),
                         "high": round(new_ltp * 1.015, 2),
                         "low": round(new_ltp * 0.985, 2),
                         "volume": random.randint(500, 25000),
                         "bid": round(new_ltp - 0.05, 2),
                         "ask": round(new_ltp + 0.05, 2),
                         "timestamp": datetime.datetime.utcnow().isoformat(),
-                        "latency_ms": round(random.uniform(14.0, 24.0), 1)
+                        "latency_ms": round(random.uniform(14.0, 24.0), 1),
+                        "is_real_feed": False
                     }
                     self.emit_tick(tick)
                     self.latency_ms = tick["latency_ms"]

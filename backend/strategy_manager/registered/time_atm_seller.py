@@ -1,4 +1,5 @@
 import datetime
+import time
 import re
 from typing import Dict, Any, List, Optional
 from backend.strategy_manager.base_strategy import BaseStrategy
@@ -51,6 +52,9 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         # Keep track of last known underlying LTP for timer-based entries
         self.last_underlying_ltp = 0.0
 
+        # Debounce timer for stop-loss confirmation to prevent exit on momentary bad ticks
+        self._sl_breach_first_seen: Optional[float] = None
+
         self.log_decision(
             "INIT",
             f"TimeBased ATM Seller Initialized for {self.symbol} | "
@@ -95,6 +99,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
                 self.subscribed_option_symbols = list(set(opt_symbols))
                 self.request_subscribe(self.subscribed_option_symbols)
 
+            self._sl_breach_first_seen = None
             self.log_decision(
                 "STATE REHYDRATED",
                 f"Resumed active straddle trade ({len(clean_legs)} legs). State: IN_TRADE. Strike: {atm_strike}. "
@@ -216,6 +221,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             self.trade_state = "IDLE"
             self.current_trade = None
             self._last_trade_date = None
+            self._sl_breach_first_seen = None
             self.log_decision("NEW SESSION ARMED", f"New trading day {curr_date}. Armed for scheduled entry at {self.entry_time}.", level="INFO")
             return
 
@@ -224,6 +230,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         if self.trade_state == "CLOSED" and curr_time < entry_t:
             self.trade_state = "IDLE"
             self.current_trade = None
+            self._sl_breach_first_seen = None
             self.log_decision("CYCLE ARMED", f"Previous trade closed. Re-armed to IDLE for next scheduled entry at {self.entry_time}.", level="INFO")
 
     def on_candle(self, candle: Dict[str, Any], history: List[Dict[str, Any]]):
@@ -245,6 +252,10 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         sym = tick.get("symbol")
         ltp = tick.get("ltp")
         if not ltp:
+            return
+
+        # Discard synthetic / mock ticks when evaluating live positions
+        if tick.get("is_real_feed") is False and self.trade_state in ["IN_TRADE", "ENTRY_SENT"]:
             return
 
         # Track underlying price strictly (never let option ticks pollute underlying future price)
@@ -276,7 +287,29 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             # Check if this tick is for one of the option legs
             for leg in self.current_trade["legs"]:
                 if leg["symbol"] == sym or sym.endswith(leg["symbol"].split(":")[-1]):
-                    leg["ltp"] = float(ltp)
+                    flt_ltp = float(ltp)
+                    if flt_ltp <= 0.0:
+                        continue
+
+                    # Transient spike filter: If leg was already populated with a valid LTP > 0,
+                    # detect abnormal single-tick price jumps (e.g. > 2.5x jump and > 30 points)
+                    prev_ltp = float(leg.get("ltp") or 0.0)
+                    if prev_ltp > 0.0:
+                        jump_ratio = flt_ltp / prev_ltp
+                        diff = abs(flt_ltp - prev_ltp)
+                        if (jump_ratio > 2.5 or jump_ratio < 0.35) and diff > 30.0:
+                            spike_count = leg.get("_spike_count", 0) + 1
+                            leg["_spike_count"] = spike_count
+                            if spike_count < 2:
+                                self.log_decision(
+                                    "ANOMALY TICK FILTERED",
+                                    f"Ignored transient price jump on {sym}: LTP ₹{flt_ltp:.2f} vs Prev ₹{prev_ltp:.2f} (jump: {jump_ratio:.1f}x, diff: {diff:.1f} pts). Awaiting confirmation.",
+                                    level="WARNING"
+                                )
+                                return
+                    leg["_spike_count"] = 0
+                    leg["ltp"] = flt_ltp
+
                     # Rupee PnL strictly calculated ONLY when leg has actually been filled at broker!
                     if leg.get("status") == "FILLED" and leg.get("entry") and leg["entry"] > 0:
                         # Selling: profit when LTP drops below entry price
@@ -284,7 +317,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
                         # For MCX, order quantity is in lots, so rupee PnL = (entry - ltp) * lots * lot_size
                         # For NSE/BSE, order quantity is already in total units (lots * lot_size)
                         pnl_mult = self.lot_size if is_mcx else 1
-                        leg["pnl"] = round((leg["entry"] - float(ltp)) * abs(leg["qty"]) * pnl_mult, 2)
+                        leg["pnl"] = round((leg["entry"] - flt_ltp) * abs(leg["qty"]) * pnl_mult, 2)
 
             # Total PnL only sums legs that are actually filled
             total_pnl = sum(leg.get("pnl", 0.0) for leg in self.current_trade["legs"] if leg.get("status") == "FILLED")
@@ -512,16 +545,40 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         curr_time = self._get_current_ist_time()
         exit_t = self._parse_time_str(self.exit_time)
 
-        # 1. Check Stoploss: -INR 750 per lot
+        # 1. Check Stoploss: -INR 750 per lot with debounce verification against momentary price spikes
         if total_pnl <= -self.max_loss:
+            now = time.time()
+            if not self._sl_breach_first_seen:
+                self._sl_breach_first_seen = now
+                self.log_decision(
+                    "SL WATCH",
+                    f"Stop loss threshold breached (Total PnL: INR {total_pnl:.2f} <= -INR {self.max_loss:.2f}). "
+                    f"Debounce verification active (requiring persistent breach >= 1.5s) to reject transient tick spikes.",
+                    level="WARNING"
+                )
+                return
+            elif (now - self._sl_breach_first_seen) < 1.5:
+                # Still within verification debounce window
+                return
+
             self.log_decision(
                 "TRACKING SL/TARGET",
-                f"STOP LOSS HIT! Total PnL INR {total_pnl:.2f} <= -INR {self.max_loss:.2f} (SL limit {self.stop_loss_per_lot}/lot). "
+                f"STOP LOSS HIT! Total PnL INR {total_pnl:.2f} <= -INR {self.max_loss:.2f} (SL limit {self.stop_loss_per_lot}/lot) confirmed for >= 1.5s. "
                 f"Triggering immediate square-off across all brokers!",
                 level="WARNING"
             )
+            self._sl_breach_first_seen = None
             self._square_off_all_legs(reason="STOP_LOSS")
             return
+        else:
+            # If PnL recovered above stop loss threshold, reset breach timer
+            if self._sl_breach_first_seen is not None:
+                self.log_decision(
+                    "SL WATCH RECOVERED",
+                    f"PnL recovered to INR {total_pnl:.2f} (above -INR {self.max_loss:.2f} threshold). SL watch reset.",
+                    level="INFO"
+                )
+                self._sl_breach_first_seen = None
 
         # 2. Check Exit Time
         if curr_time >= exit_t:
