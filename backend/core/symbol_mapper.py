@@ -43,19 +43,20 @@ class UniversalSymbolMapper:
         self.load_xts_master_file()
 
     def load_xts_master_file(self):
-        """Loads Symphony XTS instrument master cache from data directory if present"""
-        for candidate_path in [
-            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "xts_master_mcxfo.txt")),
-            os.path.abspath(os.path.join(os.getcwd(), "data", "xts_master_mcxfo.txt")),
-            r"d:\projects\trande-engine-fresh\data\xts_master_mcxfo.txt"
-        ]:
-            if os.path.exists(candidate_path):
+        """Loads Symphony XTS instrument master caches (NSEFO, NSECM, MCXFO) from data directory"""
+        data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data"))
+        master_files = ["xts_master_nsefo.txt", "xts_master_nsecm.txt", "xts_master_mcxfo.txt"]
+        loaded_count = 0
+        for fn in master_files:
+            fp = os.path.join(data_dir, fn)
+            if os.path.exists(fp):
                 try:
-                    with open(candidate_path, "r", encoding="utf-8") as f:
+                    with open(fp, "r", encoding="utf-8") as f:
                         self.load_xts_master_content(f.read())
-                    break
+                        loaded_count += 1
                 except Exception as err:
-                    print(f"[SymbolMapper] Warning reading master file {candidate_path}: {err}")
+                    print(f"[SymbolMapper] Warning reading master file {fp}: {err}")
+        print(f"[SymbolMapper] Total XTS master index: {len(self._xts_options_map)} option keys, {len(self._xts_futures_map)} future roots, {len(self._xts_canonical_to_token)} direct symbols mapped ({loaded_count} master files loaded)")
 
     def load_xts_master_content(self, text: str):
         """Parses pipe-delimited instruments from Symphony XTS into fast lookup structures"""
@@ -64,39 +65,59 @@ class UniversalSymbolMapper:
         lines = text.splitlines()
         now = datetime.datetime.now()
 
-        opt_map: Dict[Tuple[str, int, str], List[Tuple[datetime.datetime, str, str, str]]] = {}
-        fut_map: Dict[str, List[Tuple[datetime.datetime, str, str, str]]] = {}
+        opt_map = self._xts_options_map
+        fut_map = self._xts_futures_map
 
         for l in lines:
             parts = l.split("|")
-            if len(parts) > 18:
+            if len(parts) > 5:
                 seg = parts[0]
                 token = parts[1]
                 inst_type = parts[2]
                 root = parts[3].upper()
                 trading_sym = parts[4]
-                expiry_str = parts[16]
-                strike_str = parts[17]
-                opt_type_code = parts[18]
 
-                try:
-                    exp_dt = datetime.datetime.fromisoformat(expiry_str)
-                    if exp_dt < now:
-                        continue
-                except Exception:
+                if seg in ["NSECM", "NSE"]:
+                    # Equity shares: Map both NSE:HAL and NSE:HAL-EQ
+                    can_sym = f"NSE:{root}"
+                    self._xts_token_to_canonical[token] = can_sym
+                    self._xts_canonical_to_token[can_sym] = token
+                    self._xts_canonical_to_token[f"NSE:{trading_sym}"] = token
+                    self._xts_canonical_to_symbol[can_sym] = trading_sym
                     continue
 
-                if inst_type == "2":  # Option
-                    opt_type = "CE" if opt_type_code == "3" else ("PE" if opt_type_code == "4" else "")
-                    if opt_type:
-                        try:
-                            strike = int(float(strike_str))
-                            key = (root, strike, opt_type)
-                            opt_map.setdefault(key, []).append((exp_dt, token, trading_sym, seg))
-                        except Exception:
-                            pass
-                elif inst_type == "1":  # Future
-                    fut_map.setdefault(root, []).append((exp_dt, token, trading_sym, seg))
+                if len(parts) > 18:
+                    expiry_str = parts[16]
+                    strike_str = parts[17]
+                    opt_type_code = parts[18]
+
+                    try:
+                        exp_dt = datetime.datetime.fromisoformat(expiry_str)
+                        if exp_dt < now:
+                            continue
+                    except Exception:
+                        continue
+
+                    prefix = "MCX" if "MCX" in seg else "NFO"
+                    can_sym = f"{prefix}:{trading_sym}"
+
+                    if inst_type == "2":  # Option
+                        opt_type = "CE" if opt_type_code == "3" else ("PE" if opt_type_code == "4" else "")
+                        if opt_type:
+                            try:
+                                strike = int(float(strike_str))
+                                key = (root, strike, opt_type)
+                                opt_map.setdefault(key, []).append((exp_dt, token, trading_sym, seg))
+                                self._xts_token_to_canonical[token] = can_sym
+                                self._xts_canonical_to_token[can_sym] = token
+                                self._xts_canonical_to_symbol[can_sym] = trading_sym
+                            except Exception:
+                                pass
+                    elif inst_type == "1":  # Future
+                        fut_map.setdefault(root, []).append((exp_dt, token, trading_sym, seg))
+                        self._xts_token_to_canonical[token] = can_sym
+                        self._xts_canonical_to_token[can_sym] = token
+                        self._xts_canonical_to_symbol[can_sym] = trading_sym
 
         # Sort all lists by earliest expiry date (current active contract first)
         for k in opt_map:
@@ -104,19 +125,17 @@ class UniversalSymbolMapper:
         for k in fut_map:
             fut_map[k].sort(key=lambda x: x[0])
 
-        self._xts_options_map = opt_map
-        self._xts_futures_map = fut_map
-
-        # Map current futures tokens
+        # Map current near-month futures tokens (e.g. NFO:HAL, MCX:CRUDEOILM)
         for root, f_list in fut_map.items():
             if f_list:
                 exp_dt, token, trading_sym, seg = f_list[0]
-                canonical = f"MCX:{root}"
-                self._xts_token_to_canonical[token] = canonical
-                self._xts_canonical_to_token[canonical] = token
-                self._xts_canonical_to_symbol[canonical] = trading_sym
-
-        print(f"[SymbolMapper] Loaded XTS master index: {len(opt_map)} option keys, {len(fut_map)} future keys")
+                prefix = "MCX" if "MCX" in seg else "NFO"
+                can_root = f"{prefix}:{root}"
+                self._xts_canonical_to_token[can_root] = token
+                self._xts_canonical_to_symbol[can_root] = trading_sym
+                # If NFO, also alias as NSE:HAL if not present
+                if prefix == "NFO" and f"NSE:{root}" not in self._xts_canonical_to_token:
+                    self._xts_canonical_to_token[f"NSE:{root}"] = token
 
     def reload_cache(self):
         db = SessionLocal()
@@ -141,6 +160,30 @@ class UniversalSymbolMapper:
         mapping = self._cache.get(canonical_symbol)
         if mapping:
             return mapping
+
+        # Check XTS direct master cache first
+        if canonical_symbol in self._xts_canonical_to_token:
+            xts_tok = self._xts_canonical_to_token[canonical_symbol]
+            xts_sym = self._xts_canonical_to_symbol.get(canonical_symbol, canonical_symbol.split(":")[-1])
+            seg_prefix = canonical_symbol.split(":")[0] if ":" in canonical_symbol else "NSE"
+            ex = "MCX" if "MCX" in seg_prefix else "NSE"
+            synthetic = SymbolMapping(
+                canonical_symbol=canonical_symbol,
+                display_name=xts_sym,
+                segment=seg_prefix,
+                exchange=ex,
+                xts_token=xts_tok,
+                shoonya_token=xts_tok,
+                fyers_token=canonical_symbol,
+                zerodha_token=xts_tok,
+                dhan_token=xts_tok,
+                kotak_token=xts_sym,
+                lot_size=get_default_lot_size(canonical_symbol),
+                tick_size=0.1 if "MCX" in seg_prefix else 0.05,
+                is_commodity_future=("MCX" in seg_prefix and "FUT" in canonical_symbol)
+            )
+            self._cache[canonical_symbol] = synthetic
+            return synthetic
 
         # Dynamically generate and cache mapping for options (e.g. MCXFO:CRUDEOILM9850CE, NFO:NIFTY24900PE)
         if ":" in canonical_symbol:
@@ -219,10 +262,17 @@ class UniversalSymbolMapper:
 
 
     def get_broker_token(self, canonical_symbol: str, broker: str) -> Optional[str]:
+        # Handle swapped arguments gracefully
+        if canonical_symbol.upper() in ["XTS", "SHOONYA", "FYERS", "ZERODHA", "DHAN", "KOTAK"]:
+            canonical_symbol, broker = broker, canonical_symbol
+
+        broker_lower = broker.lower()
+        if "xts" in broker_lower and canonical_symbol in self._xts_canonical_to_token:
+            return self._xts_canonical_to_token[canonical_symbol]
+
         mapping = self.get_mapping(canonical_symbol)
         if not mapping:
             return None
-        broker_lower = broker.lower()
         if "xts" in broker_lower:
             return mapping.xts_token
         elif "shoonya" in broker_lower:
@@ -255,6 +305,9 @@ class UniversalSymbolMapper:
 
     def get_broker_symbol(self, canonical_symbol: str, broker: str) -> str:
         """Returns the broker-specific trading symbol string"""
+        if canonical_symbol.upper() in ["XTS", "SHOONYA", "FYERS", "ZERODHA", "DHAN", "KOTAK"]:
+            canonical_symbol, broker = broker, canonical_symbol
+
         broker_upper = broker.upper()
         if broker_upper == "XTS" and canonical_symbol in self._xts_canonical_to_symbol:
             return self._xts_canonical_to_symbol[canonical_symbol]

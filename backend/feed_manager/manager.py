@@ -26,8 +26,9 @@ class OHLCBuilder:
 
     def on_tick(self, tick: Dict[str, Any]):
         symbol = tick["symbol"]
-        ltp = tick["ltp"]
-        now = datetime.datetime.utcnow()
+        ltp = float(tick.get("ltp", 0.0))
+        from backend.feed_manager.market_hours import IST_TZ
+        now = datetime.datetime.now(IST_TZ)
 
         if symbol not in self.candles:
             self.candles[symbol] = {"1m": [], "3m": [], "5m": [], "15m": [], "1h": []}
@@ -35,39 +36,43 @@ class OHLCBuilder:
 
         for res, step_minutes in [("1m", 1), ("3m", 3), ("5m", 5), ("15m", 15), ("1h", 60)]:
             curr = self.current_bars[symbol].get(res)
-            # Candle bucket time
+            # Candle bucket time in IST
             minute_bucket = (now.minute // step_minutes) * step_minutes
-            bucket_time = now.replace(minute=minute_bucket, second=0, microsecond=0)
+            bucket_dt = now.replace(minute=minute_bucket, second=0, microsecond=0)
+            bucket_time_str = bucket_dt.isoformat()
 
-            if not curr or curr["time"] != bucket_time:
+            curr_t_str = str(curr.get("time") if curr else "")
+            # Check if bucket shifted
+            if not curr or not curr_t_str.startswith(bucket_time_str[:16]):
                 # Save previous bar
                 if curr:
                     self.candles[symbol][res].append(dict(curr))
-                    if len(self.candles[symbol][res]) > 300:
+                    if len(self.candles[symbol][res]) > 3500:
                         self.candles[symbol][res].pop(0)
 
                 # Start new bar
                 self.current_bars[symbol][res] = {
                     "symbol": symbol,
-                    "time": bucket_time,
+                    "time": bucket_time_str,
+                    "label": bucket_dt.strftime("%H:%M"),
                     "open": ltp,
                     "high": ltp,
                     "low": ltp,
                     "close": ltp,
-                    "volume": tick.get("volume", 0)
+                    "volume": float(tick.get("volume", 0))
                 }
             else:
                 curr["high"] = max(curr["high"], ltp)
                 curr["low"] = min(curr["low"], ltp)
                 curr["close"] = ltp
-                curr["volume"] += tick.get("volume", 0)
+                curr["volume"] = float(curr.get("volume", 0)) + float(tick.get("volume", 0))
 
     def get_bars(self, symbol: str, resolution: str = "5m", count: int = 50) -> List[Dict[str, Any]]:
         sym_candles = self.candles.get(symbol, {}).get(resolution, [])
         bars = [dict(b) for b in sym_candles[-count:]]
 
-        # If RAM cache has fewer than 10 bars, attempt to load persisted historical bars from DB
-        if len(bars) < 10:
+        # If RAM cache has fewer than count bars, attempt to load persisted historical bars from DB
+        if len(bars) < count:
             try:
                 db = SessionLocal()
                 db_rows = db.query(HistoricalCandle).filter(
@@ -81,8 +86,8 @@ class OHLCBuilder:
                     last_row_t = db_rows[-1].timestamp
                     if last_row_t.tzinfo is None:
                         last_row_t = last_row_t.replace(tzinfo=datetime.timezone.utc).astimezone(IST_TZ)
-                    # Only accept cached DB rows if they align with the current session date
-                    if last_row_t.date() >= anchor.date():
+                    # Accept cached DB rows if the latest row is from today or within the last 3 days
+                    if (anchor.date() - last_row_t.date()).days <= 3:
                         loaded = [
                             {
                                 "symbol": r.symbol,
@@ -444,14 +449,29 @@ class FeedManager:
             except Exception:
                 is_stale = False
 
-        if len(bars) < 10 or is_stale:
-            broker = self.active_broker or self.brokers.get("XTS") or (list(self.brokers.values())[0] if self.brokers else None)
+        if len(bars) < count or is_stale:
+            # Prioritize XTS broker for genuine multi-day historical candles via /instruments/ohlc
+            broker = None
+            if "XTS" in self.brokers:
+                broker = self.brokers["XTS"]
+            elif self.active_broker:
+                broker = self.active_broker
+            else:
+                broker = list(self.brokers.values())[0] if self.brokers else None
+
             broker_bars = None
             if broker:
                 try:
                     broker_bars = await broker.fetch_ohlc(canonical_symbol, resolution, count)
                 except Exception as e_br:
                     print(f"[FeedManager] Error fetching OHLC from broker {broker.name}: {e_br}")
+
+            # If primary broker returned empty, try active_broker if different
+            if not broker_bars and self.active_broker and self.active_broker != broker:
+                try:
+                    broker_bars = await self.active_broker.fetch_ohlc(canonical_symbol, resolution, count)
+                except Exception:
+                    pass
 
             # If no broker connected or broker returned empty, fallback to deterministic market session bars
             if not broker_bars:
@@ -470,9 +490,16 @@ class FeedManager:
                 if broker_bars:
                     self.ohlc_builder.current_bars.setdefault(canonical_symbol, {})[resolution] = dict(broker_bars[-1])
 
-                # Asynchronously / safely persist into SQLite historical_candles
+                # Asynchronously / safely persist into SQLite historical_candles in bulk
                 try:
                     db = SessionLocal()
+                    existing_ts = {
+                        r[0] for r in db.query(HistoricalCandle.timestamp).filter(
+                            HistoricalCandle.symbol == canonical_symbol,
+                            HistoricalCandle.resolution == resolution
+                        ).all()
+                    }
+                    new_candles = []
                     for b in broker_bars:
                         raw_t = b.get("time")
                         if isinstance(raw_t, str):
@@ -482,13 +509,8 @@ class FeedManager:
                                 continue
                         else:
                             dt_val = raw_t
-                        exists = db.query(HistoricalCandle.id).filter(
-                            HistoricalCandle.symbol == canonical_symbol,
-                            HistoricalCandle.resolution == resolution,
-                            HistoricalCandle.timestamp == dt_val
-                        ).first()
-                        if not exists:
-                            db.add(HistoricalCandle(
+                        if dt_val not in existing_ts:
+                            new_candles.append(HistoricalCandle(
                                 symbol=canonical_symbol,
                                 resolution=resolution,
                                 timestamp=dt_val,
@@ -498,7 +520,10 @@ class FeedManager:
                                 close=float(b.get("close", 0.0)),
                                 volume=int(b.get("volume", 0))
                             ))
-                    db.commit()
+                            existing_ts.add(dt_val)
+                    if new_candles:
+                        db.bulk_save_objects(new_candles)
+                        db.commit()
                     db.close()
                 except Exception:
                     pass

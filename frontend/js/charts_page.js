@@ -10,6 +10,7 @@ class ChartsPageManager {
         this.catalog = [];
         this.currentTarget = "template:strat_time_atm_seller_v1";
         this.currentResolution = "";
+        this.currentLookback = "1w";
         this.latestData = null;
         this.lwChart = null;
         this.subChart = null;
@@ -35,6 +36,15 @@ class ChartsPageManager {
         if (resEl) {
             resEl.onchange = () => {
                 this.currentResolution = resEl.value;
+                this.loadChartData();
+            };
+        }
+
+        const lbEl = document.getElementById("charts-page-lookback");
+        if (lbEl) {
+            lbEl.value = this.currentLookback || "1w";
+            lbEl.onchange = () => {
+                this.currentLookback = lbEl.value;
                 this.loadChartData();
             };
         }
@@ -285,6 +295,7 @@ class ChartsPageManager {
         try {
             const params = new URLSearchParams({ target: this.currentTarget });
             if (this.currentResolution) params.set("resolution", this.currentResolution);
+            if (this.currentLookback) params.set("lookback", this.currentLookback);
 
             const res = await fetch(`/api/charts/data?${params.toString()}`);
             if (!res.ok) {
@@ -297,7 +308,7 @@ class ChartsPageManager {
             if (this.latestData && this.latestData.template_key === "strat_pcp_pro_v201") {
                 const infoBadge = document.getElementById("pcp-stock-info-badge");
                 if (infoBadge) {
-                    infoBadge.innerHTML = `Active Contract: <strong style="color: var(--accent-cyan);">${this.latestData.symbol}</strong> (${this.latestData.resolution || '3m'})`;
+                    infoBadge.innerHTML = `Active Contract: <strong style="color: var(--accent-cyan);">${this.latestData.symbol}</strong> (${this.latestData.resolution || '3m'}) [${this.latestData.candles ? this.latestData.candles.length : 0} bars]`;
                 }
             }
         } catch (e) {
@@ -338,7 +349,12 @@ class ChartsPageManager {
     }
 
     _toIstEpochSec(isoStr) {
-        const ms = Date.parse(isoStr);
+        if (!isoStr) return null;
+        let s = String(isoStr);
+        if (!s.includes("+") && !s.includes("Z") && !s.includes("-", 10)) {
+            s = s + "+05:30";
+        }
+        const ms = Date.parse(s);
         if (!Number.isFinite(ms)) return null;
         // Shift by +5:30 IST so UTC-based chart X-axis displays exact IST clock times
         return Math.floor(ms / 1000) + 19800;
@@ -498,7 +514,15 @@ class ChartsPageManager {
                 markers.sort((a, b) => a.time - b.time);
                 areaSeries.setMarkers(markers);
             }
-            chart.timeScale().fitContent();
+            if (pts.length > 200) {
+                const total = pts.length;
+                chart.timeScale().setVisibleLogicalRange({
+                    from: total - 150,
+                    to: total,
+                });
+            } else {
+                chart.timeScale().fitContent();
+            }
         } else {
             // Chart.js fallback
             const canvas = document.createElement("canvas");
@@ -731,7 +755,15 @@ class ChartsPageManager {
                 candleSeries.setMarkers(markers);
             }
 
-            chart.timeScale().fitContent();
+            if (lwCandles.length > 200) {
+                const total = lwCandles.length;
+                chart.timeScale().setVisibleLogicalRange({
+                    from: total - 150,
+                    to: total,
+                });
+            } else {
+                chart.timeScale().fitContent();
+            }
         } else {
             // Chart.js fallback (Close + indicators)
             const canvas = document.createElement("canvas");

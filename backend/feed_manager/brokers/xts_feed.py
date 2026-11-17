@@ -36,22 +36,45 @@ import requests
 BASE_PRICES = {
     "NSE:NIFTY": 24925.0,
     "NSE:BANKNIFTY": 51860.0,
-    "NSE:RELIANCE": 2980.0,
-    "NFO:RELIANCE": 2985.0,
-    "NSE:HAL": 4250.0,
-    "NFO:HAL": 4260.0,
-    "NSE:BHARTIARTL": 1610.0,
-    "NFO:BHARTIARTL": 1615.0,
+    "NSE:RELIANCE": 1345.0,
+    "NFO:RELIANCE": 1347.5,
+    "NSE:HAL": 4780.0,
+    "NFO:HAL": 4785.0,
+    "NSE:BHARTIARTL": 2150.0,
+    "NFO:BHARTIARTL": 2155.0,
     "BSE:SENSEX": 81780.0,
-    "NFO:NIFTY26OCT25000CE": 185.0,
-    "BSEFO:SENSEX26OCT82000CE": 240.0,
-    "MCX:CRUDEOIL": 5880.0,
-    "MCX:CRUDEOILM": 5880.0,
-    "MCX:NATURALGAS": 245.0,
-    "MCX:GOLD": 76420.0,
-    "MCX:SILVER": 92550.0,
-    "MCXFO:CRUDEOIL6200CE": 125.0
+    "MCX:CRUDEOIL": 8377.0,
+    "MCX:CRUDEOILM": 8377.0,
+    "MCX:NATURALGAS": 248.5,
+    "MCX:GOLD": 76500.0,
+    "MCX:SILVER": 92100.0,
 }
+
+
+def get_default_base_price(symbol: str) -> float:
+    """Returns realistic default market base price for any symbol or contract."""
+    sym_up = symbol.upper()
+    if "HAL" in sym_up:
+        return 4780.0
+    if "RELIANCE" in sym_up:
+        return 1345.0
+    if "BHARTI" in sym_up:
+        return 2150.0
+    if "NIFTY" in sym_up and "BANK" not in sym_up:
+        return 24900.0
+    if "BANKNIFTY" in sym_up:
+        return 51800.0
+    if "SENSEX" in sym_up:
+        return 81500.0
+    if "CRUDE" in sym_up:
+        return 8370.0
+    if "NATURALGAS" in sym_up:
+        return 245.0
+    if "GOLD" in sym_up:
+        return 76500.0
+    if "SILVER" in sym_up:
+        return 92000.0
+    return 1000.0
 
 
 def pako_inflate_raw(data: bytes) -> bytes:
@@ -74,8 +97,8 @@ class XTSFeedBroker(BaseFeedBroker):
         if "ttblaze.iifl.com" in raw_url and not raw_url.endswith("apibinarymarketdata"):
             raw_url = "https://ttblaze.iifl.com/apibinarymarketdata"
         self.api_url = raw_url
-        self.api_key = self.config.get("api_key", "").strip()
-        self.api_secret = self.config.get("api_secret", "").strip()
+        self.api_key = (self.config.get("api_key") or os.getenv("XTS_FEED_API_KEY") or "").strip()
+        self.api_secret = (self.config.get("api_secret") or os.getenv("XTS_FEED_API_SECRET") or "").strip()
         self.token: Optional[str] = None
         self.user_id: Optional[str] = None
         self.is_live_connected: bool = False
@@ -610,7 +633,7 @@ class XTSFeedBroker(BaseFeedBroker):
             if s not in self.subscribed_symbols:
                 self.subscribed_symbols.append(s)
                 if s not in self._current_prices:
-                    self._current_prices[s] = 100.0
+                    self._current_prices[s] = BASE_PRICES.get(s, get_default_base_price(s))
 
         if self.is_live_connected and self.token:
             self._dispatch_xts_subscriptions_sync(symbols)
@@ -704,22 +727,79 @@ class XTSFeedBroker(BaseFeedBroker):
         count: int = 50
     ) -> List[Dict[str, Any]]:
         cache_key = (canonical_symbol, resolution)
+        from backend.feed_manager.market_hours import IST_TZ
+
+        # 1. Attempt live XTS historical OHLC fetch
+        if not self.token and self.api_key and self.api_secret:
+            try:
+                await self.connect()
+            except Exception as e:
+                print(f"[XTS] Reconnect before fetch_ohlc note: {e}")
+
+        if self.token:
+            tok = symbol_mapper.get_broker_token(canonical_symbol, "XTS")
+            if tok and str(tok).isdigit():
+                seg_code = 51 if "MCX" in canonical_symbol else (2 if "NFO" in canonical_symbol else 1)
+                comp_map = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "1h": 3600}
+                comp_val = comp_map.get(resolution.lower().strip(), 180 if "3m" in resolution else 300)
+
+                # Dynamically set lookback based on requested count (7 days to 35 days)
+                now_ist = datetime.datetime.now(IST_TZ)
+                lookback_days = 35 if count >= 1000 else max(14, int(count / 75) + 3)
+                start_str = (now_ist - datetime.timedelta(days=lookback_days)).strftime("%b %d %Y 091500")
+                end_str = (now_ist + datetime.timedelta(days=1)).strftime("%b %d %Y 153000")
+
+                ohlc_url = f"{self.api_url}/instruments/ohlc"
+                params = {
+                    "exchangeSegment": seg_code,
+                    "exchangeInstrumentID": int(tok),
+                    "startTime": start_str,
+                    "endTime": end_str,
+                    "compressionValue": comp_val
+                }
+                headers = {"Authorization": self.token}
+
+                try:
+                    # Run in executor to prevent blocking asyncio loop
+                    loop = asyncio.get_event_loop()
+                    resp = await loop.run_in_executor(
+                        None,
+                        lambda: self.session.get(ohlc_url, headers=headers, params=params, timeout=12)
+                    )
+                    if resp.status_code == 200:
+                        data_rep = resp.json().get("result", {}).get("dataReponse", "")
+                        if data_rep:
+                            raw_bars = [b.split("|") for b in data_rep.split(",") if b]
+                            parsed_bars = []
+                            for b in raw_bars:
+                                if len(b) >= 6:
+                                    ts = int(b[0])
+                                    # XTS server returns unix epoch from local IST wall clock
+                                    dt = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).replace(tzinfo=IST_TZ)
+                                    o, h, l, c, v = float(b[1]), float(b[2]), float(b[3]), float(b[4]), float(b[5])
+                                    parsed_bars.append({
+                                        "time": dt.isoformat(),
+                                        "label": dt.strftime("%H:%M"),
+                                        "open": o,
+                                        "high": h,
+                                        "low": l,
+                                        "close": c,
+                                        "volume": v
+                                    })
+                            if parsed_bars:
+                                self._current_prices[canonical_symbol] = parsed_bars[-1]["close"]
+                                self._cached_ohlc[cache_key] = parsed_bars
+                                return [dict(x) for x in parsed_bars[-count:]]
+                except Exception as ex_ohlc:
+                    print(f"[XTS] fetch_ohlc HTTP error for {canonical_symbol}: {ex_ohlc}")
+
+        # 2. Fallback to cached or synthetic market session bars
         curr_price = float(self._current_prices.get(canonical_symbol, 0.0))
         if curr_price <= 0.0:
-            if canonical_symbol in BASE_PRICES:
-                curr_price = BASE_PRICES[canonical_symbol]
-            elif "HAL" in canonical_symbol:
-                curr_price = 4250.0
-            elif "BHARTIARTL" in canonical_symbol or "BHARTIAIRTEL" in canonical_symbol:
-                curr_price = 1610.0
-            elif "RELIANCE" in canonical_symbol:
-                curr_price = 2980.0
-            else:
-                curr_price = 1000.0
+            curr_price = BASE_PRICES.get(canonical_symbol, get_default_base_price(canonical_symbol))
 
         if cache_key in self._cached_ohlc:
             bars = self._cached_ohlc[cache_key]
-            # Update latest bar with current live price so chart tracks real-time ticks
             if bars and curr_price > 0:
                 last_bar = bars[-1]
                 last_bar["close"] = curr_price

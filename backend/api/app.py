@@ -1573,6 +1573,8 @@ async def get_strategy_chart_data(
     target: str = "template:strat_time_atm_seller_v1",
     resolution: Optional[str] = None,
     stock: Optional[str] = None,
+    lookback: Optional[str] = "1w",
+    count: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1639,6 +1641,23 @@ async def get_strategy_chart_data(
         tf = f"{tf}m"
     if tf not in ["1m", "3m", "5m", "15m", "1h"]:
         tf = "3m" if "pcp_pro" in template_key else ("1m" if "ftx" in template_key else "5m")
+
+    # Determine target bar count based on requested lookback & resolution
+    lb = (lookback or "1w").lower().strip()
+    if count is not None and count > 0:
+        target_count = min(3500, count)
+    else:
+        step_min = 3 if "3m" in tf else (1 if "1m" in tf else (5 if "5m" in tf else (15 if "15m" in tf else 60)))
+        trading_hours_per_day = 14.5 if "MCX" in symbol.upper() else 6.25
+        bars_per_day = int((trading_hours_per_day * 60) / step_min) + 5
+        if lb == "1d":
+            target_count = max(130, bars_per_day)
+        elif lb == "3d":
+            target_count = max(400, bars_per_day * 3)
+        elif lb == "1m":
+            target_count = min(3500, max(2800, bars_per_day * 22))
+        else:  # "1w" default
+            target_count = min(3500, max(1200, bars_per_day * 8))
 
     ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 
@@ -1717,8 +1736,8 @@ async def get_strategy_chart_data(
             elif pe_ltp_hint > 0:
                 broker_inst._current_prices[pe_sym] = pe_ltp_hint
 
-        ce_bars = await feed_manager.get_ohlc(ce_sym, resolution=tf, count=120)
-        pe_bars = await feed_manager.get_ohlc(pe_sym, resolution=tf, count=120)
+        ce_bars = await feed_manager.get_ohlc(ce_sym, resolution=tf, count=target_count)
+        pe_bars = await feed_manager.get_ohlc(pe_sym, resolution=tf, count=target_count)
 
         # Align CE & PE bars cleanly
         pe_by_label: Dict[str, float] = {}
@@ -1809,6 +1828,8 @@ async def get_strategy_chart_data(
             "ce_symbol": ce_sym,
             "pe_symbol": pe_sym,
             "resolution": tf,
+            "lookback": lb,
+            "requested_count": target_count,
             "underlying_ltp": round(underlying_ltp, 2),
             "combined_series": series,
             "reference_lines": {
@@ -1824,7 +1845,7 @@ async def get_strategy_chart_data(
     # ------------------------------------------------------------------
     # 2. PivotChandelier Pro / Supertrend Momentum / FTX (OHLC + Indicators)
     # ------------------------------------------------------------------
-    bars = await feed_manager.get_ohlc(symbol, resolution=tf, count=240)
+    bars = await feed_manager.get_ohlc(symbol, resolution=tf, count=target_count)
     if template_key == "strat_pcp_pro_v201":
         from backend.strategy_manager.registered.pcp_pro_v201 import compute_pcp_chart_payload
         payload = compute_pcp_chart_payload(bars, cfg)
@@ -1843,6 +1864,8 @@ async def get_strategy_chart_data(
         "symbol": symbol,
         "underlying": root if template_key == "strat_pcp_pro_v201" else symbol,
         "resolution": tf,
+        "lookback": lb,
+        "requested_count": target_count,
         "candles": payload.get("candles", []),
         "overlays": payload.get("overlays", {}),
         "oscillators": payload.get("oscillators", {}),
