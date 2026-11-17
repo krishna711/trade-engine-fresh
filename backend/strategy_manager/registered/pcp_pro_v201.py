@@ -946,8 +946,10 @@ def _parse_bar_ist(t_val: Any) -> datetime.datetime:
         except Exception:
             dt = datetime.datetime.now(datetime.timezone.utc)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=datetime.timezone.utc)
-    return dt.astimezone(IST_TZ)
+        dt = dt.replace(tzinfo=IST_TZ)
+    else:
+        dt = dt.astimezone(IST_TZ)
+    return dt
 
 
 def _get_last_thursday(year: int, month: int) -> datetime.date:

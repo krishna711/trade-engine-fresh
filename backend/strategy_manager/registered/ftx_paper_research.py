@@ -704,8 +704,9 @@ class FTXPaperResearchStrategy(BaseStrategy):
             except Exception:
                 dt = datetime.datetime.now(datetime.timezone.utc)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=datetime.timezone.utc)
-        ist_dt = dt.astimezone(IST_TZ)
+            ist_dt = dt.replace(tzinfo=IST_TZ)
+        else:
+            ist_dt = dt.astimezone(IST_TZ)
 
         return Bar(
             timestamp=ist_dt,
@@ -1148,8 +1149,9 @@ def compute_ftx_chart_payload(raw_bars: List[Dict[str, Any]], cfg: Dict[str, Any
             except Exception:
                 dt = datetime.datetime.now(datetime.timezone.utc)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=datetime.timezone.utc)
-        dt_ist = dt.astimezone(IST_TZ)
+            dt_ist = dt.replace(tzinfo=IST_TZ)
+        else:
+            dt_ist = dt.astimezone(IST_TZ)
 
         o, h, l, c = float(b["open"]), float(b["high"]), float(b["low"]), float(b["close"])
         v = float(b.get("volume") or 0.0)

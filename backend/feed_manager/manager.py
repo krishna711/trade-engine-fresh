@@ -85,13 +85,15 @@ class OHLCBuilder:
                     anchor = get_last_completed_trading_session_anchor(symbol, resolution)
                     last_row_t = db_rows[-1].timestamp
                     if last_row_t.tzinfo is None:
-                        last_row_t = last_row_t.replace(tzinfo=datetime.timezone.utc).astimezone(IST_TZ)
+                        last_row_t = last_row_t.replace(tzinfo=IST_TZ)
+                    else:
+                        last_row_t = last_row_t.astimezone(IST_TZ)
                     # Accept cached DB rows if the latest row is from today or within the last 3 days
                     if (anchor.date() - last_row_t.date()).days <= 3:
                         loaded = [
                             {
                                 "symbol": r.symbol,
-                                "time": r.timestamp.isoformat(),
+                                "time": (r.timestamp.replace(tzinfo=IST_TZ) if r.timestamp.tzinfo is None else r.timestamp).isoformat(),
                                 "open": float(r.open),
                                 "high": float(r.high),
                                 "low": float(r.low),
@@ -440,7 +442,7 @@ class FeedManager:
                 if "T" in last_t_str:
                     last_dt = datetime.datetime.fromisoformat(last_t_str)
                     if last_dt.tzinfo is None:
-                        last_dt = last_dt.replace(tzinfo=datetime.timezone.utc).astimezone(IST_TZ)
+                        last_dt = last_dt.replace(tzinfo=IST_TZ)
                     else:
                         last_dt = last_dt.astimezone(IST_TZ)
                     # If last candle is from an older day or more than 3 candle intervals behind current anchor
@@ -490,15 +492,13 @@ class FeedManager:
                 if broker_bars:
                     self.ohlc_builder.current_bars.setdefault(canonical_symbol, {})[resolution] = dict(broker_bars[-1])
 
-                # Asynchronously / safely persist into SQLite historical_candles in bulk
+                # Persist clean broker bars into SQLite historical_candles, replacing any stale/corrupt rows
                 try:
                     db = SessionLocal()
-                    existing_ts = {
-                        r[0] for r in db.query(HistoricalCandle.timestamp).filter(
-                            HistoricalCandle.symbol == canonical_symbol,
-                            HistoricalCandle.resolution == resolution
-                        ).all()
-                    }
+                    db.query(HistoricalCandle).filter(
+                        HistoricalCandle.symbol == canonical_symbol,
+                        HistoricalCandle.resolution == resolution
+                    ).delete()
                     new_candles = []
                     for b in broker_bars:
                         raw_t = b.get("time")
@@ -509,18 +509,18 @@ class FeedManager:
                                 continue
                         else:
                             dt_val = raw_t
-                        if dt_val not in existing_ts:
-                            new_candles.append(HistoricalCandle(
-                                symbol=canonical_symbol,
-                                resolution=resolution,
-                                timestamp=dt_val,
-                                open=float(b.get("open", 0.0)),
-                                high=float(b.get("high", 0.0)),
-                                low=float(b.get("low", 0.0)),
-                                close=float(b.get("close", 0.0)),
-                                volume=int(b.get("volume", 0))
-                            ))
-                            existing_ts.add(dt_val)
+                        if hasattr(dt_val, "tzinfo") and dt_val.tzinfo:
+                            dt_val = dt_val.astimezone(IST_TZ).replace(tzinfo=None)
+                        new_candles.append(HistoricalCandle(
+                            symbol=canonical_symbol,
+                            resolution=resolution,
+                            timestamp=dt_val,
+                            open=float(b.get("open", 0.0)),
+                            high=float(b.get("high", 0.0)),
+                            low=float(b.get("low", 0.0)),
+                            close=float(b.get("close", 0.0)),
+                            volume=int(b.get("volume", 0))
+                        ))
                     if new_candles:
                         db.bulk_save_objects(new_candles)
                         db.commit()

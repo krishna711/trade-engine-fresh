@@ -95,6 +95,16 @@ def check_and_migrate_db():
                 WHERE category = 'STRATEGY_DECISION'
                   AND (message LIKE '%Candle Fetch%' OR message LIKE '%bar close:%');
             """))
+
+            # Clean out any legacy contaminated / dummy synthetic candles (e.g. close < 500 for HAL/RELIANCE/BHARTIARTL)
+            conn.execute(text("""
+                DELETE FROM historical_candles
+                WHERE (symbol LIKE '%HAL%' AND close < 3000.0)
+                   OR (symbol LIKE '%BHARTI%' AND close < 1500.0)
+                   OR (symbol LIKE '%RELIANCE%' AND (close < 800.0 OR close > 2500.0))
+                   OR (symbol LIKE '%NIFTY%' AND close < 15000.0)
+                   OR close <= 100.0;
+            """))
     except Exception as e:
         print(f"[DB Migration Warning] {e}")
 

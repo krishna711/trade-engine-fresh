@@ -798,14 +798,15 @@ def compute_supertrend_chart_payload(bars: List[Dict[str, Any]], cfg: Dict[str, 
     for b in valid_bars:
         t_val = b.get("time")
         if isinstance(t_val, datetime.datetime):
-            dt_ist = t_val if t_val.tzinfo else t_val.replace(tzinfo=datetime.timezone.utc).astimezone(IST_TZ)
+            dt_ist = t_val if t_val.tzinfo else t_val.replace(tzinfo=IST_TZ)
         elif isinstance(t_val, (int, float)):
             sec = t_val / 1000.0 if t_val > 1e11 else t_val
             dt_ist = datetime.datetime.fromtimestamp(sec, tz=datetime.timezone.utc).astimezone(IST_TZ)
         else:
             s = str(t_val or "").replace("Z", "+00:00")
             try:
-                dt_ist = datetime.datetime.fromisoformat(s).astimezone(IST_TZ)
+                dt_raw = datetime.datetime.fromisoformat(s)
+                dt_ist = dt_raw if dt_raw.tzinfo else dt_raw.replace(tzinfo=IST_TZ)
             except Exception:
                 dt_ist = datetime.datetime.now(IST_TZ)
 
@@ -1087,14 +1088,15 @@ class SupertrendMomentumStrategy(BaseStrategy):
         for b in completed:
             t_val = b.get("time")
             if isinstance(t_val, datetime.datetime):
-                dt_ist = t_val if t_val.tzinfo else t_val.replace(tzinfo=datetime.timezone.utc).astimezone(IST_TZ)
+                dt_ist = t_val if t_val.tzinfo else t_val.replace(tzinfo=IST_TZ)
             elif isinstance(t_val, (int, float)):
                 sec = t_val / 1000.0 if t_val > 1e11 else t_val
                 dt_ist = datetime.datetime.fromtimestamp(sec, tz=datetime.timezone.utc).astimezone(IST_TZ)
             else:
                 s = str(t_val or "").replace("Z", "+00:00")
                 try:
-                    dt_ist = datetime.datetime.fromisoformat(s).astimezone(IST_TZ)
+                    dt_raw = datetime.datetime.fromisoformat(s)
+                    dt_ist = dt_raw if dt_raw.tzinfo else dt_raw.replace(tzinfo=IST_TZ)
                 except Exception:
                     dt_ist = datetime.datetime.now(IST_TZ)
 
