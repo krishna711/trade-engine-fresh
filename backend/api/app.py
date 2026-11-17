@@ -44,6 +44,30 @@ async def add_no_cache_headers(request: Request, call_next):
     response.headers["Expires"] = "0"
     return response
 
+# ----------------- IST TIMEZONE HELPERS -----------------
+IST_TZ = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
+def to_ist(dt: Optional[datetime.datetime]) -> Optional[datetime.datetime]:
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        # SQLite naive timestamps are stored as UTC
+        return dt.replace(tzinfo=datetime.timezone.utc).astimezone(IST_TZ)
+    return dt.astimezone(IST_TZ)
+
+def format_ist(dt: Optional[datetime.datetime], fmt: str = "%H:%M:%S") -> str:
+    ist_dt = to_ist(dt)
+    return ist_dt.strftime(fmt) if ist_dt else "--:--:--"
+
+def format_ist_timeline(dt: Optional[datetime.datetime]) -> str:
+    ist_dt = to_ist(dt)
+    if not ist_dt:
+        return "--:--:--"
+    now_ist = datetime.datetime.now(IST_TZ)
+    if ist_dt.date() == now_ist.date():
+        return ist_dt.strftime("%H:%M:%S IST")
+    return ist_dt.strftime("%d %b %H:%M:%S IST")
+
 # ----------------- WEBSOCKET CLIENT MANAGER -----------------
 class WebSocketManager:
     def __init__(self):
@@ -888,7 +912,7 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
                 "quantity": o.quantity,
                 "price": o.price,
                 "status": o.status,
-                "created_at": o.created_at.strftime("%H:%M:%S") if hasattr(o.created_at, "strftime") else str(o.created_at)
+                "created_at": format_ist(o.created_at, "%H:%M:%S") if hasattr(o.created_at, "strftime") else str(o.created_at)
             } for o in orders
         ]
 
@@ -903,7 +927,7 @@ async def get_account_drawer_details(client_id: str, db: Session = Depends(get_d
                 "side": t.side,
                 "quantity": t.quantity,
                 "price": t.price,
-                "timestamp": t.timestamp.strftime("%H:%M:%S") if hasattr(t.timestamp, "strftime") else str(t.timestamp)
+                "timestamp": format_ist(t.timestamp, "%H:%M:%S") if hasattr(t.timestamp, "strftime") else str(t.timestamp)
             } for t in trades
         ]
 
@@ -1039,7 +1063,7 @@ def list_strategy_templates(db: Session = Depends(get_db)):
             "name_user": t.name_user,
             "description": t.description,
             "default_config": t.default_config,
-            "created": t.created_at.strftime("%Y-%m-%d %H:%M")
+            "created": format_ist(t.created_at, "%Y-%m-%d %H:%M")
         } for t in templates
     ]
 
@@ -1093,12 +1117,7 @@ def list_strategy_instances(db: Session = Depends(get_db), current_user: User = 
             if w and w.get("last_signal_time"):
                 last_sig_dt = w["last_signal_time"]
 
-        last_sig_str = None
-        if last_sig_dt:
-            if last_sig_dt.tzinfo is None:
-                ist_tz = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
-                last_sig_dt = last_sig_dt.replace(tzinfo=datetime.timezone.utc).astimezone(ist_tz)
-            last_sig_str = last_sig_dt.strftime("%H:%M:%S")
+        last_sig_str = format_ist(last_sig_dt, "%H:%M:%S") if last_sig_dt else None
 
         result.append({
             "id": inst.id,
@@ -1110,7 +1129,7 @@ def list_strategy_instances(db: Session = Depends(get_db), current_user: User = 
             "client_ids": inst.client_ids,
             "mapped_clients": mapped_clients,
             "last_trade_status": inst.last_trade_status,
-            "last_trade_at": inst.last_trade_at.strftime("%Y-%m-%d %H:%M:%S") if inst.last_trade_at else None,
+            "last_trade_at": format_ist(inst.last_trade_at, "%Y-%m-%d %H:%M:%S") if inst.last_trade_at else None,
             "last_signal_time": last_sig_str,
             "start_time": inst.start_time,
             "end_time": inst.end_time,
@@ -1900,7 +1919,7 @@ def get_strategy_recent_trades(id: int, db: Session = Depends(get_db)):
                 "quantity": t.quantity,
                 "price": t.price,
                 "leg_id": t.leg_id,
-                "timestamp": t.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                "timestamp": format_ist(t.timestamp, "%Y-%m-%d %H:%M:%S")
             } for t in trades
         ]
     }
@@ -1928,7 +1947,7 @@ def get_strategy_chronological_logs(id: int, include_candle_fetch: bool = True, 
             "category": l.category,
             "level": l.level,
             "message": l.message,
-            "timestamp": l.timestamp.strftime("%H:%M:%S")
+            "timestamp": format_ist_timeline(l.timestamp)
         } for l in combined
     ]
 
@@ -2216,7 +2235,7 @@ def get_system_logs(
                 "client_id": e.client_id,
                 "symbol": e.symbol,
                 "strategy_id": e.strategy_id,
-                "timestamp": e.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                "timestamp": format_ist(e.timestamp, "%Y-%m-%d %H:%M:%S")
             } for e in undismissed_errors
         ],
         "logs": [
@@ -2229,7 +2248,7 @@ def get_system_logs(
                 "strategy_id": l.strategy_id,
                 "symbol": l.symbol,
                 "is_dismissed": l.is_dismissed,
-                "timestamp": l.timestamp.strftime("%Y-%m-%d %H:%M:%S")
+                "timestamp": format_ist(l.timestamp, "%Y-%m-%d %H:%M:%S")
             } for l in logs
         ]
     }
@@ -2577,8 +2596,8 @@ async def get_reports_trades(
         trade_list.append({
             "id": r.id,
             "cycle_id": r.cycle_id,
-            "opened": r.opened_at.strftime("%m/%d/%Y, %I:%M:%S %p") if r.opened_at else "-",
-            "closed": r.closed_at.strftime("%m/%d/%Y, %I:%M:%S %p") if r.closed_at else "-",
+            "opened": format_ist(r.opened_at, "%m/%d/%Y, %I:%M:%S %p") if r.opened_at else "-",
+            "closed": format_ist(r.closed_at, "%m/%d/%Y, %I:%M:%S %p") if r.closed_at else "-",
             "client": r.client_id,
             "strategy": r.strategy_name,
             "mode": r.mode,
@@ -2617,7 +2636,7 @@ async def list_users(db: Session = Depends(get_db), current_user: User = Depends
             "email": u.email or "",
             "role": u.role,
             "is_active": u.is_active,
-            "created_at": u.created_at.strftime("%Y-%m-%d %H:%M:%S") if u.created_at else "-"
+            "created_at": format_ist(u.created_at, "%Y-%m-%d %H:%M:%S") if u.created_at else "-"
         })
     return {
         "success": True,
@@ -2683,7 +2702,7 @@ async def create_user(payload: Dict[str, Any] = Body(...), db: Session = Depends
             "email": new_user.email,
             "role": new_user.role,
             "is_active": new_user.is_active,
-            "created_at": new_user.created_at.strftime("%Y-%m-%d %H:%M:%S") if new_user.created_at else "-"
+            "created_at": format_ist(new_user.created_at, "%Y-%m-%d %H:%M:%S") if new_user.created_at else "-"
         }
     }
 
@@ -2736,7 +2755,7 @@ async def update_user(user_id: int, payload: Dict[str, Any] = Body(...), db: Ses
             "email": user.email,
             "role": user.role,
             "is_active": user.is_active,
-            "created_at": user.created_at.strftime("%Y-%m-%d %H:%M:%S") if user.created_at else "-"
+            "created_at": format_ist(user.created_at, "%Y-%m-%d %H:%M:%S") if user.created_at else "-"
         }
     }
 
@@ -2903,7 +2922,7 @@ async def test_telegram_notification(
         )
 
     # Formatted sample test message demonstrating the 3 tiers
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = datetime.datetime.now(IST_TZ).strftime("%Y-%m-%d %H:%M:%S IST")
     test_msg = (
         f"⚡ <b>FRESH TRADE ENGINE - TELEGRAM ALERT TEST</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
