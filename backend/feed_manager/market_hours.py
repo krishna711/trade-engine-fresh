@@ -21,8 +21,8 @@ DEFAULT_BASE_PRICES = {
     "NSE:NIFTY": 22485.0,
     "NSE:BANKNIFTY": 48250.0,
     "BSE:SENSEX": 73800.0,
-    "MCX:CRUDEOIL": 8377.0,
-    "MCX:CRUDEOILM": 8377.0,
+    "MCX:CRUDEOIL": 8033.0,
+    "MCX:CRUDEOILM": 8033.0,
     "MCX:NATURALGAS": 185.0,
     "MCX:GOLD": 71500.0,
     "MCX:SILVER": 83200.0,
@@ -198,7 +198,7 @@ def build_market_session_bars(
         elif "BHARTI" in symbol.upper():
             p_ref = 1610.0
         elif "CRUDE" in symbol.upper():
-            p_ref = 8377.0
+            p_ref = 8033.0
         elif "NIFTY" in symbol.upper():
             p_ref = 22485.0
         elif "BANKNIFTY" in symbol.upper():

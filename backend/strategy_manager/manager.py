@@ -1028,5 +1028,16 @@ class StrategySupervisor:
         finally:
             db.close()
 
+    def reset_strategy_trade(self, instance_id: int):
+        """Sends RESET_TRADE message to the isolated worker process to re-arm strategy to IDLE"""
+        if instance_id in self.active_workers:
+            in_q = self.active_workers[instance_id].get("in_queue")
+            if in_q:
+                try:
+                    in_q.put({"type": "RESET_TRADE"})
+                    print(f"[StrategySupervisor] Sent RESET_TRADE to Strategy #{instance_id}")
+                except Exception as e:
+                    print(f"[StrategySupervisor] Error sending RESET_TRADE to #{instance_id}: {e}")
+
 # Global Strategy Supervisor Singleton
 strategy_supervisor = StrategySupervisor()

@@ -133,6 +133,8 @@ class UniversalSymbolMapper:
                 can_root = f"{prefix}:{root}"
                 self._xts_canonical_to_token[can_root] = token
                 self._xts_canonical_to_symbol[can_root] = trading_sym
+                # Map token directly to canonical root so incoming ticks stream as e.g. MCX:CRUDEOILM
+                self._xts_token_to_canonical[token] = can_root
                 # If NFO, also alias as NSE:HAL if not present
                 if prefix == "NFO" and f"NSE:{root}" not in self._xts_canonical_to_token:
                     self._xts_canonical_to_token[f"NSE:{root}"] = token

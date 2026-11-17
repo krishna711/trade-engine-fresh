@@ -46,6 +46,8 @@ class OrderReconciler:
 
             new_status = report.get("status", order.status)
             order.status = new_status
+            if report.get("broker_order_id") and not order.broker_order_id:
+                order.broker_order_id = str(report["broker_order_id"])
             raw_filled = report.get("filled_quantity", order.filled_quantity)
             eff_filled = int(raw_filled) if raw_filled is not None else 0
             if order.quantity and order.quantity > 0 and eff_filled > order.quantity:
@@ -227,14 +229,12 @@ class OrderReconciler:
             # 1. Open/Pending orders to reconcile
             open_orders = db.query(Order).filter(
                 Order.status.in_(["NEW", "PENDING", "OPEN"]),
-                Order.broker_order_id.isnot(None),
                 Order.created_at >= cutoff
             ).all()
 
             # 2. Filled orders to verify fill prices against broker tradebook
             filled_orders = db.query(Order).filter(
                 Order.status == "FILLED",
-                Order.broker_order_id.isnot(None),
                 Order.created_at >= cutoff
             ).all()
 
@@ -312,8 +312,20 @@ class OrderReconciler:
                                 str(raw_t.get("OrderID") or "").strip(),
                                 str(raw_t.get("ExchangeOrderID") or "").strip()
                             ])
-                            if b_id in t_oids and float(t.get("price") or 0.0) > 0:
+                            if b_id and b_id in t_oids and float(t.get("price") or 0.0) > 0:
                                 matched_t.append(t)
+                            elif not b_id:
+                                # Fallback match by exact symbol and side
+                                t_sym = str(t.get("symbol") or "").replace(" ", "").upper()
+                                t_side = str(t.get("side") or "").upper()
+                                ord_clean_sym = ord_rec.symbol.split(":")[-1].replace(" ", "").upper()
+                                if (ord_clean_sym in t_sym or t_sym in ord_clean_sym) and t_side == str(ord_rec.side).upper():
+                                    if float(t.get("price") or 0.0) > 0:
+                                        matched_t.append(t)
+                                        found_b_id = str(t.get("app_order_id") or t.get("order_id") or "")
+                                        if found_b_id:
+                                            ord_rec.broker_order_id = found_b_id
+                                            b_id = found_b_id
 
                         if matched_t:
                             sum_v = sum(float(t.get("price") or 0.0) * int(t.get("quantity") or 0) for t in matched_t if float(t.get("price") or 0.0) > 0)
@@ -335,9 +347,8 @@ class OrderReconciler:
                                     pos_p = cand_p
                                     break
 
-                        if pos_p > 0:
-                            if real_p <= 0.0 or abs(real_p - pos_p) / max(pos_p, 1.0) > 0.4:
-                                real_p = pos_p
+                        if pos_p > 0 and real_p <= 0.0:
+                            real_p = pos_p
 
                         # If real traded price found and differs from recorded price, update it!
                         if real_p > 0 and abs(ord_rec.average_price - real_p) > 0.01:
@@ -370,6 +381,10 @@ class OrderReconciler:
                                             pnl_mult = 10 if is_mcx and "CRUDE" in ord_rec.symbol.upper() else 1
                                             if leg.get("status") != "CLOSED":
                                                 leg["pnl"] = round((real_p - ltp) * qty * pnl_mult, 2)
+                                            else:
+                                                entry_val = float(leg.get("entry") or 0.0)
+                                                exit_val = float(leg.get("exit") or entry_val)
+                                                leg["pnl"] = round((entry_val - exit_val) * qty * pnl_mult, 2)
                                             mod_leg = True
                                         if leg.get("status") in ["FILLED", "OPEN"] and leg.get("exit") is None:
                                             tot_unrealized += float(leg.get("pnl") or 0.0)
@@ -377,6 +392,9 @@ class OrderReconciler:
                                         inst.legs_info = legs
                                         flag_modified(inst, "legs_info")
                                         inst.unrealized_pnl = round(tot_unrealized, 2)
+                                        tot_realized_from_legs = sum(float(l.get("pnl") or 0.0) for l in legs if l.get("status") == "CLOSED")
+                                        if tot_realized_from_legs != 0.0:
+                                            inst.realized_pnl = round(tot_realized_from_legs, 2)
                                         inst.total_pnl = round((inst.realized_pnl or 0.0) + inst.unrealized_pnl, 2)
 
                             db.commit()

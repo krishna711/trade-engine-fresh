@@ -746,8 +746,11 @@ class XTSFeedBroker(BaseFeedBroker):
                 # Dynamically set lookback based on requested count (7 days to 35 days)
                 now_ist = datetime.datetime.now(IST_TZ)
                 lookback_days = 35 if count >= 1000 else max(14, int(count / 75) + 3)
-                start_str = (now_ist - datetime.timedelta(days=lookback_days)).strftime("%b %d %Y 091500")
-                end_str = (now_ist + datetime.timedelta(days=1)).strftime("%b %d %Y 153000")
+                is_mcx = seg_code == 51 or "MCX" in canonical_symbol
+                open_hhmmss = "090000" if is_mcx else "091500"
+                close_hhmmss = "233000" if is_mcx else "153000"
+                start_str = (now_ist - datetime.timedelta(days=lookback_days)).strftime(f"%b %d %Y {open_hhmmss}")
+                end_str = (now_ist + datetime.timedelta(days=1)).strftime(f"%b %d %Y {close_hhmmss}")
 
                 ohlc_url = f"{self.api_url}/instruments/ohlc"
                 params = {

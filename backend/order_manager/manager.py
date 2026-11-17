@@ -266,44 +266,65 @@ class OrderManager:
                 Position.net_quantity != 0
             ).all()
 
+            order_results = {}
             for pos in positions:
                 side = "SELL" if pos.net_quantity > 0 else "BUY"
                 qty = abs(pos.net_quantity)
-                await self.place_order(
+                clean_sym = pos.symbol.split(":")[-1]
+                leg_id = f"EXIT_{clean_sym}"
+                res = await self.place_order(
                     client_id=pos.client_id,
                     symbol=pos.symbol,
                     side=side,
                     quantity=qty,
                     order_type="MARKET",
                     price=pos.ltp,
-                    strategy_instance_id=strategy_id
+                    strategy_instance_id=strategy_id,
+                    leg_id=leg_id
                 )
+                order_results[pos.symbol] = res
                 squared_count += 1
 
-            # Update strategy state to STOPPED, trade status to CLOSED, and clear active legs
+            # Update strategy state: Keep RUNNING so strategy can trade on next scheduled session/time!
             strat = db.query(StrategyInstance).filter(StrategyInstance.id == strategy_id).first()
             if strat:
-                strat.status = "STOPPED"
                 strat.last_trade_status = "CLOSED"
                 strat.unrealized_pnl = 0.0
-                strat.total_pnl = strat.realized_pnl
+
                 if strat.legs_info:
                     closed_legs = []
+                    tot_realized_from_legs = 0.0
                     for leg in strat.legs_info:
-                        leg_str = str(leg.get("symbol") or leg.get("leg") or "")
-                        m = re.search(r"(\d+)", leg_str)
-                        if m and ("CRUDE" in leg_str.upper() or "MCX" in leg_str.upper()):
-                            strike_val = int(m.group(1))
-                            if strike_val > 15000 or strike_val < 3000:
-                                continue  # Purge phantom strike
                         l_copy = dict(leg)
-                        l_copy["status"] = "CLOSED"
-                        if not l_copy.get("exit"):
-                            l_copy["exit"] = l_copy.get("ltp") or l_copy.get("entry") or 0.0
-                        l_copy["pnl"] = 0.0
+                        l_sym = str(l_copy.get("symbol") or l_copy.get("leg") or "")
+                        match_res = None
+                        for s_sym, r in order_results.items():
+                            if s_sym in l_sym or l_sym in s_sym or s_sym.split(":")[-1] in l_sym:
+                                match_res = r
+                                break
+
+                        if match_res and match_res.get("price") and match_res.get("price") > 0:
+                            l_copy["exit"] = float(match_res["price"])
+                            l_copy["status"] = "CLOSED"
+                        elif not l_copy.get("exit"):
+                            l_copy["exit"] = float(l_copy.get("ltp") or l_copy.get("entry") or 0.0)
+                            l_copy["status"] = "CLOSED"
+
+                        # Calculate leg realized PnL
+                        entry_p = float(l_copy.get("entry") or 0.0)
+                        exit_p = float(l_copy.get("exit") or entry_p)
+                        leg_qty = abs(int(l_copy.get("qty") or 1))
+                        is_mcx = "MCX" in l_sym.upper()
+                        mult = 10 if is_mcx and "CRUDE" in l_sym.upper() else 1
+                        leg_pnl = round((entry_p - exit_p) * leg_qty * mult, 2)
+                        l_copy["pnl"] = leg_pnl
+                        tot_realized_from_legs += leg_pnl
                         closed_legs.append(l_copy)
+
                     strat.legs_info = closed_legs
                     flag_modified(strat, "legs_info")
+                    strat.realized_pnl = round((strat.realized_pnl or 0.0) + tot_realized_from_legs, 2)
+                    strat.total_pnl = strat.realized_pnl
                 db.commit()
 
             # Zero out any position records for this strategy instance
@@ -312,6 +333,13 @@ class OrderManager:
                 Position.unrealized_pnl: 0.0
             })
             db.commit()
+
+            # Reset worker process internal trade_state to IDLE so it can enter on future time / new session
+            try:
+                from backend.strategy_manager.manager import strategy_supervisor
+                strategy_supervisor.reset_strategy_trade(strategy_id)
+            except Exception as e_sup:
+                print(f"[OrderManager] Note: Could not send reset_strategy_trade: {e_sup}")
 
             return {"success": True, "squared_positions": squared_count, "strategy_id": strategy_id}
         finally:

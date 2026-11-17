@@ -478,6 +478,14 @@ class FeedManager:
             # If no broker connected or broker returned empty, fallback to deterministic market session bars
             if not broker_bars:
                 curr_price = float(self.ticks_cache.get(canonical_symbol, {}).get("ltp", 0.0))
+                if curr_price <= 0.0:
+                    clean_root = canonical_symbol.split(":")[-1]
+                    for tk_sym, tk_data in self.ticks_cache.items():
+                        if clean_root in tk_sym and not (tk_sym.endswith("CE") or tk_sym.endswith("PE")):
+                            cand_ltp = float(tk_data.get("ltp") or 0.0)
+                            if cand_ltp > 0:
+                                curr_price = cand_ltp
+                                break
                 broker_bars = build_market_session_bars(
                     symbol=canonical_symbol,
                     resolution=resolution,

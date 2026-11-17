@@ -49,7 +49,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         self.subscribed_option_symbols: List[str] = []
 
         # Keep track of last known underlying LTP for timer-based entries
-        self.last_underlying_ltp = 5880.0 if "CRUDEOIL" in self.symbol else 24500.0
+        self.last_underlying_ltp = 0.0
 
         self.log_decision(
             "INIT",
@@ -138,6 +138,17 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         if "allow_entry_in_window" in new_config:
             self.allow_entry_in_window = bool(new_config["allow_entry_in_window"])
 
+        # Re-arm strategy to IDLE if user configured entry time for a future time
+        if "entry_time" in new_config or "start_time" in new_config:
+            if self.trade_state in ["CLOSED", "STOPPED"]:
+                self.trade_state = "IDLE"
+                self.current_trade = None
+                self.log_decision(
+                    "CYCLE RE-ARMED",
+                    f"Entry time updated to {self.entry_time}. Strategy re-armed to IDLE for next trade trigger.",
+                    level="SUCCESS"
+                )
+
         self.log_decision(
             "CONFIG_UPDATE",
             f"Live Parameters Updated | Lots: {self.lots} | SL/Lot: {self.stop_loss_per_lot} (Max Loss: ₹{self.max_loss:.2f}) | "
@@ -185,13 +196,46 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         prefix = "MCXFO" if exch.upper() == "MCX" else ("NFO" if exch.upper() == "NSE" else "BSEFO")
         return {leg: f"{prefix}:{root}{strike}{leg}" for leg in self.legs}
 
+    def _check_and_reset_for_next_cycle(self):
+        """
+        Allows strategy to automatically re-arm for future time entries or next trading day:
+        If all legs of current trade are closed, and current time has passed the exit window,
+        or when a new trading day begins, or if current time is before the entry_time.
+        """
+        if self.trade_state not in ["CLOSED", "IDLE"]:
+            return
+
+        now_utc = datetime.datetime.utcnow()
+        now_ist = now_utc + datetime.timedelta(hours=5, minutes=30)
+        curr_time = now_ist.time()
+        curr_date = now_ist.date()
+        entry_t = self._parse_time_str(self.entry_time)
+
+        # 1. Reset if entering a new trading date
+        if getattr(self, "_last_trade_date", None) and curr_date > self._last_trade_date:
+            self.trade_state = "IDLE"
+            self.current_trade = None
+            self._last_trade_date = None
+            self.log_decision("NEW SESSION ARMED", f"New trading day {curr_date}. Armed for scheduled entry at {self.entry_time}.", level="INFO")
+            return
+
+        # 2. Reset if previous trade was CLOSED and current time is before the scheduled entry_time
+        # (e.g. after manual square-off or when scheduled for a later entry time today)
+        if self.trade_state == "CLOSED" and curr_time < entry_t:
+            self.trade_state = "IDLE"
+            self.current_trade = None
+            self.log_decision("CYCLE ARMED", f"Previous trade closed. Re-armed to IDLE for next scheduled entry at {self.entry_time}.", level="INFO")
+
     def on_candle(self, candle: Dict[str, Any], history: List[Dict[str, Any]]):
-        close_p = float(candle.get("close") or self.last_underlying_ltp)
-        self.last_underlying_ltp = close_p
+        close_p = float(candle.get("close") or self.last_underlying_ltp or 0.0)
+        if close_p > 0:
+            self.last_underlying_ltp = close_p
         bar_time = str(candle.get("time") or "")
         if getattr(self, "_last_candle_logged_time", None) != bar_time:
             self._last_candle_logged_time = bar_time
             self.log_decision("Candle Fetch Success", f"Underlying {self.symbol} bar close: {close_p}")
+
+        self._check_and_reset_for_next_cycle()
         if self.trade_state == "IDLE":
             self._check_entry_and_exit(close_p)
         elif self.trade_state in ["IN_TRADE", "ENTRY_SENT"] and self.current_trade:
@@ -205,7 +249,14 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
 
         # Track underlying price strictly (never let option ticks pollute underlying future price)
         is_opt = sym.endswith("CE") or sym.endswith("PE")
-        is_underlying = (sym == self.symbol or sym == self.symbol.split(":")[-1]) and not is_opt
+        root = self.symbol.split(":")[-1]
+        is_underlying = (
+            sym == self.symbol or 
+            sym == root or 
+            sym.startswith(f"{self.symbol}") or 
+            sym.startswith(f"MCX:{root}") or 
+            sym.startswith(root)
+        ) and not is_opt
 
         if is_underlying:
             flt_ltp = float(ltp)
@@ -215,6 +266,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             self.last_underlying_ltp = flt_ltp
 
         # If tick is for underlying index/future and we are IDLE, evaluate entry
+        self._check_and_reset_for_next_cycle()
         if self.trade_state == "IDLE" and is_underlying:
             self._check_entry_and_exit(self.last_underlying_ltp)
             return
@@ -244,6 +296,7 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
 
     def on_timer(self):
         """Called every second by worker container process for heartbeat and second-precision exit timing"""
+        self._check_and_reset_for_next_cycle()
         if self.trade_state == "IDLE":
             self._check_entry_and_exit(self.last_underlying_ltp)
         elif self.trade_state == "IN_TRADE" and self.current_trade:
@@ -252,6 +305,8 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
 
     def _check_entry_and_exit(self, underlying_ltp: float):
         if self.trade_state != "IDLE":
+            return
+        if not underlying_ltp or underlying_ltp <= 0.0:
             return
 
         curr_time = self._get_current_ist_time()
@@ -269,6 +324,8 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             self._trigger_entry(underlying_ltp, curr_time)
 
     def _trigger_entry(self, underlying_ltp: float, curr_time: datetime.time):
+        if not underlying_ltp or underlying_ltp <= 0.0:
+            return
         # Sanity check for underlying price
         if "CRUDEOIL" in self.symbol.upper() and (underlying_ltp > 20000.0 or underlying_ltp < 2000.0):
             self.log_decision(
@@ -432,6 +489,9 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
 
                 if all(leg.get("status") == "CLOSED" for leg in self.current_trade["legs"]):
                     self.trade_state = "CLOSED"
+                    now_utc = datetime.datetime.utcnow()
+                    now_ist = now_utc + datetime.timedelta(hours=5, minutes=30)
+                    self._last_trade_date = now_ist.date()
                     tot_realized = sum(l.get("pnl", 0.0) for l in self.current_trade["legs"])
                     self.current_trade["total_pnl"] = round(tot_realized, 2)
                     self.log_decision("TRADE COMPLETED", f"Strategy cycle completed. Realized PnL: INR {tot_realized:.2f}")

@@ -778,8 +778,8 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 except Exception as e_trd:
                     print(f"[XTS Order Status] Error cross-checking tradebook: {e_trd}")
 
-            # Position book verification: verify avg_p against broker position book
-            if mapped_status == "FILLED" or not order_info or avg_p <= 0.0:
+            # Position book verification: ONLY when order is confirmed FILLED by broker, to refine traded average
+            if mapped_status == "FILLED" and avg_p <= 0.0:
                 try:
                     positions = await self.get_positions()
                     ord_sym = str(order_info.get("TradingSymbol") or order_info.get("tradingSymbol") or order_info.get("Symbol") or "").upper().replace(" ", "")
@@ -789,14 +789,11 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                         if ord_sym and (ord_sym in p_sym or p_sym in ord_sym):
                             p_sell = float(p.get("sell_avg", 0.0) or 0.0)
                             p_buy = float(p.get("buy_avg", 0.0) or 0.0)
+                            # Strictly check only the matching transaction side
                             pos_price = p_sell if ord_side == "SELL" else p_buy
-                            if pos_price <= 0.0:
-                                pos_price = p_sell or p_buy
                             if pos_price > 0:
-                                if avg_p <= 0.0 or abs(avg_p - pos_price) / max(pos_price, 1.0) > 0.4:
-                                    print(f"[XTS Order Status] Correcting avg_p from position book: {avg_p} -> {pos_price} for {ord_sym}")
-                                    avg_p = pos_price
-                                    mapped_status = "FILLED"
+                                print(f"[XTS Order Status] Using position book price {pos_price} for {ord_sym} ({ord_side})")
+                                avg_p = pos_price
                                 break
                 except Exception as e_pos:
                     print(f"[XTS Order Status] Error cross-checking position book: {e_pos}")
