@@ -1346,34 +1346,39 @@ async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Strategy not found")
     
     cfg = inst.config or {}
-    symbol = cfg.get("symbol") or cfg.get("underlying")
-    if not symbol and inst.template and inst.template.default_config:
-        symbol = inst.template.default_config.get("symbol")
-    if not symbol:
-        # Check active legs if available
-        legs = inst.legs_info or []
-        if legs and legs[0].get("symbol"):
-            leg_sym = str(legs[0]["symbol"])
-            if "CRUDE" in leg_sym:
-                symbol = "MCX:CRUDEOILM"
-            elif "RELIANCE" in leg_sym:
-                symbol = "NSE:RELIANCE"
-            elif "HAL" in leg_sym:
-                symbol = "NSE:HAL"
-            elif "BHARTI" in leg_sym:
-                symbol = "NSE:BHARTIARTL"
-            elif "NIFTY" in leg_sym:
-                symbol = "NSE:NIFTY"
+    if inst.template_key == "strat_pcp_pro_v201":
+        from backend.strategy_manager.registered.pcp_pro_v201 import resolve_future_contract, normalize_underlying_root
+        root = normalize_underlying_root(_extract_pcp_stock(inst or cfg, fallback="HAL"))
+        symbol = resolve_future_contract(root)
+    else:
+        symbol = cfg.get("symbol") or cfg.get("underlying")
+        if not symbol and inst.template and inst.template.default_config:
+            symbol = inst.template.default_config.get("symbol")
+        if not symbol:
+            # Check active legs if available
+            legs = inst.legs_info or []
+            if legs and legs[0].get("symbol"):
+                leg_sym = str(legs[0]["symbol"])
+                if "CRUDE" in leg_sym:
+                    symbol = "MCX:CRUDEOILM"
+                elif "RELIANCE" in leg_sym:
+                    symbol = "NSE:RELIANCE"
+                elif "HAL" in leg_sym:
+                    symbol = "NSE:HAL"
+                elif "BHARTI" in leg_sym:
+                    symbol = "NSE:BHARTIARTL"
+                elif "NIFTY" in leg_sym:
+                    symbol = "NSE:NIFTY"
+                else:
+                    symbol = leg_sym
             else:
-                symbol = leg_sym
-        else:
-            symbol = "NSE:NIFTY"
+                symbol = "NSE:NIFTY"
 
-    if symbol and ":" not in symbol:
-        if "CRUDE" in symbol.upper():
-            symbol = f"MCX:{symbol}"
-        else:
-            symbol = f"NSE:{symbol}"
+        if symbol and ":" not in symbol:
+            if "CRUDE" in symbol.upper():
+                symbol = f"MCX:{symbol}"
+            else:
+                symbol = f"NSE:{symbol}"
 
     tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or "5m").strip().lower()
     if tf.isdigit():
@@ -1452,6 +1457,38 @@ async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
     }
 
 
+def _extract_pcp_stock(inst_or_cfg: Any, fallback: str = "HAL") -> str:
+    """Safely extracts PCP stock symbol (HAL, RELIANCE, BHARTIARTL) from instance or config."""
+    cand = ""
+    if isinstance(inst_or_cfg, dict):
+        cand = inst_or_cfg.get("underlying") or inst_or_cfg.get("symbol") or ""
+    elif hasattr(inst_or_cfg, "config") and inst_or_cfg.config:
+        cand = inst_or_cfg.config.get("underlying") or inst_or_cfg.config.get("symbol") or ""
+
+    if cand and str(cand).strip().upper() not in ["NSE:NIFTY", "NIFTY", ""]:
+        try:
+            from backend.strategy_manager.registered.pcp_pro_v201 import normalize_underlying_root
+            return normalize_underlying_root(str(cand))
+        except Exception:
+            pass
+
+    # Check instance names if available
+    name = ""
+    if hasattr(inst_or_cfg, "instance_name_admin"):
+        name += f" {inst_or_cfg.instance_name_admin or ''}"
+    if hasattr(inst_or_cfg, "instance_name_user"):
+        name += f" {inst_or_cfg.instance_name_user or ''}"
+    name_up = name.upper()
+    if "RELIANCE" in name_up:
+        return "RELIANCE"
+    if "BHARTI" in name_up:
+        return "BHARTIARTL"
+    if "HAL" in name_up:
+        return "HAL"
+
+    return fallback
+
+
 @app.get("/api/charts/catalog")
 def get_charts_catalog(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """Returns deployed strategy instances and registered strategy templates selectable in the Charts page."""
@@ -1473,14 +1510,20 @@ def get_charts_catalog(db: Session = Depends(get_db), current_user: User = Depen
         tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or ("3m" if "pcp_pro" in str(inst.template_key) else ("1m" if "ftx" in str(inst.template_key) else "5m"))).lower()
         if tf.isdigit():
             tf = f"{tf}m"
+
+        underlying = cfg.get("symbol", "NSE:NIFTY")
+        if "pcp_pro" in str(inst.template_key):
+            underlying = _extract_pcp_stock(inst, fallback="HAL")
+
         items.append({
             "target": f"instance:{inst.id}",
             "kind": "instance",
             "id": inst.id,
             "template_key": inst.template_key,
-            "label": f"{inst.instance_name_user or inst.instance_name_admin} (#{inst.id} - {inst.status})",
-            "label_admin": f"{inst.instance_name_admin} (#{inst.id} - {inst.status})",
-            "symbol": cfg.get("symbol", "NSE:NIFTY"),
+            "label": f"{inst.instance_name_user or inst.instance_name_admin} (#{inst.id} - {inst.status}) ({underlying})",
+            "label_admin": f"{inst.instance_name_admin} (#{inst.id} - {inst.status}) ({underlying})",
+            "symbol": underlying,
+            "underlying": underlying,
             "timeframe": tf,
             "status": inst.status,
             "chart_mode": "COMBINED_PREMIUM" if inst.template_key == "strat_time_atm_seller_v1" else "OHLC_CANDLES",
@@ -1491,18 +1534,36 @@ def get_charts_catalog(db: Session = Depends(get_db), current_user: User = Depen
         tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or ("3m" if "pcp_pro" in tpl.key else ("1m" if "ftx" in tpl.key else "5m"))).lower()
         if tf.isdigit():
             tf = f"{tf}m"
-        items.append({
-            "target": f"template:{tpl.key}",
-            "kind": "template",
-            "id": None,
-            "template_key": tpl.key,
-            "label": f"[Template] {tpl.name_user}",
-            "label_admin": f"[Template] {tpl.name_admin} ({tpl.key})",
-            "symbol": cfg.get("symbol", "NSE:NIFTY"),
-            "timeframe": tf,
-            "status": "TEMPLATE",
-            "chart_mode": "COMBINED_PREMIUM" if tpl.key == "strat_time_atm_seller_v1" else "OHLC_CANDLES",
-        })
+
+        if tpl.key == "strat_pcp_pro_v201":
+            for stk in ["HAL", "RELIANCE", "BHARTIARTL"]:
+                items.append({
+                    "target": f"template:{tpl.key}:{stk}",
+                    "kind": "template",
+                    "id": None,
+                    "template_key": tpl.key,
+                    "label": f"[Template] {tpl.name_user} ({stk})",
+                    "label_admin": f"[Template] {tpl.name_admin} ({tpl.key}) ({stk})",
+                    "symbol": stk,
+                    "underlying": stk,
+                    "timeframe": tf,
+                    "status": "TEMPLATE",
+                    "chart_mode": "OHLC_CANDLES",
+                })
+        else:
+            items.append({
+                "target": f"template:{tpl.key}",
+                "kind": "template",
+                "id": None,
+                "template_key": tpl.key,
+                "label": f"[Template] {tpl.name_user}",
+                "label_admin": f"[Template] {tpl.name_admin} ({tpl.key})",
+                "symbol": cfg.get("symbol", "NSE:NIFTY"),
+                "underlying": cfg.get("symbol", "NSE:NIFTY"),
+                "timeframe": tf,
+                "status": "TEMPLATE",
+                "chart_mode": "COMBINED_PREMIUM" if tpl.key == "strat_time_atm_seller_v1" else "OHLC_CANDLES",
+            })
 
     return {"items": items}
 
@@ -1511,14 +1572,16 @@ def get_charts_catalog(db: Session = Depends(get_db), current_user: User = Depen
 async def get_strategy_chart_data(
     target: str = "template:strat_time_atm_seller_v1",
     resolution: Optional[str] = None,
+    stock: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
     Returns full charting payload for any of the 3 registered strategies:
     - strat_time_atm_seller_v1: Combined Premium Line Chart (CE + PE) + signals
-    - strat_pcp_pro_v201: OHLC Candlestick Chart + Dual Chandelier, ADX, JMA(RWI) + signals
+    - strat_pcp_pro_v201: OHLC Candlestick Chart + Dual Chandelier, ADX, JMA(RWI) + signals (HAL, RELIANCE, BHARTIARTL)
     - strat_ftx_paper_v1: OHLC Candlestick Chart + VWAP, OR H/L, Session H/L, Prior Day H/L + cell signals
+    - strat_supertrend_momentum_v1: OHLC Candlestick Chart + Supertrend, BB, Pivots, RSI, ATR + signals
     """
     inst: Optional[StrategyInstance] = None
     tpl: Optional[StrategyTemplate] = None
@@ -1537,7 +1600,10 @@ async def get_strategy_chart_data(
                 raise HTTPException(status_code=403, detail="Not authorized to view this strategy chart")
         tpl = inst.template or db.query(StrategyTemplate).filter(StrategyTemplate.key == inst.template_key).first()
     elif target.startswith("template:"):
-        tpl_key = target.split(":", 1)[1]
+        tpl_parts = target.split(":")
+        tpl_key = tpl_parts[1]
+        if len(tpl_parts) >= 3 and not stock:
+            stock = tpl_parts[2]
         tpl = db.query(StrategyTemplate).filter(StrategyTemplate.key == tpl_key).first()
         if not tpl:
             raise HTTPException(status_code=404, detail=f"Strategy template '{tpl_key}' not found")
@@ -1552,9 +1618,12 @@ async def get_strategy_chart_data(
     symbol = str(cfg.get("symbol") or ("MCX:CRUDEOILM" if template_key == "strat_time_atm_seller_v1" else ("HAL" if template_key == "strat_pcp_pro_v201" else "NSE:NIFTY")))
     if template_key == "strat_pcp_pro_v201":
         from backend.strategy_manager.registered.pcp_pro_v201 import resolve_future_contract, normalize_underlying_root
-        root = normalize_underlying_root(cfg.get("symbol") or cfg.get("underlying") or "HAL")
+        target_stock = stock or _extract_pcp_stock(inst or cfg, fallback="HAL")
+        root = normalize_underlying_root(target_stock)
         fut_roll = bool(cfg.get("fut_roll_last_friday", True))
         symbol = resolve_future_contract(root, roll_last_friday=fut_roll)
+        cfg["symbol"] = root
+        cfg["underlying"] = root
     elif template_key == "strat_supertrend_momentum_v1":
         trade_inst = str(cfg.get("trade_instrument") or "FUTURE").upper()
         if trade_inst == "FUTURE":
@@ -1769,9 +1838,10 @@ async def get_strategy_chart_data(
     return {
         "target": target,
         "template_key": template_key,
-        "strategy_name": (inst.instance_name_user or inst.instance_name_admin) if inst else tpl.name_user,
+        "strategy_name": (inst.instance_name_user or inst.instance_name_admin) if inst else (f"{tpl.name_user} ({root})" if template_key == "strat_pcp_pro_v201" else tpl.name_user),
         "chart_mode": "OHLC_CANDLES",
         "symbol": symbol,
+        "underlying": root if template_key == "strat_pcp_pro_v201" else symbol,
         "resolution": tf,
         "candles": payload.get("candles", []),
         "overlays": payload.get("overlays", {}),

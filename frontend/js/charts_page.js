@@ -16,6 +16,7 @@ class ChartsPageManager {
         this.fallbackMainChart = null;
         this.refreshTimer = null;
         this.resizeObserver = null;
+        this.currentPcpStock = "HAL";
 
         this.initListeners();
     }
@@ -86,6 +87,12 @@ class ChartsPageManager {
     }
 
     selectByTemplateKey(tplKey) {
+        if (tplKey === "strat_pcp_pro_v201") {
+            const currentStock = this.currentPcpStock || "HAL";
+            this.selectPcpStock(currentStock);
+            return;
+        }
+
         // Prefer a deployed instance of this template if one exists; otherwise select template preview
         const matchingInst = this.catalog.find(c => c.kind === "instance" && c.template_key === tplKey);
         const matchingTpl = this.catalog.find(c => c.kind === "template" && c.template_key === tplKey);
@@ -98,12 +105,124 @@ class ChartsPageManager {
         this.loadChartData();
     }
 
+    selectPcpStock(stockName) {
+        const stk = (stockName || "HAL").toUpperCase();
+        this.currentPcpStock = stk;
+
+        // 1. Look for deployed instance matching this stock
+        const matchingInst = this.catalog.find(c => 
+            c.kind === "instance" && 
+            c.template_key === "strat_pcp_pro_v201" && 
+            ((c.underlying && c.underlying.toUpperCase() === stk) || 
+             (c.symbol && c.symbol.toUpperCase() === stk) ||
+             (c.label && c.label.toUpperCase().includes(stk)) ||
+             (c.label_admin && c.label_admin.toUpperCase().includes(stk)))
+        );
+
+        if (matchingInst) {
+            this.currentTarget = matchingInst.target;
+        } else {
+            // 2. Look for matching template entry (e.g. template:strat_pcp_pro_v201:RELIANCE)
+            const matchingTpl = this.catalog.find(c => 
+                c.kind === "template" && 
+                c.template_key === "strat_pcp_pro_v201" && 
+                ((c.underlying && c.underlying.toUpperCase() === stk) || c.target.endsWith(`:${stk}`))
+            );
+            this.currentTarget = matchingTpl ? matchingTpl.target : `template:strat_pcp_pro_v201:${stk}`;
+        }
+
+        const selEl = document.getElementById("charts-page-selector");
+        if (selEl) selEl.value = this.currentTarget;
+        this.syncQuickTabsFromSelection();
+        this.loadChartData();
+    }
+
+    renderPcpStockSelector() {
+        const container = document.getElementById("pcp-stock-pills");
+        if (!container) return;
+
+        // Supported stock list: HAL, RELIANCE, BHARTIARTL + any custom instances
+        const stockSet = new Set(["HAL", "RELIANCE", "BHARTIARTL"]);
+        const pcpInstances = this.catalog.filter(c => c.kind === "instance" && c.template_key === "strat_pcp_pro_v201");
+        pcpInstances.forEach(inst => {
+            const stk = (inst.underlying || inst.symbol || "").toUpperCase();
+            if (stk && stk !== "NSE:NIFTY") stockSet.add(stk);
+        });
+
+        // Determine currently active stock
+        let currentStock = (this.currentPcpStock || "HAL").toUpperCase();
+        const selected = this.catalog.find(c => c.target === this.currentTarget);
+        if (selected) {
+            const selStk = (selected.underlying || selected.symbol || "").toUpperCase();
+            if (selStk && selStk !== "NSE:NIFTY") {
+                currentStock = selStk;
+                this.currentPcpStock = selStk;
+            }
+        } else if (this.currentTarget.startsWith("template:strat_pcp_pro_v201:")) {
+            const parts = this.currentTarget.split(":");
+            if (parts.length >= 3) {
+                currentStock = parts[2].toUpperCase();
+                this.currentPcpStock = currentStock;
+            }
+        }
+
+        let html = "";
+        stockSet.forEach(stock => {
+            const matchingInst = pcpInstances.find(i => 
+                (i.underlying && i.underlying.toUpperCase() === stock) ||
+                (i.symbol && i.symbol.toUpperCase() === stock) ||
+                (i.label && i.label.toUpperCase().includes(stock)) ||
+                (i.label_admin && i.label_admin.toUpperCase().includes(stock))
+            );
+            const isSelected = stock === currentStock;
+            const badgeText = matchingInst ? (matchingInst.status === "RUNNING" ? "🟢 Live" : `#${matchingInst.id}`) : "Preview";
+            const btnClass = `drawer-tab-btn pcp-stock-btn ${isSelected ? 'active' : ''}`;
+            const btnStyle = isSelected
+                ? "background: var(--accent-blue); color: white; border-color: var(--accent-blue); font-weight: 700; box-shadow: 0 0 10px rgba(59, 130, 246, 0.4); padding: 5px 12px; font-size: 0.8rem; border-radius: 6px; cursor: pointer;"
+                : "background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 5px 12px; font-size: 0.8rem; border-radius: 6px; cursor: pointer;";
+
+            html += `
+                <button type="button" class="${btnClass}" 
+                    data-stock="${stock}" 
+                    style="${btnStyle}">
+                    <strong>📈 ${stock}</strong>
+                    <span style="font-size: 0.68rem; opacity: 0.9; margin-left: 5px; padding: 1px 5px; border-radius: 3px; background: rgba(0,0,0,0.25);">${badgeText}</span>
+                </button>
+            `;
+        });
+
+        container.innerHTML = html;
+
+        // Bind clicks
+        container.querySelectorAll(".pcp-stock-btn").forEach(btn => {
+            btn.onclick = () => {
+                const stk = btn.dataset.stock;
+                this.selectPcpStock(stk);
+            };
+        });
+
+        // Update info badge
+        const infoBadge = document.getElementById("pcp-stock-info-badge");
+        if (infoBadge && this.latestData && this.latestData.template_key === "strat_pcp_pro_v201") {
+            infoBadge.innerHTML = `Active Contract: <strong style="color: var(--accent-cyan);">${this.latestData.symbol}</strong> (${this.latestData.resolution || '3m'})`;
+        }
+    }
+
     syncQuickTabsFromSelection() {
         const selected = this.catalog.find(c => c.target === this.currentTarget);
         const activeTpl = selected ? selected.template_key : (this.currentTarget.startsWith("template:") ? this.currentTarget.split(":")[1] : "");
         document.querySelectorAll("#charts-quick-tabs [data-chart-tpl]").forEach(btn => {
             btn.classList.toggle("active", btn.dataset.chartTpl === activeTpl);
         });
+
+        const pcpBar = document.getElementById("pcp-stock-selector-container");
+        if (pcpBar) {
+            const isPcp = activeTpl === "strat_pcp_pro_v201";
+            pcpBar.style.display = isPcp ? "flex" : "none";
+            if (isPcp) {
+                this.renderPcpStockSelector();
+            }
+        }
     }
 
     startAutoRefresh() {
@@ -174,6 +293,13 @@ class ChartsPageManager {
             }
             this.latestData = await res.json();
             this.renderCurrent();
+
+            if (this.latestData && this.latestData.template_key === "strat_pcp_pro_v201") {
+                const infoBadge = document.getElementById("pcp-stock-info-badge");
+                if (infoBadge) {
+                    infoBadge.innerHTML = `Active Contract: <strong style="color: var(--accent-cyan);">${this.latestData.symbol}</strong> (${this.latestData.resolution || '3m'})`;
+                }
+            }
         } catch (e) {
             if (!silent) console.error("[ChartsPage] Error fetching chart data:", e);
         }

@@ -320,7 +320,7 @@
             </div>
 
             <!-- Quick Strategy Switcher Tabs (Registered Strategies) -->
-            <div class="drawer-tabs" id="charts-quick-tabs" style="margin-bottom: 1rem; border-radius: 8px; border: 1px solid var(--border-color); padding: 4px; gap: 6px; flex-wrap: wrap;">
+            <div class="drawer-tabs" id="charts-quick-tabs" style="margin-bottom: 0.6rem; border-radius: 8px; border: 1px solid var(--border-color); padding: 4px; gap: 6px; flex-wrap: wrap;">
                 <button type="button" class="drawer-tab-btn active" data-chart-tpl="strat_time_atm_seller_v1">
                     ⚡ Time ATM Seller (Combined Premium)
                 </button>
@@ -333,6 +333,21 @@
                 <button type="button" class="drawer-tab-btn" data-chart-tpl="strat_supertrend_momentum_v1">
                     🎯 Nifty Supertrend Momentum (OHLC + Supertrend + BB / Pivots + RSI)
                 </button>
+            </div>
+
+            <!-- PivotChandelier Multi-Stock Switcher Bar (Visible when PivotChandelier tab is selected) -->
+            <div id="pcp-stock-selector-container" style="display: none; margin-bottom: 1rem; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.75rem; padding: 0.6rem 0.9rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 8px;">
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <span style="font-size: 0.8rem; font-weight: 700; color: var(--accent-cyan); display: inline-flex; align-items: center; gap: 5px;">
+                        <span>📊</span> Stock Chart:
+                    </span>
+                    <div id="pcp-stock-pills" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                        <!-- Injected dynamically: [ HAL ] [ RELIANCE ] [ BHARTIARTL ] -->
+                    </div>
+                </div>
+                <div id="pcp-stock-info-badge" style="font-size: 0.76rem; color: var(--text-muted); font-family: var(--font-mono);">
+                    <!-- Active Contract: NFO:HAL26NOVFUT (3m) -->
+                </div>
             </div>
 
             <!-- Live Metrics & Legend Strip -->
@@ -714,7 +729,12 @@
                     </div>
                     <span id="chart-symbol-subtitle" style="font-size: 0.75rem; color: var(--text-muted); font-family: var(--font-mono);"></span>
                 </div>
-                <button class="icon-btn modal-close-btn">&times;</button>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <button type="button" class="action-btn-sm" onclick="window.strategiesManager.openFullIndicatorChart()" style="background: var(--accent-blue); color: white; font-weight: 600; font-size: 0.78rem; padding: 4px 10px; border-radius: 6px; cursor: pointer;">
+                        📊 Full Technical Chart
+                    </button>
+                    <button class="icon-btn modal-close-btn">&times;</button>
+                </div>
             </div>
 
             <!-- View Switcher Tabs -->

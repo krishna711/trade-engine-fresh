@@ -868,6 +868,8 @@ class StrategiesManager {
 
     // Modal: Interactive Strategy Chart
     async openChart(id, name) {
+        this.currentChartInstanceId = id;
+        this.currentChartStrategyName = name;
         document.getElementById("chart-strategy-title").innerText = name || "Strategy Chart";
         document.getElementById("modal-chart").classList.add("active");
         this.currentChartTab = 'pnl';
@@ -924,6 +926,16 @@ class StrategiesManager {
             }
         }
         this.renderChart();
+    }
+
+    openFullIndicatorChart() {
+        const modal = document.getElementById("modal-chart");
+        if (modal) modal.classList.remove("active");
+        if (window.chartsPageManager && this.currentChartInstanceId) {
+            window.chartsPageManager.openInstanceChart(this.currentChartInstanceId);
+        } else if (window.app) {
+            window.app.switchView("charts");
+        }
     }
 
     renderChart() {
