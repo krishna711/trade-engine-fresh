@@ -926,6 +926,7 @@ class ChartsPageManager {
             console.warn("[ChartsPage] Failed creating subchart:", errSub);
         }
     }
+}
 
     renderSignalsTable(data) {
         const tbody = document.getElementById("charts-signals-tbody");
