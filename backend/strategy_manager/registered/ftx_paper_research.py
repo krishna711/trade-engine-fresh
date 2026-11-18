@@ -1136,6 +1136,7 @@ def compute_ftx_chart_payload(raw_bars: List[Dict[str, Any]], cfg: Dict[str, Any
 
     parsed_bars: List[Bar] = []
     candles_out: List[Dict[str, Any]] = []
+    seen_times = set()
     for b in valid_bars:
         t_val = b.get("time")
         if isinstance(t_val, datetime.datetime):
@@ -1152,6 +1153,11 @@ def compute_ftx_chart_payload(raw_bars: List[Dict[str, Any]], cfg: Dict[str, Any
             dt_ist = dt.replace(tzinfo=IST_TZ)
         else:
             dt_ist = dt.astimezone(IST_TZ)
+
+        t_key = dt_ist.isoformat()
+        if t_key in seen_times:
+            continue
+        seen_times.add(t_key)
 
         o, h, l, c = float(b["open"]), float(b["high"]), float(b["low"]), float(b["close"])
         v = float(b.get("volume") or 0.0)

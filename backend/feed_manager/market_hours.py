@@ -89,27 +89,34 @@ def get_last_completed_trading_session_anchor(
     open_time, close_time = get_market_hours_for_symbol(symbol)
     step_min = parse_resolution_minutes(resolution)
 
-    # 1. Weekend (Saturday or Sunday) -> Anchor to most recent Friday's market close
+    # 1. Weekend (Saturday or Sunday) -> Anchor to most recent Friday's last candle start
     if dt_ist.weekday() >= 5:
         days_back = 1 if dt_ist.weekday() == 5 else 2
         friday_date = dt_ist.date() - datetime.timedelta(days=days_back)
-        return datetime.datetime.combine(friday_date, close_time, tzinfo=IST_TZ)
+        friday_close = datetime.datetime.combine(friday_date, close_time, tzinfo=IST_TZ)
+        return friday_close - datetime.timedelta(minutes=step_min)
 
     curr_time = dt_ist.time()
 
-    # 2. Weekday before market open -> Anchor to previous trading day's market close
+    # 2. Weekday before market open -> Anchor to previous trading day's last candle start
     if curr_time < open_time:
         days_back = 3 if dt_ist.weekday() == 0 else 1
         prev_date = dt_ist.date() - datetime.timedelta(days=days_back)
-        return datetime.datetime.combine(prev_date, close_time, tzinfo=IST_TZ)
+        prev_close = datetime.datetime.combine(prev_date, close_time, tzinfo=IST_TZ)
+        return prev_close - datetime.timedelta(minutes=step_min)
 
-    # 3. Weekday after market close -> Anchor to today's market close
+    # 3. Weekday after market close -> Anchor to today's last candle start
     if curr_time >= close_time:
-        return datetime.datetime.combine(dt_ist.date(), close_time, tzinfo=IST_TZ)
+        today_close = datetime.datetime.combine(dt_ist.date(), close_time, tzinfo=IST_TZ)
+        return today_close - datetime.timedelta(minutes=step_min)
 
-    # 4. Live market session -> Round down to current bucket
-    minute_bucket = (dt_ist.minute // step_min) * step_min
-    return dt_ist.replace(minute=minute_bucket, second=0, microsecond=0)
+    # 4. Live market session -> Round down to current bucket aligned to session open
+    total_mins_since_open = (dt_ist.hour - open_time.hour) * 60 + (dt_ist.minute - open_time.minute)
+    if total_mins_since_open < 0:
+        minute_bucket = (dt_ist.minute // step_min) * step_min
+        return dt_ist.replace(minute=minute_bucket, second=0, microsecond=0)
+    bucket_offset = (total_mins_since_open // step_min) * step_min
+    return datetime.datetime.combine(dt_ist.date(), open_time, tzinfo=IST_TZ) + datetime.timedelta(minutes=bucket_offset)
 
 
 def parse_resolution_minutes(resolution: str) -> int:
@@ -157,10 +164,11 @@ def generate_market_session_timestamps(
 
         # Check if stepped before market open of that day
         if prev.time() < open_time:
-            # Jump back to previous trading day's close
+            # Jump back to previous trading day's last candle start time
             days_back = 3 if curr.weekday() == 0 else 1  # Monday -> Friday, else yesterday
             prev_date = curr.date() - datetime.timedelta(days=days_back)
-            curr = datetime.datetime.combine(prev_date, close_time, tzinfo=IST_TZ)
+            prev_close_dt = datetime.datetime.combine(prev_date, close_time, tzinfo=IST_TZ)
+            curr = prev_close_dt - datetime.timedelta(minutes=step_min)
         else:
             curr = prev
 

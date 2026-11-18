@@ -36,9 +36,16 @@ class OHLCBuilder:
 
         for res, step_minutes in [("1m", 1), ("3m", 3), ("5m", 5), ("15m", 15), ("1h", 60)]:
             curr = self.current_bars[symbol].get(res)
-            # Candle bucket time in IST
-            minute_bucket = (now.minute // step_minutes) * step_minutes
-            bucket_dt = now.replace(minute=minute_bucket, second=0, microsecond=0)
+            # Candle bucket time in IST aligned to session open
+            from backend.feed_manager.market_hours import get_market_hours_for_symbol
+            open_time, _ = get_market_hours_for_symbol(symbol)
+            mins_since_open = (now.hour - open_time.hour) * 60 + (now.minute - open_time.minute)
+            if mins_since_open >= 0:
+                bucket_offset = (mins_since_open // step_minutes) * step_minutes
+                bucket_dt = datetime.datetime.combine(now.date(), open_time, tzinfo=IST_TZ) + datetime.timedelta(minutes=bucket_offset)
+            else:
+                minute_bucket = (now.minute // step_minutes) * step_minutes
+                bucket_dt = now.replace(minute=minute_bucket, second=0, microsecond=0)
             bucket_time_str = bucket_dt.isoformat()
 
             curr_t_str = str(curr.get("time") if curr else "")
@@ -94,6 +101,7 @@ class OHLCBuilder:
                             {
                                 "symbol": r.symbol,
                                 "time": (r.timestamp.replace(tzinfo=IST_TZ) if r.timestamp.tzinfo is None else r.timestamp).isoformat(),
+                                "label": r.timestamp.strftime("%H:%M"),
                                 "open": float(r.open),
                                 "high": float(r.high),
                                 "low": float(r.low),
@@ -111,7 +119,11 @@ class OHLCBuilder:
         # Include currently building bar if present
         curr = self.current_bars.get(symbol, {}).get(resolution)
         if curr:
-            bars.append(dict(curr))
+            curr_dict = dict(curr)
+            if bars and bars[-1].get("time") == curr_dict.get("time"):
+                bars[-1] = curr_dict
+            else:
+                bars.append(curr_dict)
         # Format time to ISO string
         for b in bars:
             if isinstance(b.get("time"), datetime.datetime):

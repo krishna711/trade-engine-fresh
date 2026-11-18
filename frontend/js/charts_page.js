@@ -713,7 +713,10 @@ class ChartsPageManager {
             candles.forEach((c, idx) => {
                 let t = this._toIstEpochSec(c.time);
                 if (!t) return;
-                if (t <= prevT) t = prevT + 1;
+                if (t <= prevT) {
+                    // Strict ascending order required by LightweightCharts - skip duplicate/out-of-order timestamp
+                    return;
+                }
                 prevT = t;
                 idxToTime.set(idx, t);
                 lwCandles.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });

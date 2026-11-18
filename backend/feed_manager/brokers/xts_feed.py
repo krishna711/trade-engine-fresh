@@ -785,11 +785,17 @@ class XTSFeedBroker(BaseFeedBroker):
                         if data_rep:
                             raw_bars = [b.split("|") for b in data_rep.split(",") if b]
                             parsed_bars = []
+                            seen_open_ts = set()
                             for b in raw_bars:
                                 if len(b) >= 6:
                                     ts = int(b[0])
-                                    # XTS server returns unix epoch from local IST wall clock
-                                    dt = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone.utc).replace(tzinfo=IST_TZ)
+                                    # XTS server returns unix epoch from local IST wall clock representing bar close/end (e.g. 09:17:59 for 3m, 09:15:59 for 1m).
+                                    # Convert to interval open time so chart displays start of candle (09:15, 09:18, etc.)
+                                    open_ts = ts - (comp_val - 1) if (ts % 60 == 59) else ts
+                                    if open_ts in seen_open_ts:
+                                        continue
+                                    seen_open_ts.add(open_ts)
+                                    dt = datetime.datetime.fromtimestamp(open_ts, tz=datetime.timezone.utc).replace(tzinfo=IST_TZ)
                                     o, h, l, c, v = float(b[1]), float(b[2]), float(b[3]), float(b[4]), float(b[5])
                                     parsed_bars.append({
                                         "time": dt.isoformat(),
