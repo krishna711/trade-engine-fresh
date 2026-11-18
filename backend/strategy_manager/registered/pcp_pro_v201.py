@@ -804,29 +804,33 @@ def compute_pcp_chart_payload(bars: List[Dict[str, Any]], cfg: Dict[str, Any]) -
 
     rows = []
     idx = []
-    candles_out = []
     for b in valid_bars:
         dt_ist = _parse_bar_ist(b.get("time"))
         idx.append(dt_ist)
         o, h, l, c = float(b["open"]), float(b["high"]), float(b["low"]), float(b["close"])
         v = float(b.get("volume") or 0.0)
         rows.append({"Open": o, "High": h, "Low": l, "Close": c, "Volume": v})
-        candles_out.append({
-            "time": dt_ist.isoformat(),
-            "label": dt_ist.strftime("%H:%M"),
-            "open": round(o, 2),
-            "high": round(h, 2),
-            "low": round(l, 2),
-            "close": round(c, 2),
-            "volume": round(v, 2),
-        })
 
     if len(rows) < 2:
-        return {"candles": candles_out, "overlays": {}, "oscillators": {}, "signals": []}
+        return {"candles": [], "overlays": {}, "oscillators": {}, "signals": []}
 
     df = pd.DataFrame(rows, index=pd.DatetimeIndex(idx))
     df = df[~df.index.duplicated(keep="last")].sort_index()
     df.attrs["symbol"] = cfg.get("symbol", "NSE:NIFTY")
+
+    # Generate candles_out strictly from deduplicated & sorted df so indices and lengths match 1:1
+    candles_out = []
+    for dt_ts, row in df.iterrows():
+        dt_ist = dt_ts.to_pydatetime()
+        candles_out.append({
+            "time": dt_ist.isoformat(),
+            "label": dt_ist.strftime("%H:%M"),
+            "open": round(float(row["Open"]), 2),
+            "high": round(float(row["High"]), 2),
+            "low": round(float(row["Low"]), 2),
+            "close": round(float(row["Close"]), 2),
+            "volume": round(float(row["Volume"]), 2),
+        })
 
     params: PCPv201ParamsOverrides = {
         "atr_multiplier": float(cfg.get("atr_multiplier", 5.2)),

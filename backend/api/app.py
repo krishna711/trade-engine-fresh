@@ -1615,10 +1615,11 @@ async def get_strategy_chart_data(
         inst = db.query(StrategyInstance).filter(StrategyInstance.id == inst_id).first()
         if not inst:
             raise HTTPException(status_code=404, detail="Strategy instance not found")
+        can_view_trades = True
         if current_user.role != "ADMIN":
             user_cids = {a.client_id for a in db.query(Account).filter(Account.user_id == current_user.id).all()}
-            if inst.user_id != current_user.id and not any(c in user_cids for c in (inst.client_ids or [])):
-                raise HTTPException(status_code=403, detail="Not authorized to view this strategy chart")
+            if inst.user_id is not None and inst.user_id != current_user.id and not any(c in user_cids for c in (inst.client_ids or [])):
+                can_view_trades = False
         tpl = inst.template or db.query(StrategyTemplate).filter(StrategyTemplate.key == inst.template_key).first()
     elif target.startswith("template:"):
         tpl_parts = target.split(":")
@@ -1682,7 +1683,7 @@ async def get_strategy_chart_data(
 
     # Executed trade records for this instance (overlay onto chart signals)
     executed_trades: List[Dict[str, Any]] = []
-    if inst:
+    if inst and can_view_trades:
         today_start = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
         db_trades = db.query(Trade).filter(
             Trade.strategy_instance_id == inst.id,
@@ -1878,7 +1879,11 @@ async def get_strategy_chart_data(
     return {
         "target": target,
         "template_key": template_key,
-        "strategy_name": (inst.instance_name_user or inst.instance_name_admin) if inst else (f"{tpl.name_user} ({root})" if template_key == "strat_pcp_pro_v201" else tpl.name_user),
+        "strategy_name": (
+            (inst.instance_name_user or inst.instance_name_admin)
+            if (inst and (not stock or root in str(inst.instance_name_user or inst.instance_name_admin or "").upper()))
+            else (f"{tpl.name_user} ({root})" if (template_key == "strat_pcp_pro_v201" and tpl) else (tpl.name_user if tpl else symbol))
+        ),
         "chart_mode": "OHLC_CANDLES",
         "symbol": symbol,
         "underlying": root if template_key == "strat_pcp_pro_v201" else symbol,

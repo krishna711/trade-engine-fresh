@@ -96,7 +96,21 @@ class ChartsPageManager {
         await this.loadChartData();
     }
 
+    _clearMetricStrips() {
+        const metricsEl = document.getElementById("charts-metrics-strip");
+        if (metricsEl) metricsEl.innerHTML = `<span style="color: var(--text-muted); font-size: 0.8rem;">Loading strategy metrics & candles...</span>`;
+        const legendEl = document.getElementById("charts-legend-strip");
+        if (legendEl) legendEl.innerHTML = "";
+        const subTitle = document.getElementById("charts-subchart-title");
+        if (subTitle) subTitle.innerText = "Loading indicator data...";
+        const tbody = document.getElementById("charts-signals-tbody");
+        if (tbody) tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); font-size: 0.8rem;">Loading signals...</td></tr>`;
+        const countEl = document.getElementById("charts-signals-count");
+        if (countEl) countEl.innerText = "";
+    }
+
     selectByTemplateKey(tplKey) {
+        this._clearMetricStrips();
         if (tplKey === "strat_pcp_pro_v201") {
             const currentStock = this.currentPcpStock || "HAL";
             this.selectPcpStock(currentStock);
@@ -118,6 +132,7 @@ class ChartsPageManager {
     selectPcpStock(stockName) {
         const stk = (stockName || "HAL").toUpperCase();
         this.currentPcpStock = stk;
+        this._clearMetricStrips();
 
         // 1. Look for deployed instance matching this stock
         const matchingInst = this.catalog.find(c => 
@@ -213,8 +228,11 @@ class ChartsPageManager {
 
         // Update info badge
         const infoBadge = document.getElementById("pcp-stock-info-badge");
-        if (infoBadge && this.latestData && this.latestData.template_key === "strat_pcp_pro_v201") {
-            infoBadge.innerHTML = `Active Contract: <strong style="color: var(--accent-cyan);">${this.latestData.symbol}</strong> (${this.latestData.resolution || '3m'})`;
+        if (infoBadge) {
+            const isMatch = this.latestData && this.latestData.template_key === "strat_pcp_pro_v201" && (this.latestData.underlying === currentStock || (this.latestData.symbol && this.latestData.symbol.includes(currentStock)));
+            const activeContract = isMatch ? this.latestData.symbol : `NFO:${currentStock} FUT`;
+            const barCountText = (isMatch && this.latestData.candles) ? ` [${this.latestData.candles.length} bars]` : "";
+            infoBadge.innerHTML = `Active Contract: <strong style="color: var(--accent-cyan);">${activeContract}</strong> (${this.currentResolution || '3m'})${barCountText}`;
         }
     }
 
@@ -297,9 +315,20 @@ class ChartsPageManager {
             if (this.currentResolution) params.set("resolution", this.currentResolution);
             if (this.currentLookback) params.set("lookback", this.currentLookback);
 
+            // Forward stock parameter when PCP Pro strategy is targeted
+            const isPcp = this.currentTarget.includes("strat_pcp_pro_v201") ||
+                (this.catalog && this.catalog.some(c => c.target === this.currentTarget && c.template_key === "strat_pcp_pro_v201"));
+            if (isPcp && this.currentPcpStock) {
+                params.set("stock", this.currentPcpStock);
+            }
+
             const res = await fetch(`/api/charts/data?${params.toString()}`);
             if (!res.ok) {
                 if (!silent) console.error("[ChartsPage] Failed fetching chart data:", res.status);
+                const metricsEl = document.getElementById("charts-metrics-strip");
+                if (metricsEl) {
+                    metricsEl.innerHTML = `<span style="color: var(--accent-red); font-size: 0.8rem;">⚠️ Unable to load chart data (${res.status}). Check server status.</span>`;
+                }
                 return;
             }
             this.latestData = await res.json();
@@ -689,7 +718,13 @@ class ChartsPageManager {
                 idxToTime.set(idx, t);
                 lwCandles.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
             });
-            candleSeries.setData(lwCandles);
+            if (lwCandles.length) {
+                try {
+                    candleSeries.setData(lwCandles);
+                } catch (errSetData) {
+                    console.error("[ChartsPage] Failed candleSeries.setData:", errSetData);
+                }
+            }
 
             const addOverlayLine = (arr, color, title, lineStyle = LightweightCharts.LineStyle.Solid, lineWidth = 1.5) => {
                 if (!arr || !arr.length) return;
@@ -701,8 +736,12 @@ class ChartsPageManager {
                     }
                 });
                 if (linePts.length) {
-                    const ls = chart.addLineSeries({ color, lineWidth, lineStyle, title, priceLineVisible: false });
-                    ls.setData(linePts);
+                    try {
+                        const ls = chart.addLineSeries({ color, lineWidth, lineStyle, title, priceLineVisible: false });
+                        ls.setData(linePts);
+                    } catch (errLine) {
+                        console.warn("[ChartsPage] Failed addOverlayLine for", title, errLine);
+                    }
                 }
             };
 
@@ -792,8 +831,13 @@ class ChartsPageManager {
         const subTitle = document.getElementById("charts-subchart-title");
         const subCanvas = document.getElementById("charts-subchart-canvas");
         if (subCanvas) {
-            const labels = candles.map(c => c.label);
-            if (isSupertrend) {
+            if (this.subChart) {
+                try { this.subChart.destroy(); } catch (e) {}
+                this.subChart = null;
+            }
+            try {
+                const labels = candles.map(c => c.label);
+                if (isSupertrend) {
                 if (subTitle) subTitle.innerText = `Momentum & Volatility Oscillators: RSI(14), ADX(14), and ATR(14) [Entry Range: ${osc.minimum_entry_atr || 15} - ${osc.maximum_entry_atr || 35}]`;
                 this.subChart = new Chart(subCanvas.getContext("2d"), {
                     type: "line",
@@ -878,6 +922,8 @@ class ChartsPageManager {
                     },
                 });
             }
+        } catch (errSub) {
+            console.warn("[ChartsPage] Failed creating subchart:", errSub);
         }
     }
 
