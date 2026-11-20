@@ -1629,11 +1629,10 @@ class PivotChandelierProV201Strategy(BaseStrategy):
 
         ltp_f = float(ltp)
         sig_sym = getattr(self, "signal_symbol", "")
+        target_signal = sig_sym if self.trade_instrument != "SPOT" else self.symbol
         is_signal_sym = (
-            (sym == sig_sym)
-            or (sym == self.symbol)
-            or (":" in sym and sym.split(":")[-1] == self.underlying_root)
-            or (self.underlying_root in sym.upper() and ("FUT" in sym.upper() or not (sym.endswith("CE") or sym.endswith("PE"))))
+            (sym == target_signal)
+            or (":" in sym and sym.split(":")[-1] == target_signal.split(":")[-1])
         )
         if is_signal_sym:
             self.last_underlying_ltp = ltp_f

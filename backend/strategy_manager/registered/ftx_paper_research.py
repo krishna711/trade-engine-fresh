@@ -964,9 +964,7 @@ class FTXPaperResearchStrategy(BaseStrategy):
         tick_sym = str(tick.get("symbol") or "")
         pos_sym = self.position_state.symbol
         if tick_sym and pos_sym and not (tick_sym == pos_sym or tick_sym.endswith(pos_sym.split(":")[-1])):
-            # If tick is for underlying index, we can still evaluate if trading spot or futures tracking
-            if tick_sym != self.symbol and not tick_sym.endswith(self.symbol.split(":")[-1]):
-                return
+            return
 
         now_dt = datetime.datetime.now(IST_TZ)
 

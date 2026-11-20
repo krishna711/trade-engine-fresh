@@ -1185,8 +1185,12 @@ class SupertrendMomentumStrategy(BaseStrategy):
                 self._execute_exit("TIME_SQUARE_OFF", exit_spot=cur_close)
                 return
 
+            # Prevent entry candle's prior extremum from triggering immediate exit.
+            # Only evaluate bar-level targets/stops/reversals on subsequent candles.
+            is_subsequent_bar = self._last_entry_bucket is None or latest_dt > self._last_entry_bucket
+
             # 2. Risk Target Hit (if risk_reward configured)
-            if self.risk_reward > 0 and target_p > 0:
+            if is_subsequent_bar and self.risk_reward > 0 and target_p > 0:
                 if in_long and cur_high >= target_p:
                     self._execute_exit("TARGET_HIT", exit_spot=target_p)
                     return
@@ -1195,20 +1199,22 @@ class SupertrendMomentumStrategy(BaseStrategy):
                     return
 
             # 3. Supertrend Stop Loss Hit
-            if in_long and cur_low <= stop_p:
-                self._execute_exit("STOP_LOSS", exit_spot=stop_p)
-                return
-            elif not in_long and cur_high >= stop_p:
-                self._execute_exit("STOP_LOSS", exit_spot=stop_p)
-                return
+            if is_subsequent_bar:
+                if in_long and cur_low <= stop_p:
+                    self._execute_exit("STOP_LOSS", exit_spot=stop_p)
+                    return
+                elif not in_long and cur_high >= stop_p:
+                    self._execute_exit("STOP_LOSS", exit_spot=stop_p)
+                    return
 
             # 4. Supertrend Direction Reversal
-            if in_long and st_dir == -1:
-                self._execute_exit("SUPERTREND_REVERSAL", exit_spot=cur_close)
-                return
-            elif not in_long and st_dir == 1:
-                self._execute_exit("SUPERTREND_REVERSAL", exit_spot=cur_close)
-                return
+            if is_subsequent_bar:
+                if in_long and st_dir == -1:
+                    self._execute_exit("SUPERTREND_REVERSAL", exit_spot=cur_close)
+                    return
+                elif not in_long and st_dir == 1:
+                    self._execute_exit("SUPERTREND_REVERSAL", exit_spot=cur_close)
+                    return
 
             # Update trailing stop along Supertrend line
             if in_long:
@@ -1391,10 +1397,11 @@ class SupertrendMomentumStrategy(BaseStrategy):
             return
 
         ltp_f = float(ltp)
+        trade_inst = getattr(self, "trade_instrument", "FUTURE")
+        target_signal = getattr(self, "signal_symbol", self.symbol) if trade_inst == "FUTURE" else self.symbol
         is_signal_sym = (
-            (sym == self.signal_symbol)
-            or (sym == self.symbol)
-            or (":" in sym and sym.split(":")[-1] == self.underlying_root)
+            (sym == target_signal)
+            or (":" in sym and sym.split(":")[-1] == target_signal.split(":")[-1])
         )
         if is_signal_sym:
             self.last_underlying_ltp = ltp_f
@@ -1405,7 +1412,11 @@ class SupertrendMomentumStrategy(BaseStrategy):
         trade_sym = self.current_trade.get("symbol", "")
         is_trade_sym = (sym == trade_sym) or (":" in sym and sym.split(":")[-1] == trade_sym.split(":")[-1])
 
-        if is_trade_sym and self.current_trade.get("legs"):
+        # Strictly ignore ticks for other instruments (e.g. spot index ticks when trading futures)
+        if not is_trade_sym:
+            return
+
+        if self.current_trade.get("legs"):
             leg = self.current_trade["legs"][0]
             leg["ltp"] = ltp_f
             ep = float(leg.get("entry") or 0.0)
@@ -1416,23 +1427,22 @@ class SupertrendMomentumStrategy(BaseStrategy):
                 leg["pnl"] = pnl
                 self.current_trade["total_pnl"] = pnl
 
-        # Sub-second Stop Loss & Target checks
-        check_p = ltp_f if is_signal_sym else self.last_underlying_ltp
+        # Sub-second Stop Loss & Target checks strictly against the traded contract's tick LTP
         stop_p = float(self.current_trade.get("stop_price") or 0.0)
         target_p = float(self.current_trade.get("target_price") or 0.0)
         sig_side = self.current_trade.get("signal_side")
 
-        if check_p > 0:
+        if ltp_f > 0:
             if sig_side == "BUY":
-                if self.risk_reward > 0 and target_p > 0 and check_p >= target_p:
-                    self._execute_exit("TARGET_HIT", exit_spot=check_p)
-                elif stop_p > 0 and check_p <= stop_p:
-                    self._execute_exit("STOP_LOSS", exit_spot=check_p)
+                if self.risk_reward > 0 and target_p > 0 and ltp_f >= target_p:
+                    self._execute_exit("TARGET_HIT", exit_spot=ltp_f)
+                elif stop_p > 0 and ltp_f <= stop_p:
+                    self._execute_exit("STOP_LOSS", exit_spot=ltp_f)
             elif sig_side == "SELL":
-                if self.risk_reward > 0 and target_p > 0 and check_p <= target_p:
-                    self._execute_exit("TARGET_HIT", exit_spot=check_p)
-                elif stop_p > 0 and check_p >= stop_p:
-                    self._execute_exit("STOP_LOSS", exit_spot=check_p)
+                if self.risk_reward > 0 and target_p > 0 and ltp_f <= target_p:
+                    self._execute_exit("TARGET_HIT", exit_spot=ltp_f)
+                elif stop_p > 0 and ltp_f >= stop_p:
+                    self._execute_exit("STOP_LOSS", exit_spot=ltp_f)
 
     def on_timer(self):
         """Second-precision EOD square-off check (15:10:00 IST)."""
@@ -1457,26 +1467,29 @@ class SupertrendMomentumStrategy(BaseStrategy):
 
         leg0 = self.current_trade["legs"][0]
         if filled:
-            avg_fill = round(sum(float(r.get("price", 0.0)) for r in filled) / len(filled), 2)
-            if avg_fill > 0:
-                leg0["entry"] = avg_fill
-                leg0["ltp"] = avg_fill
-                self.current_trade["entry_price"] = avg_fill
-                self.current_trade["entry_spot"] = avg_fill
-                # Recalculate target with actual fill price
-                stop_p = float(self.current_trade.get("stop_price") or avg_fill * 0.99)
-                risk = max(1.0, abs(avg_fill - stop_p))
-                is_long = self.current_trade.get("signal_side") == "BUY"
-                if self.risk_reward > 0:
-                    target_p = avg_fill + (risk * self.risk_reward) if is_long else avg_fill - (risk * self.risk_reward)
-                    self.current_trade["target_price"] = round(target_p, 2)
-                    self.current_trade["pt_spot"] = round(target_p, 2)
-            leg0["status"] = "FILLED"
-            self.log_decision(
-                "ORDER FILLED",
-                f"Broker execution confirmed {self.current_trade['symbol']} @ ₹{avg_fill:.2f}",
-                level="SUCCESS",
-            )
+            req_side = str(ord_req.get("side") or "").upper()
+            entry_side = self.current_trade.get("order_side", "BUY")
+            if req_side == entry_side or not req_side:
+                avg_fill = round(sum(float(r.get("price", 0.0)) for r in filled) / len(filled), 2)
+                if avg_fill > 0:
+                    leg0["entry"] = avg_fill
+                    leg0["ltp"] = avg_fill
+                    self.current_trade["entry_price"] = avg_fill
+                    self.current_trade["entry_spot"] = avg_fill
+                    # Recalculate target with actual fill price
+                    stop_p = float(self.current_trade.get("stop_price") or avg_fill * 0.99)
+                    risk = max(1.0, abs(avg_fill - stop_p))
+                    is_long = self.current_trade.get("signal_side") == "BUY"
+                    if self.risk_reward > 0:
+                        target_p = avg_fill + (risk * self.risk_reward) if is_long else avg_fill - (risk * self.risk_reward)
+                        self.current_trade["target_price"] = round(target_p, 2)
+                        self.current_trade["pt_spot"] = round(target_p, 2)
+                leg0["status"] = "FILLED"
+                self.log_decision(
+                    "ORDER FILLED",
+                    f"Broker execution confirmed {self.current_trade['symbol']} @ ₹{avg_fill:.2f}",
+                    level="SUCCESS",
+                )
         elif not open_pending and self.trade_state == "IN_TRADE" and leg0.get("status") in ["PENDING", "SENT"]:
             rej = "; ".join(set(r.get("rejection_reason") for r in results if r.get("rejection_reason"))) or "Order rejected"
             leg0["status"] = "REJECTED"
