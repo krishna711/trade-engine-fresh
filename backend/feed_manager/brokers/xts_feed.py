@@ -813,27 +813,6 @@ class XTSFeedBroker(BaseFeedBroker):
                 except Exception as ex_ohlc:
                     print(f"[XTS] fetch_ohlc HTTP error for {canonical_symbol}: {ex_ohlc}")
 
-        # 2. Fallback to cached or synthetic market session bars
-        curr_price = float(self._current_prices.get(canonical_symbol, 0.0))
-        if curr_price <= 0.0:
-            curr_price = BASE_PRICES.get(canonical_symbol, get_default_base_price(canonical_symbol))
-
-        if cache_key in self._cached_ohlc:
-            bars = self._cached_ohlc[cache_key]
-            if bars and curr_price > 0:
-                last_bar = bars[-1]
-                last_bar["close"] = curr_price
-                last_bar["high"] = max(last_bar["high"], curr_price)
-                last_bar["low"] = min(last_bar["low"], curr_price)
-            return [dict(b) for b in bars[-count:]]
-
-        from backend.feed_manager.market_hours import build_market_session_bars
-        bars = build_market_session_bars(
-            symbol=canonical_symbol,
-            resolution=resolution,
-            count=max(count, 120),
-            base_price=curr_price
-        )
-
-        self._cached_ohlc[cache_key] = bars
-        return [dict(b) for b in bars[-count:]]
+        # Return empty list if genuine broker OHLC was not fetched.
+        # NEVER return synthetic/random bars from broker adapter so database is not polluted.
+        return []

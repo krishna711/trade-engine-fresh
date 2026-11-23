@@ -31,7 +31,6 @@ DEFAULT_BASE_PRICES = {
     "NSE:BHARTIARTL": 1610.0,
 }
 
-
 def is_mcx_symbol(symbol: str) -> bool:
     sym_u = (symbol or "").upper()
     return "MCX" in sym_u or any(c in sym_u for c in ["CRUDEOIL", "NATURALGAS", "GOLD", "SILVER"])

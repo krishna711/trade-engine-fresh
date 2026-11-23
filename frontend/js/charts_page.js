@@ -51,7 +51,7 @@ class ChartsPageManager {
 
         const btnRef = document.getElementById("btn-charts-refresh");
         if (btnRef) {
-            btnRef.onclick = () => this.loadChartData();
+            btnRef.onclick = () => this.loadChartData(false, true);
         }
 
         const autoChk = document.getElementById("charts-page-autorefresh");
@@ -314,11 +314,12 @@ class ChartsPageManager {
         }
     }
 
-    async loadChartData(silent = false) {
+    async loadChartData(silent = false, forceRefresh = false) {
         try {
             const params = new URLSearchParams({ target: this.currentTarget });
             if (this.currentResolution) params.set("resolution", this.currentResolution);
             if (this.currentLookback) params.set("lookback", this.currentLookback);
+            if (forceRefresh) params.set("refresh", "true");
 
             // Forward stock parameter when PCP Pro strategy is targeted
             const isPcp = this.currentTarget.includes("strat_pcp_pro_v201") ||

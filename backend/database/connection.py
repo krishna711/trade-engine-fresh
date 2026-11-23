@@ -159,11 +159,33 @@ def ensure_default_users():
     finally:
         db.close()
 
+def purge_synthetic_candles():
+    """Purges any corrupted or synthetic candles previously saved into SQLite historical_candles."""
+    try:
+        from backend.database.models import HistoricalCandle
+        db = SessionLocal()
+        # 1. Any benchmark index row with volume > 0 is synthetic (XTS index streams always have volume = 0)
+        for idx in ["NSE:NIFTY", "NSE:BANKNIFTY", "NSE:FINNIFTY", "NSE:MIDCPNIFTY", "BSE:SENSEX", "BSE:BANKEX"]:
+            db.query(HistoricalCandle).filter(
+                HistoricalCandle.symbol == idx,
+                HistoricalCandle.volume > 0
+            ).delete()
+        # 2. Out-of-bounds synthetic drift on indices
+        db.query(HistoricalCandle).filter(
+            HistoricalCandle.symbol == "NSE:NIFTY",
+            (HistoricalCandle.open < 23500) | (HistoricalCandle.open > 26500)
+        ).delete()
+        db.commit()
+        db.close()
+    except Exception as e:
+        print(f"[DB] purge_synthetic_candles note: {e}")
+
 def init_db():
     check_and_migrate_db()
     Base.metadata.create_all(bind=engine)
     ensure_default_users()
     seed_initial_data()
+    purge_synthetic_candles()
 
 # Auto-initialize database schema and seeds on import so tables always exist
 try:

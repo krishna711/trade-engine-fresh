@@ -95,8 +95,10 @@ class OHLCBuilder:
                         last_row_t = last_row_t.replace(tzinfo=IST_TZ)
                     else:
                         last_row_t = last_row_t.astimezone(IST_TZ)
-                    # Accept cached DB rows if the latest row is from today or within the last 3 days
-                    if (anchor.date() - last_row_t.date()).days <= 3:
+                    is_index = any(idx in symbol for idx in ["NIFTY", "BANKNIFTY", "SENSEX"])
+                    is_corrupt_synthetic = is_index and any(int(r.volume or 0) > 0 for r in db_rows)
+                    # Accept cached DB rows only if not corrupt synthetic and within 3 days
+                    if not is_corrupt_synthetic and (anchor.date() - last_row_t.date()).days <= 3:
                         loaded = [
                             {
                                 "symbol": r.symbol,
@@ -112,6 +114,13 @@ class OHLCBuilder:
                         ]
                         self.candles.setdefault(symbol, {})[resolution] = loaded
                         bars = [dict(b) for b in loaded[-count:]]
+                    elif is_corrupt_synthetic:
+                        # Purge corrupt rows immediately
+                        db.query(HistoricalCandle).filter(
+                            HistoricalCandle.symbol == symbol,
+                            HistoricalCandle.resolution == resolution
+                        ).delete()
+                        db.commit()
                 db.close()
             except Exception:
                 pass
@@ -435,8 +444,20 @@ class FeedManager:
     def get_all_ticks(self) -> Dict[str, Dict[str, Any]]:
         return dict(self.ticks_cache)
 
-    async def get_ohlc(self, canonical_symbol: str, resolution: str = "5m", count: int = 50) -> List[Dict[str, Any]]:
-        bars = self.ohlc_builder.get_bars(canonical_symbol, resolution, count)
+    async def get_ohlc(self, canonical_symbol: str, resolution: str = "5m", count: int = 50, force_refresh: bool = False) -> List[Dict[str, Any]]:
+        if force_refresh:
+            self.ohlc_builder.candles.get(canonical_symbol, {}).pop(resolution, None)
+            bars = []
+        else:
+            bars = self.ohlc_builder.get_bars(canonical_symbol, resolution, count)
+
+        # Detect corrupt synthetic bars previously cached
+        is_synthetic = False
+        if bars and any(idx in canonical_symbol for idx in ["NIFTY", "BANKNIFTY", "SENSEX"]):
+            if any(float(b.get("volume", 0) or 0) > 0 for b in bars):
+                is_synthetic = True
+                bars = []
+                self.ohlc_builder.candles.get(canonical_symbol, {}).pop(resolution, None)
 
         # Check if returned bars are stale (older than current session anchor)
         from backend.feed_manager.market_hours import (
@@ -464,7 +485,7 @@ class FeedManager:
             except Exception:
                 is_stale = False
 
-        if len(bars) < count or is_stale:
+        if len(bars) < count or is_stale or force_refresh or is_synthetic:
             # Prioritize XTS broker for genuine multi-day historical candles via /instruments/ohlc
             broker = None
             if "XTS" in self.brokers:
@@ -475,9 +496,14 @@ class FeedManager:
                 broker = list(self.brokers.values())[0] if self.brokers else None
 
             broker_bars = None
+            is_real_broker = False
             if broker:
                 try:
+                    if hasattr(broker, "token") and not broker.token and hasattr(broker, "connect"):
+                        await broker.connect()
                     broker_bars = await broker.fetch_ohlc(canonical_symbol, resolution, count)
+                    if broker_bars:
+                        is_real_broker = True
                 except Exception as e_br:
                     print(f"[FeedManager] Error fetching OHLC from broker {broker.name}: {e_br}")
 
@@ -485,35 +511,19 @@ class FeedManager:
             if not broker_bars and self.active_broker and self.active_broker != broker:
                 try:
                     broker_bars = await self.active_broker.fetch_ohlc(canonical_symbol, resolution, count)
+                    if broker_bars:
+                        is_real_broker = True
                 except Exception:
                     pass
 
-            # If no broker connected or broker returned empty, fallback to deterministic market session bars
-            if not broker_bars:
-                curr_price = float(self.ticks_cache.get(canonical_symbol, {}).get("ltp", 0.0))
-                if curr_price <= 0.0:
-                    clean_root = canonical_symbol.split(":")[-1]
-                    for tk_sym, tk_data in self.ticks_cache.items():
-                        if clean_root in tk_sym and not (tk_sym.endswith("CE") or tk_sym.endswith("PE")):
-                            cand_ltp = float(tk_data.get("ltp") or 0.0)
-                            if cand_ltp > 0:
-                                curr_price = cand_ltp
-                                break
-                broker_bars = build_market_session_bars(
-                    symbol=canonical_symbol,
-                    resolution=resolution,
-                    count=max(count, 60),
-                    base_price=curr_price
-                )
-
-            if broker_bars:
+            if is_real_broker and broker_bars:
                 if canonical_symbol not in self.ohlc_builder.candles:
                     self.ohlc_builder.candles[canonical_symbol] = {"1m": [], "3m": [], "5m": [], "15m": [], "1h": []}
                 self.ohlc_builder.candles[canonical_symbol][resolution] = [dict(b) for b in broker_bars[:-1]]
                 if broker_bars:
                     self.ohlc_builder.current_bars.setdefault(canonical_symbol, {})[resolution] = dict(broker_bars[-1])
 
-                # Persist clean broker bars into SQLite historical_candles, replacing any stale/corrupt rows
+                # ONLY persist real broker bars into SQLite historical_candles, replacing any stale/corrupt rows
                 try:
                     db = SessionLocal()
                     db.query(HistoricalCandle).filter(
@@ -550,6 +560,25 @@ class FeedManager:
                     pass
 
                 return broker_bars[-count:]
+
+            # If no broker connected or broker returned empty, fallback to deterministic market session bars in ephemeral RAM only (NEVER PERSIST TO DB!)
+            if not broker_bars and not bars:
+                curr_price = float(self.ticks_cache.get(canonical_symbol, {}).get("ltp", 0.0))
+                if curr_price <= 0.0:
+                    clean_root = canonical_symbol.split(":")[-1]
+                    for tk_sym, tk_data in self.ticks_cache.items():
+                        if clean_root in tk_sym and not (tk_sym.endswith("CE") or tk_sym.endswith("PE")):
+                            cand_ltp = float(tk_data.get("ltp") or 0.0)
+                            if cand_ltp > 0:
+                                curr_price = cand_ltp
+                                break
+                fallback_bars = build_market_session_bars(
+                    symbol=canonical_symbol,
+                    resolution=resolution,
+                    count=max(count, 60),
+                    base_price=curr_price
+                )
+                return fallback_bars[-count:]
         return bars
 
     def get_status(self) -> Dict[str, Any]:

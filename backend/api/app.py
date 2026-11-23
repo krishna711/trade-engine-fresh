@@ -1594,6 +1594,7 @@ async def get_strategy_chart_data(
     stock: Optional[str] = None,
     lookback: Optional[str] = "1w",
     count: Optional[int] = None,
+    refresh: Optional[bool] = False,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -1873,7 +1874,7 @@ async def get_strategy_chart_data(
     # ------------------------------------------------------------------
     # 2. PivotChandelier Pro / Supertrend Momentum / FTX (OHLC + Indicators)
     # ------------------------------------------------------------------
-    bars = await feed_manager.get_ohlc(symbol, resolution=tf, count=target_count)
+    bars = await feed_manager.get_ohlc(symbol, resolution=tf, count=target_count, force_refresh=bool(refresh))
     if template_key == "strat_pcp_pro_v201":
         from backend.strategy_manager.registered.pcp_pro_v201 import compute_pcp_chart_payload
         payload = compute_pcp_chart_payload(bars, cfg)
