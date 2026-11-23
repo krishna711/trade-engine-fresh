@@ -389,6 +389,10 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
             f"Preparing to SELL {', '.join(option_symbols.values())} ({order_qty} {'lots' if is_mcx else 'qty'}) across {len(self.client_ids)} broker account(s)."
         )
 
+        # Request feed subscriptions for the new option strikes immediately so market ticks stream in
+        self.subscribed_option_symbols = list(option_symbols.values())
+        self.request_subscribe(self.subscribed_option_symbols)
+
         legs_data = []
         buffer_pct = float(self.config.get("limit_buffer_pct", 0.015))
         auto_chase = bool(self.config.get("auto_chase", True))
@@ -421,10 +425,6 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
                 "pnl": 0.0,
                 "status": "SENT"
             })
-
-        # Request feed subscriptions for the new option strikes so market ticks stream in
-        self.subscribed_option_symbols = list(option_symbols.values())
-        self.request_subscribe(self.subscribed_option_symbols)
 
         self.current_trade = {
             "underlying": self.symbol,

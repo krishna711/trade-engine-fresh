@@ -2,6 +2,7 @@ import asyncio
 import datetime
 import random
 import uuid
+import re
 from typing import Dict, Any, List, Optional
 from backend.order_manager.brokers.base_order import BaseOrderBroker
 from backend.core.symbol_mapper import symbol_mapper
@@ -66,6 +67,60 @@ class GenericBrokerOrderAdapter(BaseOrderBroker):
             "margin_used": 50000.0,
             "total_balance": 500000.0
         }
+
+_XTS_MARKET_DATA_TOKEN: Optional[str] = None
+_XTS_MARKET_DATA_TOKEN_TIME: Optional[datetime.datetime] = None
+
+def get_shared_xts_market_data_token() -> Optional[str]:
+    """
+    Retrieves a valid XTS Market Data authentication token for quoting instruments:
+    1. Checks in-memory cache (valid for 12 hours).
+    2. Checks FeedManager if running in the same process.
+    3. Performs direct authentication to XTS Market Data API (/auth/login) using XTS_FEED credentials.
+    """
+    global _XTS_MARKET_DATA_TOKEN, _XTS_MARKET_DATA_TOKEN_TIME
+    now = datetime.datetime.utcnow()
+    if _XTS_MARKET_DATA_TOKEN and _XTS_MARKET_DATA_TOKEN_TIME:
+        if (now - _XTS_MARKET_DATA_TOKEN_TIME).total_seconds() < 43200:
+            return _XTS_MARKET_DATA_TOKEN
+
+    # 1. Try FeedManager if active
+    try:
+        from backend.feed_manager.manager import feed_manager
+        xts_broker = feed_manager.get_feed_broker("XTS")
+        if xts_broker and getattr(xts_broker, "token", None):
+            _XTS_MARKET_DATA_TOKEN = xts_broker.token
+            _XTS_MARKET_DATA_TOKEN_TIME = now
+            return _XTS_MARKET_DATA_TOKEN
+    except Exception:
+        pass
+
+    # 2. Direct HTTP login via XTS Market Data credentials
+    try:
+        from backend.config import XTS_FEED_URL, XTS_FEED_API_KEY, XTS_FEED_API_SECRET, XTS_FEED_STATIC_IP
+        from backend.core.http_client import get_bound_requests_session
+        if XTS_FEED_API_KEY and XTS_FEED_API_SECRET:
+            session = get_bound_requests_session(XTS_FEED_STATIC_IP)
+            login_url = f"{XTS_FEED_URL}/auth/login"
+            payload = {
+                "appKey": XTS_FEED_API_KEY,
+                "secretKey": XTS_FEED_API_SECRET,
+                "source": "WEBAPI"
+            }
+            resp = session.post(login_url, json=payload, headers={"Content-Type": "application/json"}, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("type") == "success":
+                    tok = data.get("result", {}).get("token")
+                    if tok:
+                        _XTS_MARKET_DATA_TOKEN = tok
+                        _XTS_MARKET_DATA_TOKEN_TIME = now
+                        print(f"[XTS Order Broker] Market Data token successfully generated: {tok[:12]}...")
+                        return _XTS_MARKET_DATA_TOKEN
+    except Exception as e:
+        print(f"[XTS Order Broker] Failed to acquire XTS Market Data token: {e}")
+
+    return None
 
 class XTSOrderBroker(GenericBrokerOrderAdapter):
     """
@@ -134,26 +189,9 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
 
         return self.token if self.token else None
 
-    async def place_order(self, order_dict: Dict[str, Any]) -> Dict[str, Any]:
-        is_paper = order_dict.get("is_paper", True)
-        if is_paper:
-            return await super().place_order(order_dict)
-
-        # Real Live Broker Execution
-        token = self.get_valid_token()
-        if not token:
-            return {
-                "success": False,
-                "broker_order_id": None,
-                "status": "REJECTED",
-                "filled_quantity": 0,
-                "average_price": 0.0,
-                "rejection_reason": f"XTS Today Session Token missing or expired for account {self.client_id}. Please generate today's token in Client Accounts.",
-                "timestamp": datetime.datetime.utcnow().isoformat()
-            }
-
     async def get_market_quote(self, canonical_symbol: str, broker_token: str, segment: str = "MCXFO") -> Dict[str, Any]:
-        """Fetches the live quote (ltp, bid, ask) from FeedManager or directly via XTS Quotes API"""
+        """Fetches the live quote (ltp, bid, ask, close) from FeedManager or directly via XTS Quotes API"""
+        # 1. In-process FeedManager lookup
         try:
             from backend.feed_manager.manager import feed_manager
             quote = await feed_manager.get_live_quote(canonical_symbol)
@@ -162,20 +200,23 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
         except Exception:
             pass
 
-        # Direct HTTP fallback to XTS Quotes endpoint
+        # 2. Direct HTTP fallback to XTS Quotes endpoint using valid Market Data token
         try:
-            import requests
             import json
-            url = "https://ttblaze.iifl.com/apibinarymarketdata/instruments/quotes"
-            seg_code = 51 if "MCX" in segment.upper() else (2 if "NFO" in segment.upper() else 1)
-            token = self.get_valid_token()
-            if token and str(broker_token).isdigit():
+            from backend.config import XTS_FEED_URL, XTS_FEED_STATIC_IP
+            from backend.core.http_client import get_bound_requests_session
+            url = f"{XTS_FEED_URL}/instruments/quotes"
+            seg_upper = segment.upper()
+            seg_code = 51 if "MCX" in seg_upper else (2 if "NFO" in seg_upper else (12 if "BSEFO" in seg_upper else (11 if "BSE" in seg_upper else 1)))
+            md_token = get_shared_xts_market_data_token()
+            if md_token and str(broker_token).isdigit():
                 payload = {
                     "instruments": [{"exchangeSegment": seg_code, "exchangeInstrumentID": int(broker_token)}],
                     "xtsMessageCode": 1502,
                     "publishFormat": "JSON"
                 }
-                resp = self.session.post(url, json=payload, headers={"authorization": token, "Content-Type": "application/json"}, timeout=4)
+                session = get_bound_requests_session(XTS_FEED_STATIC_IP)
+                resp = session.post(url, json=payload, headers={"authorization": md_token, "Content-Type": "application/json"}, timeout=5)
                 if resp.status_code == 200:
                     data = resp.json()
                     quotes = data.get("result", {}).get("listQuotes", [])
@@ -188,17 +229,22 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                         bid = float(bids.get("Price") or 0.0) if isinstance(bids, dict) else 0.0
                         ask = float(asks.get("Price") or 0.0) if isinstance(asks, dict) else 0.0
                         close = float(touch.get("Close") or 0.0)
-                        return {
-                            "symbol": canonical_symbol,
-                            "ltp": ltp or (bid or ask or close),
-                            "bid": bid or ltp or close,
-                            "ask": ask or ltp or close,
-                            "close": close
-                        }
-        except Exception:
-            pass
+                        real_p = ltp or bid or ask or close
+                        if real_p > 0:
+                            return {
+                                "symbol": canonical_symbol,
+                                "ltp": ltp or (bid or ask or close),
+                                "bid": bid or (ltp or close),
+                                "ask": ask or (ltp or close),
+                                "close": close or ltp
+                            }
+        except Exception as e:
+            print(f"[XTS Order Broker] get_market_quote error for {canonical_symbol}: {e}")
 
-        return {"symbol": canonical_symbol, "ltp": 100.0, "bid": 99.5, "ask": 100.5, "close": 100.0}
+        # 3. Base price fallback (never a fixed 100.0)
+        from backend.feed_manager.brokers.xts_feed import get_default_base_price
+        base_p = get_default_base_price(canonical_symbol)
+        return {"symbol": canonical_symbol, "ltp": base_p, "bid": base_p, "ask": base_p, "close": base_p}
 
     async def place_order(self, order_dict: Dict[str, Any]) -> Dict[str, Any]:
         is_paper = order_dict.get("is_paper", True)
@@ -268,9 +314,17 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
 
             # Fetch live quote in advance
             quote = await self.get_market_quote(canonical_symbol, str(broker_token), exchange_seg)
-            ltp = float(quote.get("ltp") or order_dict.get("ltp") or 100.0)
+            ltp = float(quote.get("ltp") or order_dict.get("ltp") or 0.0)
             bid = float(quote.get("bid") or ltp)
             ask = float(quote.get("ask") or ltp)
+            close = float(quote.get("close") or ltp)
+
+            if ltp <= 0:
+                ltp = bid or ask or close
+            if bid <= 0:
+                bid = ltp
+            if ask <= 0:
+                ask = ltp
 
             # XTS ALGO accounts strictly prohibit MARKET orders or Price 0!
             # Automatically convert to Marketable Limit with buffer relative to current bid/ask/LTP
@@ -278,15 +332,15 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 req_order_type = "LIMIT"
                 if side == "SELL":
                     # Sell marketable limit: price below best bid / LTP to match immediately
-                    ref_p = bid if bid > 0 else ltp
+                    ref_p = bid if bid > 0 else (ltp if ltp > 0 else close)
                     calc_p = max(ref_p * (1.0 - buffer_pct), tick_size)
                 else:
                     # Buy marketable limit: price above best ask / LTP to match immediately
-                    ref_p = ask if ask > 0 else ltp
+                    ref_p = ask if ask > 0 else (ltp if ltp > 0 else close)
                     calc_p = ref_p * (1.0 + buffer_pct)
 
                 req_price = round(round(calc_p / tick_size) * tick_size, 2)
-                print(f"[XTS Order] Marketable Limit Applied: {canonical_symbol} {side} | Ref LTP: {ltp} (Bid: {bid}, Ask: {ask}) | Buffer: {buffer_pct*100:.1f}% -> LimitPrice: {req_price}")
+                print(f"[XTS Order] Marketable Limit Applied: {canonical_symbol} {side} | Ref LTP: {ref_p} (LTP: {ltp}, Bid: {bid}, Ask: {ask}, Close: {close}) | Buffer: {buffer_pct*100:.1f}% -> LimitPrice: {req_price}")
 
             prod_type = str(order_dict.get("product") or "MIS").upper()
             if "MCX" in canonical_symbol.upper() or exchange_seg.upper() in ["MCX", "MCXFO"]:
@@ -360,6 +414,31 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 if order_st == "REJECTED":
                     err_msg = rej_reason or f"Order rejected by broker/RMS ({status_raw})"
                     print(f"[XTS Order] REJECTION INTERCEPTED for {canonical_symbol} (Order {b_id}): {err_msg}")
+
+                    # Check if rejected due to OEMS Circuit Limit / TER range
+                    range_match = re.search(r"Range:\s*\[([0-9.]+)]\s*-\s*\[([0-9.]+)]", err_msg)
+                    if range_match and not order_dict.get("_circuit_retry_done"):
+                        try:
+                            lower_lim = float(range_match.group(1))
+                            upper_lim = float(range_match.group(2))
+                            clamped_price = req_price
+                            if side == "SELL" and req_price < lower_lim:
+                                clamped_price = lower_lim
+                            elif side == "BUY" and req_price > upper_lim:
+                                clamped_price = upper_lim
+                            else:
+                                clamped_price = min(max(req_price, lower_lim), upper_lim)
+
+                            clamped_price = round(round(clamped_price / tick_size) * tick_size, 2)
+                            if clamped_price != req_price:
+                                print(f"[XTS Order] Auto-recovering from Circuit Limit rejection! Clamping price {req_price} -> {clamped_price} within [{lower_lim} - {upper_lim}] and retrying...")
+                                retry_order_dict = dict(order_dict)
+                                retry_order_dict["price"] = clamped_price
+                                retry_order_dict["_circuit_retry_done"] = True
+                                return await self.place_order(retry_order_dict)
+                        except Exception as e_retry:
+                            print(f"[XTS Order] Error during circuit limit retry: {e_retry}")
+
                     return {
                         "success": False,
                         "broker_order_id": b_id,
@@ -555,13 +634,40 @@ class XTSOrderBroker(GenericBrokerOrderAdapter):
                 }
             else:
                 reason = data.get("description") or data.get("message") or resp.text
+                err_msg = f"XTS Error: {reason}"
+                print(f"[XTS Order] Order Placement Failed: {err_msg}")
+                # Auto-clamping for immediate OEMS Circuit Limit rejection
+                range_match = re.search(r"Range:\s*\[([0-9.]+)]\s*-\s*\[([0-9.]+)]", err_msg)
+                if range_match and not order_dict.get("_circuit_retry_done"):
+                    try:
+                        lower_lim = float(range_match.group(1))
+                        upper_lim = float(range_match.group(2))
+                        clamped_price = req_price
+                        if side == "SELL" and req_price < lower_lim:
+                            clamped_price = lower_lim
+                        elif side == "BUY" and req_price > upper_lim:
+                            clamped_price = upper_lim
+                        else:
+                            clamped_price = min(max(req_price, lower_lim), upper_lim)
+                        clamped_price = round(round(clamped_price / tick_size) * tick_size, 2)
+                        if clamped_price != req_price:
+                            print(f"[XTS Order] Auto-recovering from Circuit Limit rejection (pre-dispatch)! Clamping limit price {req_price} -> {clamped_price} within [{lower_lim} - {upper_lim}] and retrying...")
+                            retry_order_dict = dict(order_dict)
+                            retry_order_dict["price"] = clamped_price
+                            retry_order_dict["_circuit_retry_done"] = True
+                            return await self.place_order(retry_order_dict)
+                    except Exception as e_retry:
+                        print(f"[XTS Order] Error during pre-dispatch circuit limit retry: {e_retry}")
+
                 return {
                     "success": False,
                     "broker_order_id": None,
+                    "broker_symbol": broker_symbol,
+                    "broker_token": broker_token,
                     "status": "REJECTED",
                     "filled_quantity": 0,
                     "average_price": 0.0,
-                    "rejection_reason": f"XTS Error: {reason}",
+                    "rejection_reason": err_msg,
                     "timestamp": datetime.datetime.utcnow().isoformat()
                 }
         except Exception as e:
