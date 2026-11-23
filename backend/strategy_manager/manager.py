@@ -217,13 +217,13 @@ class StrategySupervisor:
             elif "supertrend_momentum" in inst.template_key:
                 from backend.strategy_manager.registered.supertrend_momentum import resolve_future_contract
                 trade_inst = str(effective_config.get("trade_instrument") or "FUTURE").upper()
+                raw_sym = str(effective_config.get("symbol") or "NSE:NIFTY").strip()
+                spot_sym = f"NSE:{raw_sym}" if (":" not in raw_sym and not raw_sym.startswith("NFO")) else raw_sym
+                worker_sym = spot_sym
+                extra_symbols.add(spot_sym)
                 if trade_inst == "FUTURE":
-                    fut_sym = resolve_future_contract("NIFTY")
-                    worker_sym = fut_sym
-                    extra_symbols.update([fut_sym, "NSE:NIFTY", "NFO:NIFTY"])
-                else:
-                    worker_sym = "NSE:NIFTY"
-                    extra_symbols.update(["NSE:NIFTY"])
+                    fut_sym = resolve_future_contract(spot_sym.split(":")[-1])
+                    extra_symbols.update([fut_sym, f"NFO:{spot_sym.split(':')[-1]}"])
                 try:
                     from backend.feed_manager.manager import feed_manager
                     asyncio.create_task(feed_manager.subscribe(list(extra_symbols)))
@@ -871,7 +871,7 @@ class StrategySupervisor:
                         tf = f"{tf}m"
                     if tf not in ["1m", "3m", "5m", "15m", "1h"]:
                         tf = "3m" if "pcp_pro" in str(worker.get("template_key", "")) else ("1m" if "ftx" in str(worker.get("template_key", "")) else "5m")
-                    count = int(cfg.get("candle_count", 60))
+                    count = int(cfg.get("candle_count") or 500)
                     bars = await feed_manager.get_ohlc(sym, resolution=tf, count=count)
                     if bars:
                         latest_bar = bars[-1]

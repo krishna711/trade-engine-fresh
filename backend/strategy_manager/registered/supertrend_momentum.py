@@ -1398,7 +1398,7 @@ class SupertrendMomentumStrategy(BaseStrategy):
 
         ltp_f = float(ltp)
         trade_inst = getattr(self, "trade_instrument", "FUTURE")
-        target_signal = getattr(self, "signal_symbol", self.symbol) if trade_inst == "FUTURE" else self.symbol
+        target_signal = self.symbol
         is_signal_sym = (
             (sym == target_signal)
             or (":" in sym and sym.split(":")[-1] == target_signal.split(":")[-1])
@@ -1475,13 +1475,16 @@ class SupertrendMomentumStrategy(BaseStrategy):
                     leg0["entry"] = avg_fill
                     leg0["ltp"] = avg_fill
                     self.current_trade["entry_price"] = avg_fill
-                    self.current_trade["entry_spot"] = avg_fill
-                    # Recalculate target with actual fill price
-                    stop_p = float(self.current_trade.get("stop_price") or avg_fill * 0.99)
-                    risk = max(1.0, abs(avg_fill - stop_p))
+                    # Scale stop and target into contract price terms preserving point risk
+                    sig_spot = float(self.current_trade.get("entry_spot") or avg_fill)
+                    orig_stop = float(self.current_trade.get("stop_price") or avg_fill * 0.99)
+                    risk_pts = max(1.0, abs(sig_spot - orig_stop))
                     is_long = self.current_trade.get("signal_side") == "BUY"
+                    contract_stop = (avg_fill - risk_pts) if is_long else (avg_fill + risk_pts)
+                    self.current_trade["stop_price"] = round(contract_stop, 2)
+                    self.current_trade["sl_price"] = round(contract_stop, 2)
                     if self.risk_reward > 0:
-                        target_p = avg_fill + (risk * self.risk_reward) if is_long else avg_fill - (risk * self.risk_reward)
+                        target_p = (avg_fill + (risk_pts * self.risk_reward)) if is_long else (avg_fill - (risk_pts * self.risk_reward))
                         self.current_trade["target_price"] = round(target_p, 2)
                         self.current_trade["pt_spot"] = round(target_p, 2)
                 leg0["status"] = "FILLED"
