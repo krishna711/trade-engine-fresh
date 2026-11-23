@@ -1647,12 +1647,11 @@ async def get_strategy_chart_data(
         cfg["symbol"] = root
         cfg["underlying"] = root
     elif template_key == "strat_supertrend_momentum_v1":
-        trade_inst = str(cfg.get("trade_instrument") or "FUTURE").upper()
-        if trade_inst == "FUTURE":
-            from backend.strategy_manager.registered.supertrend_momentum import resolve_future_contract
-            symbol = resolve_future_contract("NIFTY")
-        else:
-            symbol = "NSE:NIFTY"
+        # Technical indicators, Supertrend, Bollinger Bands, and Floor Pivots are computed on the Index Spot candles (e.g. NSE:NIFTY)
+        raw_sym = str(cfg.get("symbol") or "NSE:NIFTY").strip()
+        symbol = f"NSE:{raw_sym}" if (":" not in raw_sym and not raw_sym.startswith("NFO")) else raw_sym
+        cfg["symbol"] = symbol
+        cfg["underlying"] = symbol
     default_tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or ("3m" if "pcp_pro" in template_key else ("1m" if "ftx" in template_key else "5m"))).lower()
     if default_tf.isdigit():
         default_tf = f"{default_tf}m"

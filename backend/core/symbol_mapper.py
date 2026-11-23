@@ -26,6 +26,16 @@ MONTH_CODES = {
     7: "JUL", 8: "AUG", 9: "SEP", 10: "OCT", 11: "NOV", 12: "DEC"
 }
 
+# Fixed broker exchange instrument tokens for major spot indices
+INDEX_TOKENS_XTS = {
+    "NSE:NIFTY": "26000",
+    "NSE:BANKNIFTY": "26001",
+    "NSE:FINNIFTY": "26037",
+    "NSE:MIDCPNIFTY": "26074",
+    "BSE:SENSEX": "1",
+    "BSE:BANKEX": "12",
+}
+
 class UniversalSymbolMapper:
     """
     Translates universal canonical symbols across brokers (XTS, Shoonya, Fyers, Zerodha, Dhan, Kotak).
@@ -135,9 +145,16 @@ class UniversalSymbolMapper:
                 self._xts_canonical_to_symbol[can_root] = trading_sym
                 # Map token directly to canonical root so incoming ticks stream as e.g. MCX:CRUDEOILM
                 self._xts_token_to_canonical[token] = can_root
-                # If NFO, also alias as NSE:HAL if not present
-                if prefix == "NFO" and f"NSE:{root}" not in self._xts_canonical_to_token:
-                    self._xts_canonical_to_token[f"NSE:{root}"] = token
+                # If NFO, also alias as NSE:HAL if not present (never overwrite benchmark spot indices!)
+                if prefix == "NFO" and root not in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"]:
+                    if f"NSE:{root}" not in self._xts_canonical_to_token:
+                        self._xts_canonical_to_token[f"NSE:{root}"] = token
+
+        # Always enforce fixed canonical spot tokens for benchmark index underlyings
+        for idx_sym, idx_tok in INDEX_TOKENS_XTS.items():
+            self._xts_canonical_to_token[idx_sym] = idx_tok
+            self._xts_token_to_canonical[idx_tok] = idx_sym
+            self._xts_canonical_to_symbol[idx_sym] = idx_sym.split(":")[-1]
 
     def reload_cache(self):
         db = SessionLocal()
@@ -269,8 +286,11 @@ class UniversalSymbolMapper:
             canonical_symbol, broker = broker, canonical_symbol
 
         broker_lower = broker.lower()
-        if "xts" in broker_lower and canonical_symbol in self._xts_canonical_to_token:
-            return self._xts_canonical_to_token[canonical_symbol]
+        if "xts" in broker_lower:
+            if canonical_symbol in INDEX_TOKENS_XTS:
+                return INDEX_TOKENS_XTS[canonical_symbol]
+            if canonical_symbol in self._xts_canonical_to_token:
+                return self._xts_canonical_to_token[canonical_symbol]
 
         mapping = self.get_mapping(canonical_symbol)
         if not mapping:
