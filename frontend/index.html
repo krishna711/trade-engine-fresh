@@ -368,6 +368,7 @@
 
             <!-- Main Interactive Chart Card -->
             <div class="table-card" style="padding: 1rem; margin-bottom: 1rem; position: relative;">
+                <div id="charts-ohlc-hud" class="charts-ohlc-hud" style="display: none;"></div>
                 <div id="charts-main-host" style="width: 100%; height: 430px; position: relative;"></div>
                 <div id="charts-empty-overlay" style="display: none; position: absolute; inset: 0; align-items: center; justify-content: center; pointer-events: none;">
                     <div style="background: var(--bg-secondary); border: 1px solid var(--border-color); padding: 1rem 1.5rem; border-radius: 8px; text-align: center;">
@@ -759,6 +760,7 @@
             </div>
 
             <div class="modal-body" style="height: 360px; position: relative;">
+                <div id="modal-chart-ohlc-hud" class="charts-ohlc-hud" style="display: none; top: 10px; left: 14px;"></div>
                 <div id="chart-no-trades-overlay" style="display: none; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(15, 23, 42, 0.92); border: 1px solid rgba(59, 130, 246, 0.35); padding: 14px 24px; border-radius: 8px; text-align: center; pointer-events: none; z-index: 10; box-shadow: 0 4px 14px rgba(0,0,0,0.6);">
                     <div style="font-size: 0.88rem; font-weight: 700; color: #60a5fa; display: flex; align-items: center; justify-content: center; gap: 6px;">
                         <span>ℹ️</span> No Trades Opened Yet Today

@@ -950,6 +950,11 @@ class StrategiesManager {
         const modeDesc = document.getElementById("chart-tab-mode-desc");
 
         if (this.currentChartTab === 'pnl') {
+            const modalHud = document.getElementById("modal-chart-ohlc-hud");
+            if (modalHud) {
+                modalHud.style.display = "none";
+                modalHud.innerHTML = "";
+            }
             if (modeDesc) modeDesc.innerText = "Cumulative Intraday PnL (₹)";
             const pnlSeries = data.pnl_series || [];
             const hasTrades = Boolean(data.has_trades);
@@ -1050,6 +1055,45 @@ class StrategiesManager {
             });
             const prices = ohlc.map(b => b.close);
 
+            const modalHud = document.getElementById("modal-chart-ohlc-hud");
+            const updateModalHud = (b, isHover = false) => {
+                if (!modalHud) return;
+                if (!b) { modalHud.style.display = "none"; return; }
+                const open = Number(b.open || 0);
+                const high = Number(b.high || 0);
+                const low = Number(b.low || 0);
+                const close = Number(b.close || 0);
+                const isUp = close >= open;
+                const colorClass = isUp ? "up" : "down";
+                const diff = close - open;
+                const pct = open > 0 ? (diff / open) * 100 : 0;
+                const sign = diff >= 0 ? "+" : "";
+                const fmt = (v) => Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                let tStr = "";
+                if (b.time) {
+                    try {
+                        const d = new Date(b.time);
+                        if (Number.isFinite(d.getTime())) {
+                            tStr = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit", timeZone: "Asia/Kolkata" }) + " " +
+                                   d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
+                        }
+                    } catch (e) {}
+                }
+                modalHud.innerHTML = `
+                    <span class="hud-time">${tStr || b.time || ""}</span>
+                    <span class="hud-chip"><span class="hud-lbl">O:</span><span class="hud-val">₹${fmt(open)}</span></span>
+                    <span class="hud-chip"><span class="hud-lbl">H:</span><span class="hud-val">₹${fmt(high)}</span></span>
+                    <span class="hud-chip"><span class="hud-lbl">L:</span><span class="hud-val">₹${fmt(low)}</span></span>
+                    <span class="hud-chip"><span class="hud-lbl">C:</span><span class="hud-val ${colorClass}">₹${fmt(close)}</span></span>
+                    <span class="hud-chip"><span class="hud-lbl">Δ:</span><span class="hud-val ${colorClass}">${sign}${diff.toFixed(2)} (${sign}${pct.toFixed(2)}%)</span></span>
+                    ${isHover ? `<span style="font-size: 0.68rem; color: var(--accent-cyan); font-weight: 700; margin-left: 2px;">● HOVER</span>` : `<span style="font-size: 0.68rem; color: var(--text-muted); margin-left: 2px;">LATEST</span>`}
+                `;
+                modalHud.style.display = "flex";
+            };
+
+            const lastB = ohlc.length ? ohlc[ohlc.length - 1] : null;
+            updateModalHud(lastB, false);
+
             this.chartInstance = new Chart(ctx, {
                 type: 'line',
                 data: {
@@ -1067,6 +1111,14 @@ class StrategiesManager {
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
+                    onHover: (event, activeElements) => {
+                        if (activeElements && activeElements.length > 0) {
+                            const idx = activeElements[0].index;
+                            if (ohlc[idx]) updateModalHud(ohlc[idx], true);
+                        } else {
+                            updateModalHud(lastB, false);
+                        }
+                    },
                     scales: {
                         x: { grid: { color: 'rgba(255,255,255,0.05)' } },
                         y: {
@@ -1083,6 +1135,13 @@ class StrategiesManager {
                         tooltip: {
                             callbacks: {
                                 label: function(context) {
+                                    const b = ohlc[context.dataIndex];
+                                    if (b && b.open !== undefined) {
+                                        return [
+                                            `Close: ₹${Number(b.close).toFixed(2)}`,
+                                            `Open: ₹${Number(b.open).toFixed(2)} | High: ₹${Number(b.high).toFixed(2)} | Low: ₹${Number(b.low).toFixed(2)}`
+                                        ];
+                                    }
                                     return `Price: ₹${Number(context.parsed.y).toFixed(2)}`;
                                 }
                             }
@@ -1090,6 +1149,7 @@ class StrategiesManager {
                     }
                 }
             });
+            ctx.canvas.onmouseleave = () => updateModalHud(lastB, false);
         }
     }
 

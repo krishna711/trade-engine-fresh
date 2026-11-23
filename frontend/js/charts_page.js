@@ -107,6 +107,11 @@ class ChartsPageManager {
         if (tbody) tbody.innerHTML = `<tr><td colspan="5" style="text-align: center; color: var(--text-muted); font-size: 0.8rem;">Loading signals...</td></tr>`;
         const countEl = document.getElementById("charts-signals-count");
         if (countEl) countEl.innerText = "";
+        const hud = document.getElementById("charts-ohlc-hud");
+        if (hud) {
+            hud.style.display = "none";
+            hud.innerHTML = "";
+        }
     }
 
     selectByTemplateKey(tplKey) {
@@ -363,7 +368,144 @@ class ChartsPageManager {
             this.subChart = null;
         }
         const host = document.getElementById("charts-main-host");
-        if (host) host.innerHTML = "";
+        if (host) {
+            host.innerHTML = "";
+            host.onmouseleave = null;
+        }
+        const hud = document.getElementById("charts-ohlc-hud");
+        if (hud) {
+            hud.style.display = "none";
+            hud.innerHTML = "";
+        }
+    }
+
+    _formatCandleDateTime(c) {
+        if (!c) return "-";
+        if (c.time) {
+            try {
+                let s = String(c.time);
+                if (!s.includes("+") && !s.includes("Z") && !s.includes("-", 10)) {
+                    s = s + "+05:30";
+                }
+                const d = new Date(s);
+                if (Number.isFinite(d.getTime())) {
+                    const dtStr = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit", timeZone: "Asia/Kolkata" });
+                    const tmStr = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
+                    return `${dtStr} ${tmStr} IST`;
+                }
+            } catch (e) {}
+        }
+        return c.label || String(c.time || "");
+    }
+
+    _updateOhlcHud(candle, isHover = false) {
+        const hudEl = document.getElementById("charts-ohlc-hud");
+        if (!hudEl) return;
+        if (!candle) {
+            hudEl.style.display = "none";
+            return;
+        }
+
+        const timeStr = this._formatCandleDateTime(candle);
+        const open = Number(candle.open || 0);
+        const high = Number(candle.high || 0);
+        const low = Number(candle.low || 0);
+        const close = Number(candle.close || 0);
+        const vol = Number(candle.volume || 0);
+        const isBullish = close >= open;
+        const colorClass = isBullish ? "up" : "down";
+        const diff = close - open;
+        const pct = open > 0 ? (diff / open) * 100 : 0;
+        const sign = diff >= 0 ? "+" : "";
+        const chgStr = `${sign}${diff.toFixed(2)} (${sign}${pct.toFixed(2)}%)`;
+
+        const fmt = (v) => Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+        hudEl.innerHTML = `
+            <span class="hud-time" title="Candle Start Time (IST)">${timeStr}</span>
+            <span class="hud-chip"><span class="hud-lbl">O:</span><span class="hud-val">₹${fmt(open)}</span></span>
+            <span class="hud-chip"><span class="hud-lbl">H:</span><span class="hud-val">₹${fmt(high)}</span></span>
+            <span class="hud-chip"><span class="hud-lbl">L:</span><span class="hud-val">₹${fmt(low)}</span></span>
+            <span class="hud-chip"><span class="hud-lbl">C:</span><span class="hud-val ${colorClass}">₹${fmt(close)}</span></span>
+            <span class="hud-chip"><span class="hud-lbl">Δ:</span><span class="hud-val ${colorClass}">${chgStr}</span></span>
+            ${vol > 0 ? `<span class="hud-chip"><span class="hud-lbl">Vol:</span><span class="hud-val">${vol.toLocaleString('en-IN')}</span></span>` : ""}
+            ${isHover ? `<span style="font-size: 0.68rem; color: var(--accent-cyan); font-weight: 700; margin-left: 2px;">● HOVER</span>` : `<span style="font-size: 0.68rem; color: var(--text-muted); margin-left: 2px;">LATEST</span>`}
+        `;
+        hudEl.style.display = "flex";
+    }
+
+    _updateMetricsStrip(data, candle, idx) {
+        const metricsEl = document.getElementById("charts-metrics-strip");
+        if (!metricsEl) return;
+        if (!candle) {
+            metricsEl.innerHTML = `<span style="color: var(--text-muted);">No candle data</span>`;
+            return;
+        }
+        const overlays = data.overlays || {};
+        const osc = data.oscillators || {};
+        const isPcp = data.template_key === "strat_pcp_pro_v201";
+        const isSupertrend = data.template_key === "strat_supertrend_momentum_v1";
+
+        const open = Number(candle.open || 0);
+        const high = Number(candle.high || 0);
+        const low = Number(candle.low || 0);
+        const close = Number(candle.close || 0);
+        const diff = close - open;
+        const pct = open > 0 ? (diff / open) * 100 : 0;
+        const isUp = close >= open;
+        const color = isUp ? "#10b981" : "#ef4444";
+        const sign = diff >= 0 ? "+" : "";
+
+        const ohlcSummary = `
+            <span><strong>${data.strategy_name}</strong> (<code>${data.symbol}</code> • ${data.resolution})</span>
+            <span>Close: <strong style="color: ${color};">₹${close.toFixed(2)}</strong> <small style="color: ${color};">(${sign}${pct.toFixed(2)}%)</small></span>
+            <span style="color: var(--text-muted); font-size: 0.78rem;">[O: ₹${open.toFixed(2)} | H: ₹${high.toFixed(2)} | L: ₹${low.toFixed(2)}]</span>
+        `;
+
+        if (isSupertrend) {
+            const stDir = (overlays.supertrend_direction && idx >= 0) ? overlays.supertrend_direction[idx] : 0;
+            const stVal = overlays.supertrend && idx >= 0 ? overlays.supertrend[idx] : null;
+            const rsiVal = osc.rsi && idx >= 0 ? osc.rsi[idx] : null;
+            const atrVal = osc.atr && idx >= 0 ? osc.atr[idx] : (overlays.atr && idx >= 0 ? overlays.atr[idx] : null);
+            const r1Val = overlays.pivot_r1 && idx >= 0 ? overlays.pivot_r1[idx] : null;
+            const s1Val = overlays.pivot_s1 && idx >= 0 ? overlays.pivot_s1[idx] : null;
+            const bbUVal = overlays.bb_upper && idx >= 0 ? overlays.bb_upper[idx] : null;
+            const bbLVal = overlays.bb_lower && idx >= 0 ? overlays.bb_lower[idx] : null;
+            metricsEl.innerHTML = `
+                ${ohlcSummary}
+                ${stVal !== null ? `<span style="color: ${stDir === 1 ? '#10b981' : '#ef4444'}; font-weight: 700;">Supertrend: ₹${stVal.toFixed(2)} (${stDir === 1 ? '▲ LONG' : '▼ SHORT'})</span>` : ""}
+                ${atrVal !== null ? `<span style="color: ${(atrVal >= 15 && atrVal <= 35) ? '#10b981' : '#f59e0b'}; font-weight: 600;">ATR: ${atrVal.toFixed(1)} [15-35]</span>` : ""}
+                ${rsiVal !== null ? `<span style="color: ${rsiVal >= 70 ? '#10b981' : (rsiVal <= 30 ? '#ef4444' : '#38bdf8')}; font-weight: 600;">RSI(14): ${rsiVal.toFixed(1)}</span>` : ""}
+                ${r1Val !== null ? `<span style="color: #a855f7;">R1: ₹${r1Val.toFixed(2)}</span>` : ""}
+                ${s1Val !== null ? `<span style="color: #f59e0b;">S1: ₹${s1Val.toFixed(2)}</span>` : ""}
+                ${(bbUVal !== null && bbLVal !== null) ? `<span style="color: #60a5fa;">BB: [₹${bbLVal.toFixed(2)} - ₹${bbUVal.toFixed(2)}]</span>` : ""}
+                <span>Signals: <strong>${(data.signals || []).length}</strong></span>
+            `;
+        } else if (isPcp) {
+            const td = osc.trend_direction && idx >= 0 ? osc.trend_direction[idx] : 0;
+            const adxLast = osc.adx && idx >= 0 ? osc.adx[idx] : null;
+            const lsLast = overlays.long_stop && idx >= 0 ? overlays.long_stop[idx] : null;
+            const ssLast = overlays.short_stop && idx >= 0 ? overlays.short_stop[idx] : null;
+            metricsEl.innerHTML = `
+                ${ohlcSummary}
+                <span style="color: ${td === 1 ? '#10b981' : '#ef4444'}; font-weight: 700;">Regime: ${td === 1 ? '▲ BULLISH' : (td === -1 ? '▼ BEARISH' : 'NEUTRAL')}</span>
+                ${lsLast !== null ? `<span style="color: #10b981;">LongStop: ₹${lsLast.toFixed(2)}</span>` : ""}
+                ${ssLast !== null ? `<span style="color: #ef4444;">ShortStop: ₹${ssLast.toFixed(2)}</span>` : ""}
+                ${adxLast !== null ? `<span style="color: #60a5fa;">ADX(14): ${adxLast.toFixed(1)}</span>` : ""}
+                <span>Signals: <strong>${(data.signals || []).length}</strong></span>
+            `;
+        } else {
+            const vwapL = overlays.vwap && idx >= 0 ? overlays.vwap[idx] : null;
+            const orHL = overlays.or_high && idx >= 0 ? overlays.or_high[idx] : null;
+            const orLL = overlays.or_low && idx >= 0 ? overlays.or_low[idx] : null;
+            metricsEl.innerHTML = `
+                ${ohlcSummary}
+                ${vwapL !== null ? `<span style="color: #a855f7;">VWAP: ₹${vwapL.toFixed(2)}</span>` : ""}
+                ${orHL !== null ? `<span style="color: #10b981;">OR High: ₹${orHL.toFixed(2)}</span>` : ""}
+                ${orLL !== null ? `<span style="color: #ef4444;">OR Low: ₹${orLL.toFixed(2)}</span>` : ""}
+                <span>Signals: <strong>${(data.signals || []).length}</strong></span>
+            `;
+        }
     }
 
     _themeColors() {
@@ -493,11 +635,14 @@ class ChartsPageManager {
 
             const pts = [];
             const seenT = new Set();
-            for (const p of series) {
+            const timeToPtMap = new Map();
+            for (let i = 0; i < series.length; i++) {
+                const p = series[i];
                 const t = this._toIstEpochSec(p.time);
                 if (t && !seenT.has(t)) {
                     seenT.add(t);
                     pts.push({ time: t, value: p.combined_premium, label: p.label });
+                    timeToPtMap.set(t, { pt: p, idx: i });
                 }
             }
             pts.sort((a, b) => a.time - b.time);
@@ -552,6 +697,54 @@ class ChartsPageManager {
             } else {
                 chart.timeScale().fitContent();
             }
+
+            const updatePremiumHud = (pt, isHover = false) => {
+                const hudEl = document.getElementById("charts-ohlc-hud");
+                if (!hudEl) return;
+                if (!pt) {
+                    hudEl.style.display = "none";
+                    return;
+                }
+                const timeStr = this._formatCandleDateTime(pt);
+                const comb = Number(pt.combined_premium || 0);
+                const ce = Number(pt.ce_ltp || 0);
+                const pe = Number(pt.pe_ltp || 0);
+                const fmt = (v) => Number(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+                hudEl.innerHTML = `
+                    <span class="hud-time">${timeStr}</span>
+                    <span class="hud-chip"><span class="hud-lbl">Combined:</span><span class="hud-val" style="color: #38bdf8;">₹${fmt(comb)}</span></span>
+                    <span class="hud-chip"><span class="hud-lbl">CE (${data.ce_symbol || 'CE'}):</span><span class="hud-val">₹${fmt(ce)}</span></span>
+                    <span class="hud-chip"><span class="hud-lbl">PE (${data.pe_symbol || 'PE'}):</span><span class="hud-val">₹${fmt(pe)}</span></span>
+                    ${isHover ? `<span style="font-size: 0.68rem; color: var(--accent-cyan); font-weight: 700; margin-left: 2px;">● HOVER</span>` : `<span style="font-size: 0.68rem; color: var(--text-muted); margin-left: 2px;">LATEST</span>`}
+                `;
+                hudEl.style.display = "flex";
+            };
+
+            updatePremiumHud(lastPt, false);
+
+            chart.subscribeCrosshairMove(param => {
+                if (
+                    !param ||
+                    param.time === undefined ||
+                    !param.point ||
+                    param.point.x < 0 ||
+                    param.point.x > host.clientWidth ||
+                    param.point.y < 0 ||
+                    param.point.y > host.clientHeight
+                ) {
+                    updatePremiumHud(lastPt, false);
+                    return;
+                }
+                const mapped = timeToPtMap.get(param.time);
+                if (mapped && mapped.pt) {
+                    updatePremiumHud(mapped.pt, true);
+                }
+            });
+
+            host.onmouseleave = () => {
+                updatePremiumHud(lastPt, false);
+            };
         } else {
             // Chart.js fallback
             const canvas = document.createElement("canvas");
@@ -607,57 +800,9 @@ class ChartsPageManager {
         const lastC = candles.length ? candles[candles.length - 1] : null;
         const lastIdx = candles.length - 1;
 
-        // Metrics Strip
-        const metricsEl = document.getElementById("charts-metrics-strip");
-        if (metricsEl) {
-            if (isSupertrend) {
-                const stDir = (overlays.supertrend_direction && lastIdx >= 0) ? overlays.supertrend_direction[lastIdx] : 0;
-                const stVal = overlays.supertrend && lastIdx >= 0 ? overlays.supertrend[lastIdx] : null;
-                const rsiVal = osc.rsi && lastIdx >= 0 ? osc.rsi[lastIdx] : null;
-                const atrVal = osc.atr && lastIdx >= 0 ? osc.atr[lastIdx] : (overlays.atr && lastIdx >= 0 ? overlays.atr[lastIdx] : null);
-                const r1Val = overlays.pivot_r1 && lastIdx >= 0 ? overlays.pivot_r1[lastIdx] : null;
-                const s1Val = overlays.pivot_s1 && lastIdx >= 0 ? overlays.pivot_s1[lastIdx] : null;
-                const bbUVal = overlays.bb_upper && lastIdx >= 0 ? overlays.bb_upper[lastIdx] : null;
-                const bbLVal = overlays.bb_lower && lastIdx >= 0 ? overlays.bb_lower[lastIdx] : null;
-                metricsEl.innerHTML = `
-                    <span><strong>${data.strategy_name}</strong> (<code>${data.symbol}</code> • ${data.resolution})</span>
-                    <span>Close: <strong>₹${lastC ? lastC.close.toFixed(2) : '-'}</strong></span>
-                    ${stVal !== null ? `<span style="color: ${stDir === 1 ? '#10b981' : '#ef4444'}; font-weight: 700;">Supertrend: ₹${stVal.toFixed(2)} (${stDir === 1 ? '▲ LONG' : '▼ SHORT'})</span>` : ""}
-                    ${atrVal !== null ? `<span style="color: ${(atrVal >= 15 && atrVal <= 35) ? '#10b981' : '#f59e0b'}; font-weight: 600;">ATR: ${atrVal.toFixed(1)} [15-35]</span>` : ""}
-                    ${rsiVal !== null ? `<span style="color: ${rsiVal >= 70 ? '#10b981' : (rsiVal <= 30 ? '#ef4444' : '#38bdf8')}; font-weight: 600;">RSI(14): ${rsiVal.toFixed(1)}</span>` : ""}
-                    ${r1Val !== null ? `<span style="color: #a855f7;">R1: ₹${r1Val.toFixed(2)}</span>` : ""}
-                    ${s1Val !== null ? `<span style="color: #f59e0b;">S1: ₹${s1Val.toFixed(2)}</span>` : ""}
-                    ${(bbUVal !== null && bbLVal !== null) ? `<span style="color: #60a5fa;">BB: [₹${bbLVal.toFixed(2)} - ₹${bbUVal.toFixed(2)}]</span>` : ""}
-                    <span>Signals: <strong>${(data.signals || []).length}</strong></span>
-                `;
-            } else if (isPcp) {
-                const td = osc.trend_direction && lastIdx >= 0 ? osc.trend_direction[lastIdx] : 0;
-                const adxLast = osc.adx && lastIdx >= 0 ? osc.adx[lastIdx] : null;
-                const lsLast = overlays.long_stop && lastIdx >= 0 ? overlays.long_stop[lastIdx] : null;
-                const ssLast = overlays.short_stop && lastIdx >= 0 ? overlays.short_stop[lastIdx] : null;
-                metricsEl.innerHTML = `
-                    <span><strong>${data.strategy_name}</strong> (<code>${data.symbol}</code> • ${data.resolution})</span>
-                    <span>Close: <strong>₹${lastC ? lastC.close.toFixed(2) : '-'}</strong></span>
-                    <span style="color: ${td === 1 ? '#10b981' : '#ef4444'}; font-weight: 700;">Regime: ${td === 1 ? '▲ BULLISH' : (td === -1 ? '▼ BEARISH' : 'NEUTRAL')}</span>
-                    ${lsLast !== null ? `<span style="color: #10b981;">LongStop: ₹${lsLast.toFixed(2)}</span>` : ""}
-                    ${ssLast !== null ? `<span style="color: #ef4444;">ShortStop: ₹${ssLast.toFixed(2)}</span>` : ""}
-                    ${adxLast !== null ? `<span style="color: #60a5fa;">ADX(14): ${adxLast.toFixed(1)}</span>` : ""}
-                    <span>Signals: <strong>${(data.signals || []).length}</strong></span>
-                `;
-            } else {
-                const vwapL = overlays.vwap && lastIdx >= 0 ? overlays.vwap[lastIdx] : null;
-                const orHL = overlays.or_high && lastIdx >= 0 ? overlays.or_high[lastIdx] : null;
-                const orLL = overlays.or_low && lastIdx >= 0 ? overlays.or_low[lastIdx] : null;
-                metricsEl.innerHTML = `
-                    <span><strong>${data.strategy_name}</strong> (<code>${data.symbol}</code> • ${data.resolution})</span>
-                    <span>Close: <strong>₹${lastC ? lastC.close.toFixed(2) : '-'}</strong></span>
-                    ${vwapL !== null ? `<span style="color: #a855f7;">VWAP: ₹${vwapL.toFixed(2)}</span>` : ""}
-                    ${orHL !== null ? `<span style="color: #10b981;">OR High: ₹${orHL.toFixed(2)}</span>` : ""}
-                    ${orLL !== null ? `<span style="color: #ef4444;">OR Low: ₹${orLL.toFixed(2)}</span>` : ""}
-                    <span>Signals: <strong>${(data.signals || []).length}</strong></span>
-                `;
-            }
-        }
+        // Metrics Strip & Interactive OHLC HUD
+        this._updateMetricsStrip(data, lastC, lastIdx);
+        this._updateOhlcHud(lastC, false);
 
         // Legend Strip
         const legendEl = document.getElementById("charts-legend-strip");
@@ -709,6 +854,7 @@ class ChartsPageManager {
 
             const lwCandles = [];
             const idxToTime = new Map();
+            const timeToCandleMap = new Map();
             let prevT = 0;
             candles.forEach((c, idx) => {
                 let t = this._toIstEpochSec(c.time);
@@ -719,6 +865,7 @@ class ChartsPageManager {
                 }
                 prevT = t;
                 idxToTime.set(idx, t);
+                timeToCandleMap.set(t, { candle: c, idx: idx });
                 lwCandles.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
             });
             if (lwCandles.length) {
@@ -806,6 +953,45 @@ class ChartsPageManager {
             } else {
                 chart.timeScale().fitContent();
             }
+
+            // Mouseover crosshair move tracking for instant OHLC display
+            chart.subscribeCrosshairMove(param => {
+                if (
+                    !param ||
+                    param.time === undefined ||
+                    !param.point ||
+                    param.point.x < 0 ||
+                    param.point.x > host.clientWidth ||
+                    param.point.y < 0 ||
+                    param.point.y > host.clientHeight
+                ) {
+                    this._updateOhlcHud(lastC, false);
+                    this._updateMetricsStrip(data, lastC, lastIdx);
+                    return;
+                }
+
+                const mapped = timeToCandleMap.get(param.time);
+                if (mapped && mapped.candle) {
+                    this._updateOhlcHud(mapped.candle, true);
+                    this._updateMetricsStrip(data, mapped.candle, mapped.idx);
+                } else if (param.seriesData && param.seriesData.get(candleSeries)) {
+                    const sData = param.seriesData.get(candleSeries);
+                    const fallbackCandle = {
+                        time: param.time,
+                        open: sData.open,
+                        high: sData.high,
+                        low: sData.low,
+                        close: sData.close,
+                        volume: 0
+                    };
+                    this._updateOhlcHud(fallbackCandle, true);
+                }
+            });
+
+            host.onmouseleave = () => {
+                this._updateOhlcHud(lastC, false);
+                this._updateMetricsStrip(data, lastC, lastIdx);
+            };
         } else {
             // Chart.js fallback (Close + indicators)
             const canvas = document.createElement("canvas");
@@ -826,7 +1012,38 @@ class ChartsPageManager {
             this.fallbackMainChart = new Chart(canvas.getContext("2d"), {
                 type: "line",
                 data: { labels: candles.map(c => c.label), datasets },
-                options: { responsive: true, maintainAspectRatio: false },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    onHover: (event, activeElements) => {
+                        if (activeElements && activeElements.length > 0) {
+                            const idx = activeElements[0].index;
+                            if (candles[idx]) {
+                                this._updateOhlcHud(candles[idx], true);
+                                this._updateMetricsStrip(data, candles[idx], idx);
+                            }
+                        } else {
+                            this._updateOhlcHud(lastC, false);
+                            this._updateMetricsStrip(data, lastC, lastIdx);
+                        }
+                    },
+                    plugins: {
+                        tooltip: {
+                            callbacks: {
+                                label: (ctx) => {
+                                    const c = candles[ctx.dataIndex];
+                                    if (c && c.open !== undefined) {
+                                        return [
+                                            `Close: ₹${Number(c.close).toFixed(2)}`,
+                                            `Open: ₹${Number(c.open).toFixed(2)} | High: ₹${Number(c.high).toFixed(2)} | Low: ₹${Number(c.low).toFixed(2)}`
+                                        ];
+                                    }
+                                    return `Close: ₹${Number(ctx.raw).toFixed(2)}`;
+                                }
+                            }
+                        }
+                    }
+                },
             });
         }
 

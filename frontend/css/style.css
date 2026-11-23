@@ -1519,6 +1519,80 @@ table.data-table tbody td {
     color: var(--accent-amber);
 }
 
+/* ===================================================================
+   CHART OHLC HEADS-UP DISPLAY (MOUSEOVER HUD)
+   =================================================================== */
+.charts-ohlc-hud {
+    position: absolute;
+    top: 1.4rem;
+    left: 1.6rem;
+    z-index: 10;
+    pointer-events: none;
+    background: rgba(15, 23, 42, 0.88);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    line-height: 1.35;
+    color: var(--text-primary);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    max-width: calc(100% - 3.2rem);
+    user-select: none;
+}
+
+body.light-theme .charts-ohlc-hud {
+    background: rgba(255, 255, 255, 0.94);
+    border: 1px solid rgba(203, 213, 225, 0.9);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+}
+
+.charts-ohlc-hud .hud-time {
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-family: var(--font-mono, monospace);
+    padding-right: 8px;
+    border-right: 1px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.charts-ohlc-hud .hud-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    white-space: nowrap;
+}
+
+.charts-ohlc-hud .hud-lbl {
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.charts-ohlc-hud .hud-val {
+    font-family: var(--font-mono, monospace);
+    font-weight: 600;
+}
+
+.charts-ohlc-hud .hud-val.up {
+    color: #10b981;
+}
+
+.charts-ohlc-hud .hud-val.down {
+    color: #ef4444;
+}
+
+.charts-ohlc-hud .hud-divider {
+    color: var(--border-color);
+    margin: 0 2px;
+}
+
 .action-btn-icon.btn-action-remap:hover {
     background: rgba(59, 130, 246, 0.25);
     border-color: var(--accent-blue);
