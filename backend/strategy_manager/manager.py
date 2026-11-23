@@ -994,19 +994,27 @@ class StrategySupervisor:
         db = SessionLocal()
         try:
             now_dt = datetime.datetime.utcnow()
+            inst = db.query(StrategyInstance).filter(StrategyInstance.id == strategy_id).first()
+            sym = None
+            cid = None
+            if inst:
+                inst.last_signal_time = now_dt
+                if inst.config and isinstance(inst.config, dict):
+                    sym = inst.config.get("symbol") or inst.config.get("underlying")
+                if inst.client_ids and len(inst.client_ids) > 0:
+                    cid = inst.client_ids[0]
+
             log = SystemLog(
                 category=category,
                 level=level,
                 message=message,
                 strategy_id=strategy_id,
+                symbol=sym,
+                client_id=cid,
                 is_dismissed=is_dismissed,
                 timestamp=now_dt
             )
             db.add(log)
-
-            inst = db.query(StrategyInstance).filter(StrategyInstance.id == strategy_id).first()
-            if inst:
-                inst.last_signal_time = now_dt
 
             if strategy_id in self.active_workers:
                 self.active_workers[strategy_id]["last_signal_time"] = now_dt
@@ -1014,9 +1022,15 @@ class StrategySupervisor:
             db.commit()
 
             # Broadcast to event bus for real-time UI logging
+            strat_name = (inst.instance_name_user or inst.instance_name_admin) if inst else f"Strat #{strategy_id}"
+            strat_admin = (inst.instance_name_admin or inst.instance_name_user) if inst else strat_name
             asyncio.create_task(event_bus.publish("strategy.event", {
                 "id": log.id,
                 "strategy_id": strategy_id,
+                "strategy_name": strat_name,
+                "strategy_name_admin": strat_admin,
+                "symbol": sym,
+                "client_id": cid,
                 "category": category,
                 "level": level,
                 "message": message,

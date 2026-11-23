@@ -117,6 +117,9 @@ class StrategiesManager {
             this.latestInstances = await resInst.json();
             this.latestAccounts = await resAcc.json();
             this.renderInstances(this.latestInstances);
+            if (window.logsManager && window.logsManager.populateStrategyFilter) {
+                window.logsManager.populateStrategyFilter(this.latestInstances);
+            }
         } catch (e) {
             console.error("Failed to load strategy instances:", e);
         }

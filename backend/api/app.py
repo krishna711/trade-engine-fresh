@@ -1693,7 +1693,8 @@ async def get_strategy_chart_data(
             dt_t = t.timestamp.replace(tzinfo=datetime.timezone.utc).astimezone(ist_tz) if t.timestamp else datetime.datetime.now(ist_tz)
             executed_trades.append({
                 "time": dt_t.isoformat(),
-                "label_time": dt_t.strftime("%H:%M"),
+                "label_time": dt_t.strftime("%d %b %Y %H:%M:%S"),
+                "timestamp_str": dt_t.strftime("%Y-%m-%d %H:%M:%S"),
                 "symbol": t.symbol,
                 "side": t.side,
                 "price": round(float(t.price or 0.0), 2),
@@ -1819,10 +1820,17 @@ async def get_strategy_chart_data(
         # Map signals (entry/exit cycles from DB + scheduled entry/exit markers)
         signals = []
         if inst and inst.legs_info:
+            now_ist = datetime.datetime.now(ist_tz)
+            trade_dt = inst.last_trade_at.replace(tzinfo=datetime.timezone.utc).astimezone(ist_tz) if getattr(inst, "last_trade_at", None) else now_ist
+            sig_date_str = trade_dt.strftime("%d %b %Y")
+            sig_iso_date = trade_dt.strftime("%Y-%m-%d")
+            entry_t = str(cfg.get("entry_time", "15:45:00"))[:8]
+            exit_t = str(cfg.get("exit_time", "23:18:00"))[:8]
             for l in inst.legs_info:
                 if float(l.get("entry") or 0) > 0:
                     signals.append({
-                        "label_time": str(cfg.get("entry_time", "15:45:00"))[:5],
+                        "time": f"{sig_iso_date}T{entry_t}",
+                        "label_time": f"{sig_date_str} {entry_t[:5]}",
                         "type": "SELL",
                         "price": entry_combined or round(float(l["entry"]) * 2, 2),
                         "label": f"STRADDLE ENTRY @ ₹{(entry_combined or float(l['entry'])):.2f}",
@@ -1832,7 +1840,8 @@ async def get_strategy_chart_data(
                 if l.get("exit") is not None and float(l.get("exit") or 0) > 0:
                     ce_x = sum(float(x.get("exit") or 0.0) for x in inst.legs_info if x.get("exit"))
                     signals.append({
-                        "label_time": str(cfg.get("exit_time", "23:18:00"))[:5],
+                        "time": f"{sig_iso_date}T{exit_t}",
+                        "label_time": f"{sig_date_str} {exit_t[:5]}",
                         "type": "COVER",
                         "price": round(ce_x, 2),
                         "label": f"STRADDLE EXIT @ ₹{ce_x:.2f}",
@@ -2201,7 +2210,7 @@ def get_system_logs(
     category: Optional[str] = None, # BROKER_API, FEED_SUBSCRIPTION, STRATEGY_DECISION, CANDLE_FETCH
     level: Optional[str] = None,
     strategy_id: Optional[int] = None,
-    limit: int = 150,
+    limit: int = 250,
     db: Session = Depends(get_db)
 ):
     """
@@ -2225,6 +2234,24 @@ def get_system_logs(
 
     logs = q.order_by(SystemLog.id.desc()).limit(limit).all()
 
+    # Preload all strategy instances for human-readable name, symbol and client resolution
+    instances = db.query(StrategyInstance).all()
+    strat_map = {}
+    for inst in instances:
+        sym = None
+        if inst.config and isinstance(inst.config, dict):
+            sym = inst.config.get("symbol") or inst.config.get("underlying")
+        cids = inst.client_ids or []
+        cid = cids[0] if (cids and len(cids) > 0) else None
+        strat_map[inst.id] = {
+            "id": inst.id,
+            "name_user": inst.instance_name_user,
+            "name_admin": inst.instance_name_admin,
+            "template_key": inst.template_key,
+            "symbol": sym,
+            "client_id": cid
+        }
+
     # Get active undismissed errors to highlight promptly at the top!
     undismissed_errors = db.query(SystemLog).filter(
         SystemLog.level == "ERROR",
@@ -2237,11 +2264,22 @@ def get_system_logs(
                 "id": e.id,
                 "category": e.category,
                 "message": e.message,
-                "client_id": e.client_id,
-                "symbol": e.symbol,
+                "client_id": e.client_id or (strat_map.get(e.strategy_id, {}).get("client_id") if e.strategy_id else None),
+                "symbol": e.symbol or (strat_map.get(e.strategy_id, {}).get("symbol") if e.strategy_id else None),
                 "strategy_id": e.strategy_id,
+                "strategy_name": (strat_map.get(e.strategy_id, {}).get("name_user") if e.strategy_id else None),
+                "strategy_name_admin": (strat_map.get(e.strategy_id, {}).get("name_admin") if e.strategy_id else None),
                 "timestamp": format_ist(e.timestamp, "%Y-%m-%d %H:%M:%S")
             } for e in undismissed_errors
+        ],
+        "strategies": [
+            {
+                "id": inst.id,
+                "name_user": inst.instance_name_user,
+                "name_admin": inst.instance_name_admin,
+                "template_key": inst.template_key,
+                "symbol": strat_map.get(inst.id, {}).get("symbol")
+            } for inst in instances
         ],
         "logs": [
             {
@@ -2249,9 +2287,11 @@ def get_system_logs(
                 "category": l.category,
                 "level": l.level,
                 "message": l.message,
-                "client_id": l.client_id,
+                "client_id": l.client_id or (strat_map.get(l.strategy_id, {}).get("client_id") if l.strategy_id else None),
                 "strategy_id": l.strategy_id,
-                "symbol": l.symbol,
+                "strategy_name": (strat_map.get(l.strategy_id, {}).get("name_user") if l.strategy_id else None) or (f"Strat #{l.strategy_id}" if l.strategy_id else None),
+                "strategy_name_admin": (strat_map.get(l.strategy_id, {}).get("name_admin") if l.strategy_id else None) or (f"Strat #{l.strategy_id}" if l.strategy_id else None),
+                "symbol": l.symbol or (strat_map.get(l.strategy_id, {}).get("symbol") if l.strategy_id else None),
                 "is_dismissed": l.is_dismissed,
                 "timestamp": format_ist(l.timestamp, "%Y-%m-%d %H:%M:%S")
             } for l in logs

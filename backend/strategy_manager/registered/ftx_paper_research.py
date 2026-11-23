@@ -1243,7 +1243,7 @@ def compute_ftx_chart_payload(raw_bars: List[Dict[str, Any]], cfg: Dict[str, Any
                             signals.append({
                                 "index": idx,
                                 "time": bar.timestamp.isoformat(),
-                                "label_time": bar.timestamp.strftime("%H:%M"),
+                                "label_time": bar.timestamp.strftime("%d %b %Y %H:%M"),
                                 "type": policy.direction,
                                 "price": round(bar.close, 2),
                                 "label": f"{policy.direction} ({cell.name})",

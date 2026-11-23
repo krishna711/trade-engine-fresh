@@ -874,7 +874,7 @@ def compute_supertrend_chart_payload(bars: List[Dict[str, Any]], cfg: Dict[str, 
         row = sig_df.iloc[pos_i]
         ts_dt = sig_df.index[pos_i].to_pydatetime()
         ts_iso = ts_dt.isoformat()
-        lbl_t = ts_dt.strftime("%H:%M")
+        lbl_t = ts_dt.strftime("%d %b %Y %H:%M")
         if bool(row.get("Buy", False)):
             p_val = float(row["BuyPrice"]) if math.isfinite(row.get("BuyPrice", np.nan)) else float(row["Close"])
             signals.append({"index": pos_i, "time": ts_iso, "label_time": lbl_t, "type": "BUY", "price": round(p_val, 2), "label": f"BUY ({params['variant']})"})

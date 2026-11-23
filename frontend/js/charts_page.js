@@ -1148,6 +1148,38 @@ class ChartsPageManager {
     }
 }
 
+    formatSignalDateTime(rawTime, rawLabelTime) {
+        if (rawTime && (typeof rawTime === "string" || typeof rawTime === "number")) {
+            try {
+                let d;
+                if (typeof rawTime === "number") {
+                    d = new Date(rawTime > 1e11 ? rawTime : rawTime * 1000);
+                } else if (typeof rawTime === "string" && (rawTime.includes("T") || rawTime.includes("-"))) {
+                    d = new Date(rawTime);
+                }
+                if (d && !isNaN(d.getTime())) {
+                    const dtStr = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
+                    const tmStr = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
+                    return `${dtStr} ${tmStr}`;
+                }
+            } catch (e) {}
+        }
+        if (rawLabelTime && String(rawLabelTime).trim().length > 5) {
+            return String(rawLabelTime);
+        }
+        return String(rawLabelTime || rawTime || "-");
+    }
+
+    parseEpoch(rawTime) {
+        if (!rawTime) return 0;
+        if (typeof rawTime === "number") return rawTime > 1e11 ? rawTime : rawTime * 1000;
+        try {
+            const t = Date.parse(rawTime);
+            if (!isNaN(t)) return t;
+        } catch (e) {}
+        return 0;
+    }
+
     renderSignalsTable(data) {
         const tbody = document.getElementById("charts-signals-tbody");
         const countEl = document.getElementById("charts-signals-count");
@@ -1156,7 +1188,8 @@ class ChartsPageManager {
         const rows = [];
         for (const s of (data.signals || [])) {
             rows.push({
-                time: s.label_time || s.time || "-",
+                time: this.formatSignalDateTime(s.time, s.label_time),
+                epoch: this.parseEpoch(s.time),
                 source: "SIGNAL",
                 side: s.type,
                 price: Number(s.price || 0),
@@ -1165,13 +1198,17 @@ class ChartsPageManager {
         }
         for (const t of (data.executed_trades || [])) {
             rows.push({
-                time: t.label_time || t.time || "-",
+                time: this.formatSignalDateTime(t.time, t.label_time),
+                epoch: this.parseEpoch(t.time),
                 source: "EXECUTED TRADE",
                 side: t.side,
                 price: Number(t.price || 0),
                 details: `${t.symbol} • Qty: ${t.quantity} (${t.leg_id || 'MAIN'})`,
             });
         }
+
+        // Sort descending chronologically so newest signals & executions appear at the top
+        rows.sort((a, b) => b.epoch - a.epoch);
 
         if (countEl) countEl.innerText = `${rows.length} signal(s) / order(s)`;
 
@@ -1180,12 +1217,12 @@ class ChartsPageManager {
             return;
         }
 
-        tbody.innerHTML = rows.slice().reverse().map(r => {
+        tbody.innerHTML = rows.map(r => {
             const isBuy = r.side === "BUY" || r.side === "COVER";
             const badgeColor = isBuy ? "var(--accent-green)" : "var(--accent-red)";
             return `
                 <tr>
-                    <td style="font-family: var(--font-mono);">${r.time}</td>
+                    <td style="font-family: var(--font-mono); font-size: 0.8rem; white-space: nowrap;">${r.time}</td>
                     <td><span class="leg-pill" style="font-size: 0.7rem;">${r.source}</span></td>
                     <td style="font-weight: 700; color: ${badgeColor};">${r.side}</td>
                     <td style="font-family: var(--font-mono);">₹${r.price.toFixed(2)}</td>

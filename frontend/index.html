@@ -398,7 +398,7 @@
                     <table class="data-table">
                         <thead>
                             <tr>
-                                <th>Time (IST)</th>
+                                <th>Date & Time (IST)</th>
                                 <th>Source</th>
                                 <th>Signal / Side</th>
                                 <th>Price</th>
@@ -519,20 +519,28 @@
                     </p>
                 </div>
                 <div class="section-actions">
-                    <select id="logs-strategy-filter" class="action-btn-sm" style="background: var(--bg-tertiary);">
-                        <option value="">All Strategies</option>
-                    </select>
                     <button class="action-btn-sm" id="btn-dismiss-all-errors">Dismiss All Errors</button>
                 </div>
             </div>
 
-            <!-- Tabbed Log Filter -->
-            <div class="drawer-tabs" style="margin-bottom: 1rem; border-radius: 6px; border: 1px solid var(--border-color);">
-                <button class="drawer-tab-btn active" data-log-cat="">All Logs</button>
-                <button class="drawer-tab-btn" data-log-cat="BROKER_API">1. Broker API Log (ERROR/SUCCESS)</button>
-                <button class="drawer-tab-btn" data-log-cat="FEED_SUBSCRIPTION">2. Feed Subscription & OHLC</button>
-                <button class="drawer-tab-btn" data-log-cat="STRATEGY_DECISION">3. Strategy Decision Log</button>
-                <button class="drawer-tab-btn" data-log-cat="CANDLE_FETCH">4. Candle Fetch Log</button>
+            <!-- Tabbed Log Filter & Strategy Filter Bar -->
+            <div class="drawer-tabs" style="margin-bottom: 1rem; border-radius: 6px; border: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 0.35rem 0.75rem; gap: 0.5rem; background: var(--bg-secondary);">
+                <div style="display: flex; gap: 4px; flex-wrap: wrap; align-items: center;">
+                    <button class="drawer-tab-btn active" data-log-cat="">All Logs</button>
+                    <button class="drawer-tab-btn" data-log-cat="BROKER_API">1. Broker API Log (ERROR/SUCCESS)</button>
+                    <button class="drawer-tab-btn" data-log-cat="FEED_SUBSCRIPTION">2. Feed Subscription & OHLC</button>
+                    <button class="drawer-tab-btn" data-log-cat="STRATEGY_DECISION">3. Strategy Decision Log</button>
+                    <button class="drawer-tab-btn" data-log-cat="CANDLE_FETCH">4. Candle Fetch Log</button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 0.5rem; margin-left: auto; flex-wrap: wrap;">
+                    <label for="logs-strategy-filter" style="font-size: 0.76rem; color: var(--text-muted); font-weight: 600; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px;">
+                        <span>🎯</span> Filter by Strategy:
+                    </label>
+                    <select id="logs-strategy-filter" class="action-btn-sm" style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.4rem 0.75rem; min-width: 240px; font-weight: 600;">
+                        <option value="">All Strategies</option>
+                    </select>
+                    <button class="action-btn-sm" id="btn-refresh-logs" title="Refresh Logs" style="padding: 0.4rem 0.65rem;">🔄 Refresh</button>
+                </div>
             </div>
 
             <div class="table-card">

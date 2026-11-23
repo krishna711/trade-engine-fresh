@@ -143,6 +143,9 @@ class App {
         if (window.strategiesManager) {
             window.strategiesManager.loadInstances();
         }
+        if (window.logsManager) {
+            window.logsManager.loadLogs();
+        }
     }
 
     connectWebSocket() {
