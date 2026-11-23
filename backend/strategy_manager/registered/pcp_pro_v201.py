@@ -1031,7 +1031,7 @@ def normalize_underlying_root(raw_sym: str) -> str:
 def resolve_future_contract(
     underlying: str,
     now_dt: Optional[datetime.datetime] = None,
-    roll_last_friday: bool = True
+    roll_last_friday: bool = False
 ) -> str:
     """Resolves canonical current-month NSE Future contract symbol (e.g. NFO:HAL26NOVFUT)."""
     now = now_dt or datetime.datetime.now(IST_TZ)
@@ -1040,8 +1040,11 @@ def resolve_future_contract(
         return f"MCX:{root}"
     year, month = now.year, now.month
     last_thu = _get_last_thursday(year, month)
+    # If roll_last_friday is explicitly requested, roll on the Friday before expiry;
+    # otherwise, roll on the day after the last Thursday expiry according to exchange rules.
     roll_threshold = (last_thu - datetime.timedelta(days=6)) if roll_last_friday else last_thu
-    if now.date() >= roll_threshold:
+    should_roll = (now.date() >= roll_threshold) if roll_last_friday else (now.date() > roll_threshold)
+    if should_roll:
         month = month + 1 if month < 12 else 1
         year = year if month > 1 else year + 1
     year_str = str(year)[-2:]
@@ -1124,7 +1127,7 @@ class PivotChandelierProV201Strategy(BaseStrategy):
         self.max_lots = int(self.config.get("max_lots", 8))
 
         # Expiry auto-roll setting
-        self.fut_roll_last_friday = bool(self.config.get("fut_roll_last_friday", True))
+        self.fut_roll_last_friday = bool(self.config.get("fut_roll_last_friday", False))
 
         # Resolve Signal Future Contract (Current Month)
         now_ist = datetime.datetime.now(IST_TZ)

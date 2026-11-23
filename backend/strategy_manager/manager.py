@@ -205,7 +205,7 @@ class StrategySupervisor:
             if "pcp_pro" in inst.template_key:
                 from backend.strategy_manager.registered.pcp_pro_v201 import resolve_future_contract, normalize_underlying_root
                 root = normalize_underlying_root(effective_config.get("symbol") or effective_config.get("underlying") or "HAL")
-                fut_roll = bool(effective_config.get("fut_roll_last_friday", True))
+                fut_roll = bool(effective_config.get("fut_roll_last_friday", False))
                 fut_sym = resolve_future_contract(root, roll_last_friday=fut_roll)
                 worker_sym = fut_sym
                 extra_symbols.update([fut_sym, f"NSE:{root}", f"NFO:{root}", root])

@@ -105,6 +105,35 @@ def check_and_migrate_db():
                    OR (symbol LIKE '%NIFTY%' AND close < 15000.0)
                    OR close <= 100.0;
             """))
+
+            # Ensure fut_roll_last_friday defaults to False so stock future contracts do not roll early before Thursday expiry
+            import json
+            tpl_rows = conn.execute(text("SELECT key, default_config FROM strategy_templates WHERE key = 'strat_pcp_pro_v201';")).fetchall()
+            for r_key, r_cfg in tpl_rows:
+                if r_cfg:
+                    try:
+                        c_dict = json.loads(r_cfg) if isinstance(r_cfg, str) else dict(r_cfg)
+                        if c_dict.get("fut_roll_last_friday") is True:
+                            c_dict["fut_roll_last_friday"] = False
+                            conn.execute(
+                                text("UPDATE strategy_templates SET default_config = :cfg WHERE key = :key;"),
+                                {"cfg": json.dumps(c_dict), "key": r_key}
+                            )
+                    except Exception:
+                        pass
+            inst_rows = conn.execute(text("SELECT id, config FROM strategy_instances WHERE template_key = 'strat_pcp_pro_v201';")).fetchall()
+            for i_id, i_cfg in inst_rows:
+                if i_cfg:
+                    try:
+                        c_dict = json.loads(i_cfg) if isinstance(i_cfg, str) else dict(i_cfg)
+                        if c_dict.get("fut_roll_last_friday") is True:
+                            c_dict["fut_roll_last_friday"] = False
+                            conn.execute(
+                                text("UPDATE strategy_instances SET config = :cfg WHERE id = :id;"),
+                                {"cfg": json.dumps(c_dict), "id": i_id}
+                            )
+                    except Exception:
+                        pass
     except Exception as e:
         print(f"[DB Migration Warning] {e}")
 
@@ -294,7 +323,7 @@ def seed_initial_data():
                     "order_type": "LIMIT",
                     "limit_buffer_pct": 0.015,
                     "auto_chase": True,
-                    "fut_roll_last_friday": True
+                    "fut_roll_last_friday": False
                 },
                 python_module="backend.strategy_manager.registered.pcp_pro_v201"
             ),

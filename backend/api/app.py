@@ -1643,7 +1643,7 @@ async def get_strategy_chart_data(
         from backend.strategy_manager.registered.pcp_pro_v201 import resolve_future_contract, normalize_underlying_root
         target_stock = stock or _extract_pcp_stock(inst or cfg, fallback="HAL")
         root = normalize_underlying_root(target_stock)
-        fut_roll = bool(cfg.get("fut_roll_last_friday", True))
+        fut_roll = bool(cfg.get("fut_roll_last_friday", False))
         symbol = resolve_future_contract(root, roll_last_friday=fut_roll)
         cfg["symbol"] = root
         cfg["underlying"] = root

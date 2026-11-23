@@ -981,7 +981,7 @@ class SupertrendMomentumStrategy(BaseStrategy):
         self.risk_budget = float(self.config.get("risk_budget", 10000.0))
         self.entry_cutoff_minute = int(self.config.get("entry_cutoff_minute") or ENTRY_CUTOFF_MINUTE)
         self.square_off_time_num = _parse_time_int(self.config.get("square_off_time"), 151000)
-        self.fut_roll_last_friday = bool(self.config.get("fut_roll_last_friday", True))
+        self.fut_roll_last_friday = bool(self.config.get("fut_roll_last_friday", False))
 
         now_ist = datetime.datetime.now(IST_TZ)
         self.signal_symbol = resolve_future_contract(self.underlying_root, now_ist, self.fut_roll_last_friday)

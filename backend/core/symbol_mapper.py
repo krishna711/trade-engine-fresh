@@ -103,7 +103,7 @@ class UniversalSymbolMapper:
 
                     try:
                         exp_dt = datetime.datetime.fromisoformat(expiry_str)
-                        if exp_dt < now:
+                        if exp_dt.date() < now.date():
                             continue
                     except Exception:
                         continue

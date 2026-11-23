@@ -37,6 +37,7 @@ class ChartsPageManager {
             resEl.onchange = () => {
                 this.currentResolution = resEl.value;
                 this.loadChartData();
+                this.startAutoRefresh();
             };
         }
 
@@ -59,6 +60,13 @@ class ChartsPageManager {
             autoChk.onchange = () => {
                 if (autoChk.checked) this.startAutoRefresh();
                 else this.stopAutoRefresh();
+            };
+        }
+
+        const refreshIntSel = document.getElementById("charts-page-refresh-interval");
+        if (refreshIntSel) {
+            refreshIntSel.onchange = () => {
+                this.startAutoRefresh();
             };
         }
 
@@ -262,16 +270,54 @@ class ChartsPageManager {
         this.stopAutoRefresh();
         const autoChk = document.getElementById("charts-page-autorefresh");
         if (autoChk && !autoChk.checked) return;
-        this.refreshTimer = setInterval(() => {
-            if (window.app && window.app.currentView === "charts") {
-                this.loadChartData(true);
-            }
-        }, 5000);
+
+        const refreshIntSel = document.getElementById("charts-page-refresh-interval");
+        const mode = refreshIntSel ? refreshIntSel.value : "5s";
+
+        if (mode === "5s") {
+            this.refreshTimer = setInterval(() => {
+                if (window.app && window.app.currentView === "charts") {
+                    this.loadChartData(true);
+                }
+            }, 5000);
+        } else {
+            // Mode "tf": sync to candle boundary of selected timeframe
+            const scheduleNextTfRefresh = () => {
+                const msUntilNext = this._getMsUntilNextCandleClose();
+                this.refreshTimer = setTimeout(async () => {
+                    if (window.app && window.app.currentView === "charts") {
+                        await this.loadChartData(true);
+                    }
+                    const chk = document.getElementById("charts-page-autorefresh");
+                    const intSel = document.getElementById("charts-page-refresh-interval");
+                    if (chk && chk.checked && intSel && intSel.value === "tf") {
+                        scheduleNextTfRefresh();
+                    }
+                }, Math.max(1000, msUntilNext));
+            };
+            scheduleNextTfRefresh();
+        }
+    }
+
+    _getMsUntilNextCandleClose() {
+        const res = (this.currentResolution || "3m").toLowerCase();
+        let stepSec = 180;
+        if (res.includes("1m")) stepSec = 60;
+        else if (res.includes("3m")) stepSec = 180;
+        else if (res.includes("5m")) stepSec = 300;
+        else if (res.includes("15m")) stepSec = 900;
+        else if (res.includes("1h")) stepSec = 3600;
+
+        const nowSec = Math.floor(Date.now() / 1000);
+        // Add 1.5s buffer so the newly formed candle is fully available from broker
+        const remSec = stepSec - (nowSec % stepSec) + 1.5;
+        return remSec * 1000;
     }
 
     stopAutoRefresh() {
         if (this.refreshTimer) {
             clearInterval(this.refreshTimer);
+            clearTimeout(this.refreshTimer);
             this.refreshTimer = null;
         }
     }

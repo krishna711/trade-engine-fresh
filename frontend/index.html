@@ -315,10 +315,14 @@
                         <option value="1w" selected>1 Week</option>
                         <option value="1m">1 Month</option>
                     </select>
-                    <label style="display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; color: var(--text-secondary); padding: 0.35rem 0.6rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;">
+                    <label style="display: inline-flex; align-items: center; gap: 5px; font-size: 0.78rem; color: var(--text-secondary); padding: 0.35rem 0.6rem; background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 6px; cursor: pointer;" title="Toggle automatic chart refresh">
                         <input type="checkbox" id="charts-page-autorefresh" checked>
-                        Live 5s
+                        Auto:
                     </label>
+                    <select id="charts-page-refresh-interval" class="action-btn-sm" style="background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); padding: 0.4rem 0.65rem;" title="Auto-refresh rate: 5 Seconds or Selected Timeframe (Candle Close)">
+                        <option value="5s" selected>5s</option>
+                        <option value="tf">Selected TF</option>
+                    </select>
                     <button type="button" class="action-btn-sm" id="btn-charts-refresh" style="background: var(--accent-blue); color: white; font-weight: 600;">
                         🔄 Refresh
                     </button>
