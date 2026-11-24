@@ -244,11 +244,15 @@ def resolve_future_contract(
     now_dt: Optional[datetime.datetime] = None,
     roll_last_friday: bool = True
 ) -> str:
-    """Resolves canonical current-month NSE Future contract symbol (e.g. NFO:NIFTY26NOVFUT)."""
-    now = now_dt or datetime.datetime.now(IST_TZ)
+    """Resolves canonical active NSE Future contract symbol (e.g. NFO:NIFTY26DECFUT)."""
     root = str(underlying).replace("NSE:", "").replace("NFO:", "").strip().upper()
     if not root:
         root = "NIFTY"
+    active_sym = symbol_mapper.get_active_future_contract(root, now_dt, roll_last_friday)
+    if active_sym:
+        return active_sym
+
+    now = now_dt or datetime.datetime.now(IST_TZ)
     year, month = now.year, now.month
     last_thu = _get_last_thursday(year, month)
     roll_threshold = (last_thu - datetime.timedelta(days=6)) if roll_last_friday else last_thu

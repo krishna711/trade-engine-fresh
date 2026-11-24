@@ -1033,15 +1033,17 @@ def resolve_future_contract(
     now_dt: Optional[datetime.datetime] = None,
     roll_last_friday: bool = False
 ) -> str:
-    """Resolves canonical current-month NSE Future contract symbol (e.g. NFO:HAL26NOVFUT)."""
-    now = now_dt or datetime.datetime.now(IST_TZ)
+    """Resolves canonical active NSE Future contract symbol (e.g. NFO:HAL26DECFUT)."""
     root = normalize_underlying_root(underlying)
+    active_sym = symbol_mapper.get_active_future_contract(root, now_dt, roll_last_friday)
+    if active_sym:
+        return active_sym
+
+    now = now_dt or datetime.datetime.now(IST_TZ)
     if "MCX" in str(underlying).upper():
         return f"MCX:{root}"
     year, month = now.year, now.month
     last_thu = _get_last_thursday(year, month)
-    # If roll_last_friday is explicitly requested, roll on the Friday before expiry;
-    # otherwise, roll on the day after the last Thursday expiry according to exchange rules.
     roll_threshold = (last_thu - datetime.timedelta(days=6)) if roll_last_friday else last_thu
     should_roll = (now.date() >= roll_threshold) if roll_last_friday else (now.date() > roll_threshold)
     if should_roll:
@@ -1059,9 +1061,13 @@ def resolve_option_contract(
     now_dt: Optional[datetime.datetime] = None,
     roll_last_friday: bool = False
 ) -> str:
-    """Resolves canonical monthly NSE Option contract symbol (e.g. NFO:HAL26NOV4150CE)."""
-    now = now_dt or datetime.datetime.now(IST_TZ)
+    """Resolves canonical monthly NSE Option contract symbol (e.g. NFO:HAL26DEC4800CE)."""
     root = normalize_underlying_root(underlying)
+    active_opt = symbol_mapper.get_active_option_contract(root, strike, opt_type, now_dt, roll_last_friday)
+    if active_opt:
+        return active_opt
+
+    now = now_dt or datetime.datetime.now(IST_TZ)
     year, month = now.year, now.month
     last_thu = _get_last_thursday(year, month)
     if now.date() > last_thu:

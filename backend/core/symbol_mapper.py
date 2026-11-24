@@ -271,6 +271,94 @@ class UniversalSymbolMapper:
             return None
         return min(matching_strikes, key=lambda s: abs(s - target_strike))
 
+    def get_active_future_contract(
+        self,
+        underlying: str,
+        now_dt: Optional[datetime.datetime] = None,
+        roll_last_friday: bool = False
+    ) -> Optional[str]:
+        """
+        Dynamically resolves the active near-month futures contract for an underlying root
+        using real unexpired exchange contracts parsed from broker master files.
+        Prevents stale/expired contracts (e.g. Nov contracts expiring on Nov 23) from being traded.
+        """
+        if not self._xts_futures_map:
+            self.load_xts_master_file()
+
+        now = now_dt or datetime.datetime.now()
+        root = underlying.upper().replace("NSE:", "").replace("NFO:", "").replace("MCX:", "").strip()
+        seg_prefix = "MCX" if ("MCX" in underlying.upper() or any(c in root for c in ["CRUDEOIL", "NATURALGAS", "GOLD", "SILVER"])) else "NFO"
+
+        candidates = self._xts_futures_map.get(root)
+        if candidates:
+            # Filter out expired contracts
+            valid_candidates = [c for c in candidates if c[0].date() >= now.date()]
+            if valid_candidates:
+                if roll_last_friday and len(valid_candidates) > 1:
+                    exp_dt = valid_candidates[0][0]
+                    offset = (exp_dt.weekday() - 4) % 7
+                    if offset == 0 and exp_dt.weekday() == 4:
+                        offset = 7
+                    friday_before = exp_dt.date() - datetime.timedelta(days=offset)
+                    if now.date() >= friday_before:
+                        chosen = valid_candidates[1]
+                    else:
+                        chosen = valid_candidates[0]
+                else:
+                    chosen = valid_candidates[0]
+
+                exp_dt, token, trading_sym, seg = chosen
+                prefix = "MCX" if "MCX" in seg else "NFO"
+                return f"{prefix}:{trading_sym}"
+
+        # Direct canonical root fallback
+        direct_can = f"{seg_prefix}:{root}"
+        if direct_can in self._xts_canonical_to_symbol:
+            sym_name = self._xts_canonical_to_symbol[direct_can]
+            return f"{seg_prefix}:{sym_name}"
+
+        return None
+
+    def get_active_option_contract(
+        self,
+        underlying: str,
+        strike: int,
+        opt_type: str,
+        now_dt: Optional[datetime.datetime] = None,
+        roll_last_friday: bool = False
+    ) -> Optional[str]:
+        """
+        Dynamically resolves the active option contract for an underlying, strike, and type (CE/PE)
+        using real unexpired exchange contracts parsed from broker master files.
+        """
+        if not self._xts_options_map:
+            self.load_xts_master_file()
+
+        now = now_dt or datetime.datetime.now()
+        root = underlying.upper().replace("NSE:", "").replace("NFO:", "").replace("MCX:", "").replace("MCXFO:", "").strip()
+        opt_type = opt_type.upper()
+        candidates = self._xts_options_map.get((root, int(strike), opt_type))
+        if candidates:
+            valid_candidates = [c for c in candidates if c[0].date() >= now.date()]
+            if valid_candidates:
+                if roll_last_friday and len(valid_candidates) > 1:
+                    exp_dt = valid_candidates[0][0]
+                    offset = (exp_dt.weekday() - 4) % 7
+                    if offset == 0 and exp_dt.weekday() == 4:
+                        offset = 7
+                    friday_before = exp_dt.date() - datetime.timedelta(days=offset)
+                    if now.date() >= friday_before:
+                        chosen = valid_candidates[1]
+                    else:
+                        chosen = valid_candidates[0]
+                else:
+                    chosen = valid_candidates[0]
+
+                exp_dt, token, trading_sym, seg = chosen
+                prefix = "MCXFO" if "MCX" in seg else "NFO"
+                return f"{prefix}:{trading_sym}"
+        return None
+
     def get_lot_size(self, canonical_symbol: str) -> int:
         """Returns lot size: checks database mapping first, falls back to configurable default"""
         mapping = self.get_mapping(canonical_symbol)

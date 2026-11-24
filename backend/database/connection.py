@@ -204,6 +204,15 @@ def purge_synthetic_candles():
             HistoricalCandle.symbol == "NSE:NIFTY",
             (HistoricalCandle.open < 23500) | (HistoricalCandle.open > 26500)
         ).delete()
+        # 3. Out-of-bounds synthetic drift on HAL (HAL traded at ~4800; purge anything < 3500)
+        db.query(HistoricalCandle).filter(
+            HistoricalCandle.symbol.like("%HAL%"),
+            (HistoricalCandle.open < 3500) | (HistoricalCandle.open > 6500)
+        ).delete()
+        # 4. Purge expired November contracts that can no longer receive market quotes
+        db.query(HistoricalCandle).filter(
+            HistoricalCandle.symbol == "NFO:HAL26NOVFUT"
+        ).delete()
         db.commit()
         db.close()
     except Exception as e:
