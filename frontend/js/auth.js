@@ -233,6 +233,11 @@ class AuthManager {
             roleSwitcher.style.display = this.user.role === "ADMIN" ? "inline-flex" : "none";
         }
 
+        const holidayBtn = document.getElementById("menu-btn-holidays");
+        if (holidayBtn) {
+            holidayBtn.style.display = this.user.role === "ADMIN" ? "flex" : "none";
+        }
+
         const dropName = document.getElementById("dropdown-user-fullname");
         const dropRole = document.getElementById("dropdown-user-role");
         const dropHandle = document.getElementById("dropdown-user-handle");

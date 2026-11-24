@@ -1966,17 +1966,156 @@ def get_strategy_chronological_logs(id: int, include_candle_fetch: bool = True, 
     ]
 
 
+# ----------------- TRADING HOLIDAYS MANAGEMENT (ADMIN) -----------------
+@app.get("/api/holidays")
+def list_trading_holidays(db: Session = Depends(get_db)):
+    """Lists all configured trading holidays from database table."""
+    from backend.database.models import TradingHoliday
+    records = db.query(TradingHoliday).order_by(TradingHoliday.holiday_date.asc()).all()
+    holidays = []
+    for r in records:
+        h_date = r.holiday_date
+        if isinstance(h_date, str):
+            try:
+                h_date = datetime.date.fromisoformat(h_date)
+            except Exception:
+                pass
+        holidays.append({
+            "id": r.id,
+            "date": h_date.isoformat() if hasattr(h_date, "isoformat") else str(h_date),
+            "day": h_date.strftime("%A") if hasattr(h_date, "strftime") else "",
+            "year": h_date.year if hasattr(h_date, "year") else None,
+            "description": r.description,
+            "exchange": r.exchange or "ALL",
+            "session": r.session or "FULL_DAY",
+            "is_active": bool(r.is_active)
+        })
+    return holidays
+
+@app.post("/api/holidays")
+def create_trading_holiday(payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """Creates a new exchange trading holiday."""
+    from backend.database.models import TradingHoliday
+    from backend.feed_manager.market_hours import reload_holidays_cache
+    date_str = str(payload.get("date") or payload.get("holiday_date") or "").strip()
+    desc = str(payload.get("description") or "").strip()
+    exch = str(payload.get("exchange") or "ALL").upper().strip()
+    sess = str(payload.get("session") or "FULL_DAY").upper().strip()
+    is_active = bool(payload.get("is_active", True))
+
+    if not date_str:
+        raise HTTPException(status_code=400, detail="Holiday date is required")
+    if not desc:
+        raise HTTPException(status_code=400, detail="Description is required")
+
+    try:
+        parsed_date = datetime.date.fromisoformat(date_str)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    existing = db.query(TradingHoliday).filter(
+        TradingHoliday.holiday_date == parsed_date,
+        TradingHoliday.exchange == exch
+    ).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Holiday for {date_str} on exchange {exch} already exists")
+
+    hol = TradingHoliday(
+        holiday_date=parsed_date,
+        description=desc,
+        exchange=exch,
+        session=sess,
+        is_active=is_active
+    )
+    db.add(hol)
+    db.commit()
+    db.refresh(hol)
+    reload_holidays_cache()
+
+    return {
+        "success": True,
+        "holiday": {
+            "id": hol.id,
+            "date": hol.holiday_date.isoformat(),
+            "day": hol.holiday_date.strftime("%A"),
+            "year": hol.holiday_date.year,
+            "description": hol.description,
+            "exchange": hol.exchange,
+            "session": hol.session,
+            "is_active": hol.is_active
+        }
+    }
+
+@app.put("/api/holidays/{holiday_id}")
+def update_trading_holiday(holiday_id: int, payload: Dict[str, Any] = Body(...), db: Session = Depends(get_db)):
+    """Updates an existing trading holiday date, description, exchange, or session."""
+    from backend.database.models import TradingHoliday
+    from backend.feed_manager.market_hours import reload_holidays_cache
+    hol = db.query(TradingHoliday).filter(TradingHoliday.id == holiday_id).first()
+    if not hol:
+        raise HTTPException(status_code=404, detail="Trading holiday not found")
+
+    date_val = payload.get("date") or payload.get("holiday_date")
+    if date_val:
+        try:
+            hol.holiday_date = datetime.date.fromisoformat(str(date_val).strip())
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+
+    if "description" in payload and payload["description"]:
+        hol.description = str(payload["description"]).strip()
+
+    if "exchange" in payload and payload["exchange"]:
+        hol.exchange = str(payload["exchange"]).upper().strip()
+
+    if "session" in payload and payload["session"]:
+        hol.session = str(payload["session"]).upper().strip()
+
+    if "is_active" in payload:
+        hol.is_active = bool(payload["is_active"])
+
+    hol.updated_at = datetime.datetime.utcnow()
+    db.commit()
+    db.refresh(hol)
+    reload_holidays_cache()
+
+    return {
+        "success": True,
+        "holiday": {
+            "id": hol.id,
+            "date": hol.holiday_date.isoformat(),
+            "day": hol.holiday_date.strftime("%A"),
+            "year": hol.holiday_date.year,
+            "description": hol.description,
+            "exchange": hol.exchange,
+            "session": hol.session,
+            "is_active": hol.is_active
+        }
+    }
+
+@app.delete("/api/holidays/{holiday_id}")
+def delete_trading_holiday(holiday_id: int, db: Session = Depends(get_db)):
+    """Deletes a trading holiday from the database."""
+    from backend.database.models import TradingHoliday
+    from backend.feed_manager.market_hours import reload_holidays_cache
+    hol = db.query(TradingHoliday).filter(TradingHoliday.id == holiday_id).first()
+    if not hol:
+        raise HTTPException(status_code=404, detail="Trading holiday not found")
+
+    db.delete(hol)
+    db.commit()
+    reload_holidays_cache()
+    return {"success": True, "deleted_id": holiday_id}
+
 # ----------------- STATUS & DIAGNOSTICS PAGE -----------------
 @app.get("/api/status/holidays")
-def get_exchange_holidays():
+def get_exchange_holidays(db: Session = Depends(get_db)):
     """
     Returns the official exchange trading holiday calendar,
     today's holiday status, and current session availability across NSE and MCX.
     """
+    from backend.database.models import TradingHoliday
     from backend.feed_manager.market_hours import (
-        NSE_HOLIDAYS_2026,
-        MCX_FULL_DAY_HOLIDAYS,
-        MCX_MORNING_ONLY_HOLIDAYS,
         is_trading_holiday,
         is_market_open,
         is_any_market_open,
@@ -1988,21 +2127,24 @@ def get_exchange_holidays():
     is_nse_hol, nse_hol_name = is_trading_holiday("NSE:NIFTY", now_ist)
     is_mcx_hol, mcx_hol_name = is_trading_holiday("MCX:CRUDEOIL", now_ist)
 
-    # Format 2026 holidays list
-    nse_list = [
-        {"date": d.isoformat(), "day": d.strftime("%A"), "description": name}
-        for d, name in sorted(NSE_HOLIDAYS_2026.items())
-    ]
-    mcx_list = []
-    for d, name in sorted({**MCX_FULL_DAY_HOLIDAYS, **MCX_MORNING_ONLY_HOLIDAYS}.items()):
-        if d.year == 2026:
-            is_full = d in MCX_FULL_DAY_HOLIDAYS
-            mcx_list.append({
-                "date": d.isoformat(),
-                "day": d.strftime("%A"),
-                "description": name,
-                "session": "Full Day Closed" if is_full else "Morning Closed (Open 17:00 IST)"
-            })
+    records = db.query(TradingHoliday).filter(TradingHoliday.is_active == True).order_by(TradingHoliday.holiday_date.asc()).all()
+    holidays_list = []
+    for r in records:
+        h_date = r.holiday_date
+        if isinstance(h_date, str):
+            try:
+                h_date = datetime.date.fromisoformat(h_date)
+            except Exception:
+                pass
+        holidays_list.append({
+            "id": r.id,
+            "date": h_date.isoformat() if hasattr(h_date, "isoformat") else str(h_date),
+            "day": h_date.strftime("%A") if hasattr(h_date, "strftime") else "",
+            "year": h_date.year if hasattr(h_date, "year") else None,
+            "description": r.description,
+            "exchange": r.exchange or "ALL",
+            "session": r.session or "FULL_DAY"
+        })
 
     return {
         "current_time_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
@@ -2019,8 +2161,7 @@ def get_exchange_holidays():
             "is_market_open": is_market_open("MCX:CRUDEOIL", now_ist)
         },
         "is_any_market_open": is_any_market_open(now_ist),
-        "nse_holidays_2026": nse_list,
-        "mcx_holidays_2026": mcx_list
+        "holidays": holidays_list
     }
 
 @app.get("/api/status/feed")

@@ -141,6 +141,9 @@
                             <button class="user-dropdown-item" onclick="window.telegramManager.openTelegramModal()">
                                 <span style="font-size: 0.95rem;">📱</span> Telegram Notifications
                             </button>
+                            <button class="user-dropdown-item" id="menu-btn-holidays" onclick="window.holidaysManager.openHolidaysModal()">
+                                <span style="font-size: 0.95rem;">📅</span> Trading Holidays
+                            </button>
                             <button class="user-dropdown-item" onclick="window.authManager.openChangePasswordModal()">
                                 <span style="font-size: 0.95rem;">🔑</span> Change Password
                             </button>
@@ -1642,6 +1645,107 @@
         </div>
     </div>
 
+    <!-- ===================================================================
+         MODAL 12: TRADING HOLIDAYS MANAGEMENT (ADMIN)
+         =================================================================== -->
+    <div class="modal-overlay" id="modal-trading-holidays">
+        <div class="modal-box" style="width: 840px; max-width: 95vw; max-height: 90vh; display: flex; flex-direction: column;">
+            <div class="modal-header">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 1.3rem;">📅</span>
+                    <div>
+                        <h3 style="margin: 0; font-size: 1.05rem;">Trading Holidays Calendar</h3>
+                        <span style="font-size: 0.72rem; color: var(--text-muted);">Manage official exchange closures for NSE, BSE & MCX (Dates dynamically enforced)</span>
+                    </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <button class="action-btn-sm" id="btn-add-holiday" onclick="window.holidaysManager.openAddForm()" style="background: var(--accent-blue, #3b82f6); color: white; font-weight: 600; padding: 0.35rem 0.85rem; border-radius: 6px;">
+                        + Add Holiday
+                    </button>
+                    <button class="icon-btn modal-close-btn" onclick="window.holidaysManager.closeHolidaysModal()">&times;</button>
+                </div>
+            </div>
+
+            <!-- Filter Bar & Today Status Banner -->
+            <div style="padding: 0.75rem 1.25rem; background: var(--bg-tertiary); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem;">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: 600;">Filter Year:</span>
+                    <button class="tab-btn active holiday-year-filter" data-year="ALL" onclick="window.holidaysManager.setYearFilter('ALL')">All</button>
+                    <button class="tab-btn holiday-year-filter" data-year="2026" onclick="window.holidaysManager.setYearFilter('2026')">2026</button>
+                    <button class="tab-btn holiday-year-filter" data-year="2027" onclick="window.holidaysManager.setYearFilter('2027')">2027</button>
+                </div>
+                <div id="holidays-today-status" style="font-size: 0.75rem; font-weight: 600; display: flex; align-items: center; gap: 6px;">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+
+            <!-- Inline Form for Add/Edit (Hidden by default) -->
+            <div id="holiday-form-container" style="display: none; padding: 1rem 1.25rem; background: rgba(59, 130, 246, 0.05); border-bottom: 1px solid var(--border-color);">
+                <form id="holiday-editor-form" onsubmit="window.holidaysManager.handleFormSubmit(event)" style="display: flex; flex-direction: column; gap: 0.75rem;">
+                    <input type="hidden" id="holiday-form-id" value="">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <strong id="holiday-form-title" style="font-size: 0.85rem; color: var(--accent-blue);">Add New Trading Holiday</strong>
+                        <button type="button" class="icon-btn-clean" onclick="window.holidaysManager.closeForm()" style="font-size: 0.8rem; color: var(--text-muted); cursor: pointer;">Cancel</button>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 140px 1fr 120px 170px; gap: 0.75rem;">
+                        <div>
+                            <label style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 2px;">Date *</label>
+                            <input type="date" id="holiday-input-date" required style="width: 100%; padding: 0.4rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary); font-size: 0.8rem;">
+                        </div>
+                        <div>
+                            <label style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 2px;">Holiday Description *</label>
+                            <input type="text" id="holiday-input-desc" required placeholder="e.g. Republic Day" style="width: 100%; padding: 0.4rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary); font-size: 0.8rem;">
+                        </div>
+                        <div>
+                            <label style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 2px;">Exchange</label>
+                            <select id="holiday-input-exch" style="width: 100%; padding: 0.4rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary); font-size: 0.8rem;">
+                                <option value="ALL">ALL Exchanges</option>
+                                <option value="NSE">NSE Only</option>
+                                <option value="MCX">MCX Only</option>
+                                <option value="BSE">BSE Only</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 2px;">Session Closure</label>
+                            <select id="holiday-input-sess" style="width: 100%; padding: 0.4rem; background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-primary); font-size: 0.8rem;">
+                                <option value="FULL_DAY">Full Day Closed</option>
+                                <option value="MORNING_CLOSED">Morning Closed (Open 17:00)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.25rem;">
+                        <button type="button" class="action-btn-sm" onclick="window.holidaysManager.closeForm()" style="padding: 0.35rem 0.75rem;">Cancel</button>
+                        <button type="submit" class="action-btn-sm" style="background: var(--accent-green, #10b981); color: white; font-weight: 700; padding: 0.35rem 1rem;">Save Holiday</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="modal-body" style="padding: 0; overflow-y: auto; flex: 1;">
+                <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 0.82rem;">
+                    <thead>
+                        <tr style="background: var(--bg-tertiary); text-align: left; color: var(--text-muted); font-size: 0.72rem;">
+                            <th style="padding: 0.6rem 1rem;">Date</th>
+                            <th style="padding: 0.6rem 0.75rem;">Day</th>
+                            <th style="padding: 0.6rem 0.75rem;">Holiday Description</th>
+                            <th style="padding: 0.6rem 0.75rem;">Exchange</th>
+                            <th style="padding: 0.6rem 0.75rem;">Session</th>
+                            <th style="padding: 0.6rem 0.75rem; text-align: center;">Status</th>
+                            <th style="padding: 0.6rem 1rem; text-align: right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="holidays-table-body">
+                        <!-- Populated dynamically by holidaysManager -->
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="modal-footer" style="padding: 0.75rem 1.25rem; font-size: 0.75rem; color: var(--text-muted); display: flex; justify-content: space-between; align-items: center;">
+                <span>💡 Dates can be modified manually if exchange notifications change festival observation dates.</span>
+                <button class="action-btn-sm" onclick="window.holidaysManager.closeHolidaysModal()" style="padding: 0.4rem 1rem;">Close</button>
+            </div>
+        </div>
+    </div>
+
     </div>
 
     <!-- Scripts with Cache Busting -->
@@ -1655,6 +1759,7 @@
     <script src="js/reports.js?v=3.3"></script>
     <script src="js/users.js?v=3.3"></script>
     <script src="js/telegram.js?v=3.3"></script>
+    <script src="js/holidays.js?v=1.0"></script>
     <script src="js/app.js?v=3.4"></script>
 </body>
 </html>

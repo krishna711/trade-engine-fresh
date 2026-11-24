@@ -1,6 +1,6 @@
 import datetime
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, DateTime, Text, JSON, ForeignKey, Enum, UniqueConstraint, Index
+    Column, Integer, String, Float, Boolean, DateTime, Date, Text, JSON, ForeignKey, Enum, UniqueConstraint, Index
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -327,5 +327,27 @@ class HistoricalCandle(Base):
     __table_args__ = (
         UniqueConstraint("symbol", "resolution", "timestamp", name="uq_candle_sym_res_time"),
         Index("ix_candle_query", "symbol", "resolution", "timestamp"),
+    )
+
+
+class TradingHoliday(Base):
+    """
+    Official and custom exchange trading holidays for NSE, BSE, MCX.
+    Managed dynamically by Admin via UI table.
+    """
+    __tablename__ = "trading_holidays"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    holiday_date = Column(Date, nullable=False, index=True)
+    description = Column(String(150), nullable=False)
+    exchange = Column(String(50), default="ALL")  # "ALL", "NSE", "MCX", "BSE"
+    session = Column(String(50), default="FULL_DAY")  # "FULL_DAY", "MORNING_CLOSED"
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("holiday_date", "exchange", name="uq_holiday_date_exchange"),
+        Index("ix_holiday_lookup", "holiday_date", "exchange", "is_active"),
     )
 

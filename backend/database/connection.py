@@ -7,7 +7,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from backend.config import DB_URL, DEFAULT_FEED_PRIORITY, DEFAULT_LOT_SIZES
 from backend.database.models import (
     Base, Account, StrategyTemplate, StrategyInstance,
-    SymbolMapping, FeedBrokerStatus, SystemLog, Position, Order, Trade, TradeReport, User, TelegramSetting, HistoricalCandle
+    SymbolMapping, FeedBrokerStatus, SystemLog, Position, Order, Trade, TradeReport, User, TelegramSetting, HistoricalCandle, TradingHoliday
 )
 
 
@@ -209,11 +209,54 @@ def purge_synthetic_candles():
     except Exception as e:
         print(f"[DB] purge_synthetic_candles note: {e}")
 
+def seed_trading_holidays():
+    """
+    Seeds upcoming 2026 and 2027 exchange trading holidays into the SQLite database table.
+    Excludes past dates of 2024, 2025, and earlier 2026 dates per administrator requirement.
+    Admins can dynamically add, modify, or delete dates via the UI table.
+    """
+    db = SessionLocal()
+    try:
+        cnt = db.query(TradingHoliday).count()
+        if cnt == 0:
+            initial_holidays = [
+                # Upcoming 2026
+                {"date": datetime.date(2026, 11, 24), "desc": "Prakash Gurpurb Sri Guru Nanak Dev Jayanti", "exch": "ALL", "sess": "FULL_DAY"},
+                {"date": datetime.date(2026, 12, 25), "desc": "Christmas", "exch": "ALL", "sess": "FULL_DAY"},
+                # 2027 CalendarLabs Official NSE Trading Holidays
+                {"date": datetime.date(2027, 1, 26), "desc": "Republic Day", "exch": "ALL", "sess": "FULL_DAY"},
+                {"date": datetime.date(2027, 3, 10), "desc": "Id-ul-Fitr (Ramzan Eid)", "exch": "ALL", "sess": "FULL_DAY"},
+                {"date": datetime.date(2027, 3, 22), "desc": "Holi", "exch": "ALL", "sess": "FULL_DAY"},
+                {"date": datetime.date(2027, 3, 26), "desc": "Good Friday", "exch": "ALL", "sess": "FULL_DAY"},
+                {"date": datetime.date(2027, 4, 14), "desc": "Dr. Baba Saheb Ambedkar Jayanti", "exch": "ALL", "sess": "FULL_DAY"},
+                {"date": datetime.date(2027, 4, 15), "desc": "Shri Ram Navami", "exch": "ALL", "sess": "FULL_DAY"},
+                {"date": datetime.date(2027, 4, 19), "desc": "Shri Mahavir Jayanti", "exch": "ALL", "sess": "FULL_DAY"},
+                {"date": datetime.date(2027, 5, 17), "desc": "Bakri Id (Eid-ul-Zuha)", "exch": "ALL", "sess": "FULL_DAY"},
+                {"date": datetime.date(2027, 6, 15), "desc": "Muharram", "exch": "ALL", "sess": "FULL_DAY"},
+                {"date": datetime.date(2027, 10, 29), "desc": "Diwali (Laxmi Pujan)", "exch": "ALL", "sess": "FULL_DAY"},
+                {"date": datetime.date(2027, 11, 1), "desc": "Diwali Balipratipada", "exch": "ALL", "sess": "FULL_DAY"},
+            ]
+            for h in initial_holidays:
+                db.add(TradingHoliday(
+                    holiday_date=h["date"],
+                    description=h["desc"],
+                    exchange=h["exch"],
+                    session=h["sess"],
+                    is_active=True
+                ))
+            db.commit()
+            print(f"[DB] Seeded {len(initial_holidays)} upcoming 2026 & 2027 trading holidays.")
+    except Exception as e:
+        print(f"[DB] seed_trading_holidays note: {e}")
+    finally:
+        db.close()
+
 def init_db():
     check_and_migrate_db()
     Base.metadata.create_all(bind=engine)
     ensure_default_users()
     seed_initial_data()
+    seed_trading_holidays()
     purge_synthetic_candles()
 
 # Auto-initialize database schema and seeds on import so tables always exist

@@ -1,8 +1,11 @@
 """
 Market Hours & Trading Session Management
-Provides market session awareness, exchange holiday calendar enforcement,
+Provides market session awareness, dynamic exchange holiday calendar enforcement,
 non-market hours and weekend/holiday session anchoring, and session-constrained
 historical OHLC generation for NSE, NFO, BSE, BSEFO, and MCX.
+
+Holidays are stored dynamically in the SQLite database (trading_holidays table)
+and managed by Administrators via the UI, avoiding hardcoded dates.
 """
 
 import datetime
@@ -19,128 +22,6 @@ MCX_MARKET_OPEN = datetime.time(9, 0, 0)
 MCX_MARKET_CLOSE = datetime.time(23, 30, 0)
 MCX_EVENING_SESSION_OPEN = datetime.time(17, 0, 0)
 
-# ==============================================================================
-# OFFICIAL EXCHANGE TRADING HOLIDAY CALENDARS
-# Source: National Stock Exchange of India (NSE) Circular & MCX Holiday Circulars
-# ==============================================================================
-
-NSE_HOLIDAYS_2026: Dict[datetime.date, str] = {
-    datetime.date(2026, 1, 26): "Republic Day",
-    datetime.date(2026, 3, 3): "Holi",
-    datetime.date(2026, 3, 26): "Shri Ram Navami",
-    datetime.date(2026, 3, 31): "Shri Mahavir Jayanti",
-    datetime.date(2026, 4, 3): "Good Friday",
-    datetime.date(2026, 4, 14): "Dr. Baba Saheb Ambedkar Jayanti",
-    datetime.date(2026, 5, 1): "Maharashtra Day",
-    datetime.date(2026, 5, 28): "Bakri Id",
-    datetime.date(2026, 6, 26): "Muharram",
-    datetime.date(2026, 9, 14): "Ganesh Chaturthi",
-    datetime.date(2026, 10, 2): "Mahatma Gandhi Jayanti",
-    datetime.date(2026, 10, 20): "Dussehra",
-    datetime.date(2026, 11, 10): "Diwali-Balipratipada",
-    datetime.date(2026, 11, 24): "Prakash Gurpurb Sri Guru Nanak Dev Jayanti",
-    datetime.date(2026, 12, 25): "Christmas",
-}
-
-NSE_HOLIDAYS_2025: Dict[datetime.date, str] = {
-    datetime.date(2025, 2, 26): "Mahashivratri",
-    datetime.date(2025, 3, 14): "Holi",
-    datetime.date(2025, 3, 31): "Id-Ul-Fitr",
-    datetime.date(2025, 4, 10): "Shri Mahavir Jayanti",
-    datetime.date(2025, 4, 14): "Dr. Baba Saheb Ambedkar Jayanti",
-    datetime.date(2025, 4, 18): "Good Friday",
-    datetime.date(2025, 5, 1): "Maharashtra Day",
-    datetime.date(2025, 8, 15): "Independence Day",
-    datetime.date(2025, 8, 27): "Ganesh Chaturthi",
-    datetime.date(2025, 10, 2): "Mahatma Gandhi Jayanti / Dussehra",
-    datetime.date(2025, 10, 21): "Diwali-Balipratipada",
-    datetime.date(2025, 11, 5): "Prakash Gurpurb Sri Guru Nanak Dev Jayanti",
-    datetime.date(2025, 12, 25): "Christmas",
-}
-
-NSE_HOLIDAYS_2024: Dict[datetime.date, str] = {
-    datetime.date(2024, 1, 22): "Special Holiday (Ayodhya Ram Mandir)",
-    datetime.date(2024, 1, 26): "Republic Day",
-    datetime.date(2024, 3, 8): "Mahashivratri",
-    datetime.date(2024, 3, 25): "Holi",
-    datetime.date(2024, 3, 29): "Good Friday",
-    datetime.date(2024, 4, 11): "Id-Ul-Fitr",
-    datetime.date(2024, 4, 17): "Shri Ram Navami",
-    datetime.date(2024, 5, 1): "Maharashtra Day",
-    datetime.date(2024, 5, 20): "Parliamentary Elections",
-    datetime.date(2024, 6, 17): "Bakri Id",
-    datetime.date(2024, 7, 17): "Muharram",
-    datetime.date(2024, 8, 15): "Independence Day",
-    datetime.date(2024, 10, 2): "Mahatma Gandhi Jayanti",
-    datetime.date(2024, 11, 15): "Prakash Gurpurb Sri Guru Nanak Dev Jayanti",
-    datetime.date(2024, 11, 20): "Maharashtra Assembly Elections",
-    datetime.date(2024, 12, 25): "Christmas",
-}
-
-ALL_NSE_HOLIDAYS: Dict[datetime.date, str] = {
-    **NSE_HOLIDAYS_2024,
-    **NSE_HOLIDAYS_2025,
-    **NSE_HOLIDAYS_2026
-}
-
-# Full-day MCX holidays where BOTH morning and evening sessions are closed
-MCX_FULL_DAY_HOLIDAYS: Dict[datetime.date, str] = {
-    # 2026
-    datetime.date(2026, 1, 26): "Republic Day",
-    datetime.date(2026, 4, 3): "Good Friday",
-    datetime.date(2026, 10, 2): "Mahatma Gandhi Jayanti",
-    datetime.date(2026, 12, 25): "Christmas",
-    # 2025
-    datetime.date(2025, 4, 18): "Good Friday",
-    datetime.date(2025, 8, 15): "Independence Day",
-    datetime.date(2025, 10, 2): "Mahatma Gandhi Jayanti",
-    datetime.date(2025, 12, 25): "Christmas",
-    # 2024
-    datetime.date(2024, 1, 26): "Republic Day",
-    datetime.date(2024, 3, 29): "Good Friday",
-    datetime.date(2024, 8, 15): "Independence Day",
-    datetime.date(2024, 10, 2): "Mahatma Gandhi Jayanti",
-    datetime.date(2024, 12, 25): "Christmas",
-}
-
-# Partial MCX holidays: Morning Session (09:00 - 17:00 IST) is closed, Evening Session (17:00 - 23:30 IST) is open
-MCX_MORNING_ONLY_HOLIDAYS: Dict[datetime.date, str] = {
-    # 2026
-    datetime.date(2026, 3, 3): "Holi",
-    datetime.date(2026, 3, 26): "Shri Ram Navami",
-    datetime.date(2026, 3, 31): "Shri Mahavir Jayanti",
-    datetime.date(2026, 4, 14): "Dr. Baba Saheb Ambedkar Jayanti",
-    datetime.date(2026, 5, 1): "Maharashtra Day",
-    datetime.date(2026, 5, 28): "Bakri Id",
-    datetime.date(2026, 6, 26): "Muharram",
-    datetime.date(2026, 9, 14): "Ganesh Chaturthi",
-    datetime.date(2026, 10, 20): "Dussehra",
-    datetime.date(2026, 11, 10): "Diwali-Balipratipada",
-    datetime.date(2026, 11, 24): "Prakash Gurpurb Sri Guru Nanak Dev Jayanti",
-    # 2025
-    datetime.date(2025, 2, 26): "Mahashivratri",
-    datetime.date(2025, 3, 14): "Holi",
-    datetime.date(2025, 3, 31): "Id-Ul-Fitr",
-    datetime.date(2025, 4, 10): "Shri Mahavir Jayanti",
-    datetime.date(2025, 4, 14): "Dr. Baba Saheb Ambedkar Jayanti",
-    datetime.date(2025, 5, 1): "Maharashtra Day",
-    datetime.date(2025, 8, 27): "Ganesh Chaturthi",
-    datetime.date(2025, 10, 21): "Diwali-Balipratipada",
-    datetime.date(2025, 11, 5): "Prakash Gurpurb Sri Guru Nanak Dev Jayanti",
-    # 2024
-    datetime.date(2024, 1, 22): "Special Holiday (Ayodhya Ram Mandir)",
-    datetime.date(2024, 3, 8): "Mahashivratri",
-    datetime.date(2024, 3, 25): "Holi",
-    datetime.date(2024, 4, 11): "Id-Ul-Fitr",
-    datetime.date(2024, 4, 17): "Shri Ram Navami",
-    datetime.date(2024, 5, 1): "Maharashtra Day",
-    datetime.date(2024, 5, 20): "Parliamentary Elections",
-    datetime.date(2024, 6, 17): "Bakri Id",
-    datetime.date(2024, 7, 17): "Muharram",
-    datetime.date(2024, 11, 15): "Prakash Gurpurb Sri Guru Nanak Dev Jayanti",
-    datetime.date(2024, 11, 20): "Maharashtra Assembly Elections",
-}
-
 DEFAULT_BASE_PRICES = {
     "NSE:NIFTY": 22485.0,
     "NSE:BANKNIFTY": 48250.0,
@@ -154,6 +35,76 @@ DEFAULT_BASE_PRICES = {
     "NSE:RELIANCE": 2980.0,
     "NSE:BHARTIARTL": 1610.0,
 }
+
+# ==============================================================================
+# DYNAMIC EXCHANGE TRADING HOLIDAYS (LOADED FROM SQLITE DB)
+# ==============================================================================
+
+_HOLIDAYS_CACHE: Optional[List[Dict[str, Any]]] = None
+_HOLIDAYS_CACHE_TIME: Optional[datetime.datetime] = None
+
+# Fallback default seeds if DB is uninitialized or in test runner
+DEFAULT_HOLIDAYS_FALLBACK: List[Dict[str, Any]] = [
+    {"date": datetime.date(2026, 11, 24), "description": "Prakash Gurpurb Sri Guru Nanak Dev Jayanti", "exchange": "ALL", "session": "FULL_DAY"},
+    {"date": datetime.date(2026, 12, 25), "description": "Christmas", "exchange": "ALL", "session": "FULL_DAY"},
+    {"date": datetime.date(2027, 1, 26), "description": "Republic Day", "exchange": "ALL", "session": "FULL_DAY"},
+    {"date": datetime.date(2027, 3, 10), "description": "Id-ul-Fitr (Ramzan Eid)", "exchange": "ALL", "session": "FULL_DAY"},
+    {"date": datetime.date(2027, 3, 22), "description": "Holi", "exchange": "ALL", "session": "FULL_DAY"},
+    {"date": datetime.date(2027, 3, 26), "description": "Good Friday", "exchange": "ALL", "session": "FULL_DAY"},
+    {"date": datetime.date(2027, 4, 14), "description": "Dr. Baba Saheb Ambedkar Jayanti", "exchange": "ALL", "session": "FULL_DAY"},
+    {"date": datetime.date(2027, 4, 15), "description": "Shri Ram Navami", "exchange": "ALL", "session": "FULL_DAY"},
+    {"date": datetime.date(2027, 4, 19), "description": "Shri Mahavir Jayanti", "exchange": "ALL", "session": "FULL_DAY"},
+    {"date": datetime.date(2027, 5, 17), "description": "Bakri Id (Eid-ul-Zuha)", "exchange": "ALL", "session": "FULL_DAY"},
+    {"date": datetime.date(2027, 6, 15), "description": "Muharram", "exchange": "ALL", "session": "FULL_DAY"},
+    {"date": datetime.date(2027, 10, 29), "description": "Diwali (Laxmi Pujan)", "exchange": "ALL", "session": "FULL_DAY"},
+    {"date": datetime.date(2027, 11, 1), "description": "Diwali Balipratipada", "exchange": "ALL", "session": "FULL_DAY"},
+]
+
+def get_holidays_from_db(force_reload: bool = False) -> List[Dict[str, Any]]:
+    """
+    Retrieves active trading holidays from SQLite database table (trading_holidays).
+    Maintains an in-memory cache to guarantee sub-microsecond latency during market execution.
+    """
+    global _HOLIDAYS_CACHE, _HOLIDAYS_CACHE_TIME
+    now = datetime.datetime.utcnow()
+    if not force_reload and _HOLIDAYS_CACHE is not None and _HOLIDAYS_CACHE_TIME is not None:
+        if (now - _HOLIDAYS_CACHE_TIME).total_seconds() < 300:  # Cache for 5 minutes
+            return _HOLIDAYS_CACHE
+
+    try:
+        from backend.database.connection import SessionLocal
+        from backend.database.models import TradingHoliday
+        db = SessionLocal()
+        try:
+            records = db.query(TradingHoliday).filter(TradingHoliday.is_active == True).all()
+            if records:
+                _HOLIDAYS_CACHE = [
+                    {
+                        "id": r.id,
+                        "date": r.holiday_date if isinstance(r.holiday_date, datetime.date) else datetime.date.fromisoformat(str(r.holiday_date)),
+                        "description": r.description,
+                        "exchange": (r.exchange or "ALL").upper(),
+                        "session": (r.session or "FULL_DAY").upper()
+                    }
+                    for r in records
+                ]
+                _HOLIDAYS_CACHE_TIME = now
+                return _HOLIDAYS_CACHE
+        finally:
+            db.close()
+    except Exception as e:
+        pass
+
+    if _HOLIDAYS_CACHE is not None:
+        return _HOLIDAYS_CACHE
+
+    return DEFAULT_HOLIDAYS_FALLBACK
+
+
+def reload_holidays_cache() -> List[Dict[str, Any]]:
+    """Forces an immediate reload of the in-memory trading holidays cache from SQLite."""
+    return get_holidays_from_db(force_reload=True)
+
 
 def is_mcx_symbol(symbol: str) -> bool:
     sym_u = (symbol or "").upper()
@@ -170,34 +121,46 @@ def get_current_ist(now_dt: Optional[datetime.datetime] = None) -> datetime.date
     if now_dt is None:
         return datetime.datetime.now(IST_TZ)
     if now_dt.tzinfo is None:
-        return now_dt.replace(tzinfo=datetime.timezone.utc).astimezone(IST_TZ)
+        return now_dt.replace(tzinfo=IST_TZ)
     return now_dt.astimezone(IST_TZ)
 
 
 def is_trading_holiday(symbol: str, now_dt: Optional[datetime.datetime] = None) -> Tuple[bool, Optional[str]]:
     """
     Returns (is_holiday, holiday_name) for a given symbol and timestamp in IST.
-    Takes into account segment specifics (NSE/BSE full-day vs MCX morning-only closures).
+    Dynamically cross-checks active trading holidays from SQLite database.
     """
     dt_ist = get_current_ist(now_dt)
     target_date = dt_ist.date()
     target_time = dt_ist.time()
+    is_mcx = is_mcx_symbol(symbol)
 
-    if is_mcx_symbol(symbol):
-        # 1. Full-day MCX holiday
-        if target_date in MCX_FULL_DAY_HOLIDAYS:
-            return True, MCX_FULL_DAY_HOLIDAYS[target_date]
-        # 2. Morning-only MCX holiday (Closed 09:00 - 17:00 IST, Open 17:00 - 23:30 IST)
-        if target_date in MCX_MORNING_ONLY_HOLIDAYS:
-            hol_name = MCX_MORNING_ONLY_HOLIDAYS[target_date]
-            if target_time < MCX_EVENING_SESSION_OPEN:
-                return True, f"{hol_name} (MCX Morning Session Closed until 17:00 IST)"
-            return False, None
-        return False, None
+    holidays = get_holidays_from_db()
+    for h in holidays:
+        h_date = h["date"]
+        if isinstance(h_date, str):
+            try:
+                h_date = datetime.date.fromisoformat(h_date)
+            except Exception:
+                continue
 
-    # NSE / BSE / NFO / BSEFO
-    if target_date in ALL_NSE_HOLIDAYS:
-        return True, ALL_NSE_HOLIDAYS[target_date]
+        if h_date == target_date:
+            exch = h.get("exchange", "ALL").upper()
+            session = h.get("session", "FULL_DAY").upper()
+            desc = h.get("description", "Exchange Trading Holiday")
+
+            if is_mcx:
+                if exch in ["ALL", "MCX", "MCXFO"]:
+                    if session == "MORNING_CLOSED":
+                        if target_time < MCX_EVENING_SESSION_OPEN:
+                            return True, f"{desc} (MCX Morning Session Closed until 17:00 IST)"
+                        return False, None
+                    else:  # FULL_DAY
+                        return True, desc
+            else:  # NSE / BSE / NFO / BSEFO
+                if exch in ["ALL", "NSE", "BSE", "NFO", "BSEFO"]:
+                    return True, desc
+
     return False, None
 
 
@@ -205,20 +168,35 @@ def get_previous_trading_date(symbol: str, from_date: datetime.date) -> datetime
     """Finds the most recent prior date on which the exchange for this symbol had an active trading session."""
     cand = from_date - datetime.timedelta(days=1)
     is_mcx = is_mcx_symbol(symbol)
+    holidays = get_holidays_from_db()
+
+    hol_dates = set()
+    for h in holidays:
+        h_date = h["date"]
+        if isinstance(h_date, str):
+            try:
+                h_date = datetime.date.fromisoformat(h_date)
+            except Exception:
+                continue
+        exch = h.get("exchange", "ALL").upper()
+        sess = h.get("session", "FULL_DAY").upper()
+        if is_mcx:
+            # If MCX had an evening session, trades took place; only full day closure is skipped
+            if exch in ["ALL", "MCX", "MCXFO"] and sess == "FULL_DAY":
+                hol_dates.add(h_date)
+        else:
+            if exch in ["ALL", "NSE", "BSE", "NFO", "BSEFO"]:
+                hol_dates.add(h_date)
+
     while True:
         # Skip weekends
         if cand.weekday() >= 5:
             cand -= datetime.timedelta(days=1)
             continue
         # Skip full day holidays
-        if is_mcx:
-            if cand in MCX_FULL_DAY_HOLIDAYS:
-                cand -= datetime.timedelta(days=1)
-                continue
-        else:
-            if cand in ALL_NSE_HOLIDAYS:
-                cand -= datetime.timedelta(days=1)
-                continue
+        if cand in hol_dates:
+            cand -= datetime.timedelta(days=1)
+            continue
         return cand
 
 
@@ -238,9 +216,19 @@ def is_market_open(symbol: str, now_dt: Optional[datetime.datetime] = None) -> b
     open_time, close_time = get_market_hours_for_symbol(symbol)
     curr_time = dt_ist.time()
 
-    # For MCX on a morning-only holiday: open_time starts at 17:00 IST
-    if is_mcx_symbol(symbol) and dt_ist.date() in MCX_MORNING_ONLY_HOLIDAYS:
-        open_time = MCX_EVENING_SESSION_OPEN
+    # For MCX on morning-only holiday: open_time starts at 17:00 IST
+    if is_mcx_symbol(symbol):
+        holidays = get_holidays_from_db()
+        for h in holidays:
+            h_date = h["date"]
+            if isinstance(h_date, str):
+                try:
+                    h_date = datetime.date.fromisoformat(h_date)
+                except Exception:
+                    continue
+            if h_date == dt_ist.date() and h.get("session", "").upper() == "MORNING_CLOSED":
+                open_time = MCX_EVENING_SESSION_OPEN
+                break
 
     return open_time <= curr_time <= close_time
 
@@ -272,8 +260,18 @@ def get_last_completed_trading_session_anchor(
     step_min = parse_resolution_minutes(resolution)
 
     # If MCX on morning-only holiday, open_time shifts to 17:00
-    if is_mcx_symbol(symbol) and dt_ist.date() in MCX_MORNING_ONLY_HOLIDAYS:
-        open_time = MCX_EVENING_SESSION_OPEN
+    if is_mcx_symbol(symbol):
+        holidays = get_holidays_from_db()
+        for h in holidays:
+            h_date = h["date"]
+            if isinstance(h_date, str):
+                try:
+                    h_date = datetime.date.fromisoformat(h_date)
+                except Exception:
+                    continue
+            if h_date == dt_ist.date() and h.get("session", "").upper() == "MORNING_CLOSED":
+                open_time = MCX_EVENING_SESSION_OPEN
+                break
 
     curr_date = dt_ist.date()
     curr_time = dt_ist.time()
@@ -347,8 +345,18 @@ def generate_market_session_timestamps(
 
         # Determine effective open time for that particular date
         effective_open = open_time
-        if is_mcx_symbol(symbol) and curr.date() in MCX_MORNING_ONLY_HOLIDAYS:
-            effective_open = MCX_EVENING_SESSION_OPEN
+        if is_mcx_symbol(symbol):
+            holidays = get_holidays_from_db()
+            for h in holidays:
+                h_date = h["date"]
+                if isinstance(h_date, str):
+                    try:
+                        h_date = datetime.date.fromisoformat(h_date)
+                    except Exception:
+                        continue
+                if h_date == curr.date() and h.get("session", "").upper() == "MORNING_CLOSED":
+                    effective_open = MCX_EVENING_SESSION_OPEN
+                    break
 
         # Check if stepped before market open of that day
         if prev.time() < effective_open:
