@@ -1,7 +1,8 @@
 """
 Market Hours & Trading Session Management
-Provides market session awareness, non-market hours and weekend session anchoring,
-and session-constrained historical OHLC generation for NSE, NFO, BSE, BSEFO, and MCX.
+Provides market session awareness, exchange holiday calendar enforcement,
+non-market hours and weekend/holiday session anchoring, and session-constrained
+historical OHLC generation for NSE, NFO, BSE, BSEFO, and MCX.
 """
 
 import datetime
@@ -16,6 +17,129 @@ NSE_MARKET_CLOSE = datetime.time(15, 30, 0)
 
 MCX_MARKET_OPEN = datetime.time(9, 0, 0)
 MCX_MARKET_CLOSE = datetime.time(23, 30, 0)
+MCX_EVENING_SESSION_OPEN = datetime.time(17, 0, 0)
+
+# ==============================================================================
+# OFFICIAL EXCHANGE TRADING HOLIDAY CALENDARS
+# Source: National Stock Exchange of India (NSE) Circular & MCX Holiday Circulars
+# ==============================================================================
+
+NSE_HOLIDAYS_2026: Dict[datetime.date, str] = {
+    datetime.date(2026, 1, 26): "Republic Day",
+    datetime.date(2026, 3, 3): "Holi",
+    datetime.date(2026, 3, 26): "Shri Ram Navami",
+    datetime.date(2026, 3, 31): "Shri Mahavir Jayanti",
+    datetime.date(2026, 4, 3): "Good Friday",
+    datetime.date(2026, 4, 14): "Dr. Baba Saheb Ambedkar Jayanti",
+    datetime.date(2026, 5, 1): "Maharashtra Day",
+    datetime.date(2026, 5, 28): "Bakri Id",
+    datetime.date(2026, 6, 26): "Muharram",
+    datetime.date(2026, 9, 14): "Ganesh Chaturthi",
+    datetime.date(2026, 10, 2): "Mahatma Gandhi Jayanti",
+    datetime.date(2026, 10, 20): "Dussehra",
+    datetime.date(2026, 11, 10): "Diwali-Balipratipada",
+    datetime.date(2026, 11, 24): "Prakash Gurpurb Sri Guru Nanak Dev Jayanti",
+    datetime.date(2026, 12, 25): "Christmas",
+}
+
+NSE_HOLIDAYS_2025: Dict[datetime.date, str] = {
+    datetime.date(2025, 2, 26): "Mahashivratri",
+    datetime.date(2025, 3, 14): "Holi",
+    datetime.date(2025, 3, 31): "Id-Ul-Fitr",
+    datetime.date(2025, 4, 10): "Shri Mahavir Jayanti",
+    datetime.date(2025, 4, 14): "Dr. Baba Saheb Ambedkar Jayanti",
+    datetime.date(2025, 4, 18): "Good Friday",
+    datetime.date(2025, 5, 1): "Maharashtra Day",
+    datetime.date(2025, 8, 15): "Independence Day",
+    datetime.date(2025, 8, 27): "Ganesh Chaturthi",
+    datetime.date(2025, 10, 2): "Mahatma Gandhi Jayanti / Dussehra",
+    datetime.date(2025, 10, 21): "Diwali-Balipratipada",
+    datetime.date(2025, 11, 5): "Prakash Gurpurb Sri Guru Nanak Dev Jayanti",
+    datetime.date(2025, 12, 25): "Christmas",
+}
+
+NSE_HOLIDAYS_2024: Dict[datetime.date, str] = {
+    datetime.date(2024, 1, 22): "Special Holiday (Ayodhya Ram Mandir)",
+    datetime.date(2024, 1, 26): "Republic Day",
+    datetime.date(2024, 3, 8): "Mahashivratri",
+    datetime.date(2024, 3, 25): "Holi",
+    datetime.date(2024, 3, 29): "Good Friday",
+    datetime.date(2024, 4, 11): "Id-Ul-Fitr",
+    datetime.date(2024, 4, 17): "Shri Ram Navami",
+    datetime.date(2024, 5, 1): "Maharashtra Day",
+    datetime.date(2024, 5, 20): "Parliamentary Elections",
+    datetime.date(2024, 6, 17): "Bakri Id",
+    datetime.date(2024, 7, 17): "Muharram",
+    datetime.date(2024, 8, 15): "Independence Day",
+    datetime.date(2024, 10, 2): "Mahatma Gandhi Jayanti",
+    datetime.date(2024, 11, 15): "Prakash Gurpurb Sri Guru Nanak Dev Jayanti",
+    datetime.date(2024, 11, 20): "Maharashtra Assembly Elections",
+    datetime.date(2024, 12, 25): "Christmas",
+}
+
+ALL_NSE_HOLIDAYS: Dict[datetime.date, str] = {
+    **NSE_HOLIDAYS_2024,
+    **NSE_HOLIDAYS_2025,
+    **NSE_HOLIDAYS_2026
+}
+
+# Full-day MCX holidays where BOTH morning and evening sessions are closed
+MCX_FULL_DAY_HOLIDAYS: Dict[datetime.date, str] = {
+    # 2026
+    datetime.date(2026, 1, 26): "Republic Day",
+    datetime.date(2026, 4, 3): "Good Friday",
+    datetime.date(2026, 10, 2): "Mahatma Gandhi Jayanti",
+    datetime.date(2026, 12, 25): "Christmas",
+    # 2025
+    datetime.date(2025, 4, 18): "Good Friday",
+    datetime.date(2025, 8, 15): "Independence Day",
+    datetime.date(2025, 10, 2): "Mahatma Gandhi Jayanti",
+    datetime.date(2025, 12, 25): "Christmas",
+    # 2024
+    datetime.date(2024, 1, 26): "Republic Day",
+    datetime.date(2024, 3, 29): "Good Friday",
+    datetime.date(2024, 8, 15): "Independence Day",
+    datetime.date(2024, 10, 2): "Mahatma Gandhi Jayanti",
+    datetime.date(2024, 12, 25): "Christmas",
+}
+
+# Partial MCX holidays: Morning Session (09:00 - 17:00 IST) is closed, Evening Session (17:00 - 23:30 IST) is open
+MCX_MORNING_ONLY_HOLIDAYS: Dict[datetime.date, str] = {
+    # 2026
+    datetime.date(2026, 3, 3): "Holi",
+    datetime.date(2026, 3, 26): "Shri Ram Navami",
+    datetime.date(2026, 3, 31): "Shri Mahavir Jayanti",
+    datetime.date(2026, 4, 14): "Dr. Baba Saheb Ambedkar Jayanti",
+    datetime.date(2026, 5, 1): "Maharashtra Day",
+    datetime.date(2026, 5, 28): "Bakri Id",
+    datetime.date(2026, 6, 26): "Muharram",
+    datetime.date(2026, 9, 14): "Ganesh Chaturthi",
+    datetime.date(2026, 10, 20): "Dussehra",
+    datetime.date(2026, 11, 10): "Diwali-Balipratipada",
+    datetime.date(2026, 11, 24): "Prakash Gurpurb Sri Guru Nanak Dev Jayanti",
+    # 2025
+    datetime.date(2025, 2, 26): "Mahashivratri",
+    datetime.date(2025, 3, 14): "Holi",
+    datetime.date(2025, 3, 31): "Id-Ul-Fitr",
+    datetime.date(2025, 4, 10): "Shri Mahavir Jayanti",
+    datetime.date(2025, 4, 14): "Dr. Baba Saheb Ambedkar Jayanti",
+    datetime.date(2025, 5, 1): "Maharashtra Day",
+    datetime.date(2025, 8, 27): "Ganesh Chaturthi",
+    datetime.date(2025, 10, 21): "Diwali-Balipratipada",
+    datetime.date(2025, 11, 5): "Prakash Gurpurb Sri Guru Nanak Dev Jayanti",
+    # 2024
+    datetime.date(2024, 1, 22): "Special Holiday (Ayodhya Ram Mandir)",
+    datetime.date(2024, 3, 8): "Mahashivratri",
+    datetime.date(2024, 3, 25): "Holi",
+    datetime.date(2024, 4, 11): "Id-Ul-Fitr",
+    datetime.date(2024, 4, 17): "Shri Ram Navami",
+    datetime.date(2024, 5, 1): "Maharashtra Day",
+    datetime.date(2024, 5, 20): "Parliamentary Elections",
+    datetime.date(2024, 6, 17): "Bakri Id",
+    datetime.date(2024, 7, 17): "Muharram",
+    datetime.date(2024, 11, 15): "Prakash Gurpurb Sri Guru Nanak Dev Jayanti",
+    datetime.date(2024, 11, 20): "Maharashtra Assembly Elections",
+}
 
 DEFAULT_BASE_PRICES = {
     "NSE:NIFTY": 22485.0,
@@ -50,27 +174,86 @@ def get_current_ist(now_dt: Optional[datetime.datetime] = None) -> datetime.date
     return now_dt.astimezone(IST_TZ)
 
 
+def is_trading_holiday(symbol: str, now_dt: Optional[datetime.datetime] = None) -> Tuple[bool, Optional[str]]:
+    """
+    Returns (is_holiday, holiday_name) for a given symbol and timestamp in IST.
+    Takes into account segment specifics (NSE/BSE full-day vs MCX morning-only closures).
+    """
+    dt_ist = get_current_ist(now_dt)
+    target_date = dt_ist.date()
+    target_time = dt_ist.time()
+
+    if is_mcx_symbol(symbol):
+        # 1. Full-day MCX holiday
+        if target_date in MCX_FULL_DAY_HOLIDAYS:
+            return True, MCX_FULL_DAY_HOLIDAYS[target_date]
+        # 2. Morning-only MCX holiday (Closed 09:00 - 17:00 IST, Open 17:00 - 23:30 IST)
+        if target_date in MCX_MORNING_ONLY_HOLIDAYS:
+            hol_name = MCX_MORNING_ONLY_HOLIDAYS[target_date]
+            if target_time < MCX_EVENING_SESSION_OPEN:
+                return True, f"{hol_name} (MCX Morning Session Closed until 17:00 IST)"
+            return False, None
+        return False, None
+
+    # NSE / BSE / NFO / BSEFO
+    if target_date in ALL_NSE_HOLIDAYS:
+        return True, ALL_NSE_HOLIDAYS[target_date]
+    return False, None
+
+
+def get_previous_trading_date(symbol: str, from_date: datetime.date) -> datetime.date:
+    """Finds the most recent prior date on which the exchange for this symbol had an active trading session."""
+    cand = from_date - datetime.timedelta(days=1)
+    is_mcx = is_mcx_symbol(symbol)
+    while True:
+        # Skip weekends
+        if cand.weekday() >= 5:
+            cand -= datetime.timedelta(days=1)
+            continue
+        # Skip full day holidays
+        if is_mcx:
+            if cand in MCX_FULL_DAY_HOLIDAYS:
+                cand -= datetime.timedelta(days=1)
+                continue
+        else:
+            if cand in ALL_NSE_HOLIDAYS:
+                cand -= datetime.timedelta(days=1)
+                continue
+        return cand
+
+
 def is_market_open(symbol: str, now_dt: Optional[datetime.datetime] = None) -> bool:
-    """Returns True if the exchange for this symbol is currently in an active trading session."""
+    """
+    Returns True if the exchange for this symbol is currently in an active trading session.
+    Returns False on weekends, official exchange holidays, and outside trading hours.
+    """
     dt_ist = get_current_ist(now_dt)
     if dt_ist.weekday() >= 5:  # Saturday (5) or Sunday (6)
         return False
+
+    is_hol, _ = is_trading_holiday(symbol, dt_ist)
+    if is_hol:
+        return False
+
     open_time, close_time = get_market_hours_for_symbol(symbol)
     curr_time = dt_ist.time()
+
+    # For MCX on a morning-only holiday: open_time starts at 17:00 IST
+    if is_mcx_symbol(symbol) and dt_ist.date() in MCX_MORNING_ONLY_HOLIDAYS:
+        open_time = MCX_EVENING_SESSION_OPEN
+
     return open_time <= curr_time <= close_time
 
 
 def is_any_market_open(now_dt: Optional[datetime.datetime] = None) -> bool:
     """
     Returns True if ANY Indian financial exchange (NSE, BSE, MCX) is currently in an active trading session.
-    Returns False on weekends (Saturday & Sunday) and overnight hours (between 23:30 and 09:00 IST).
+    Returns False when all exchanges are closed (weekends, shared national holidays, overnight hours).
     """
     dt_ist = get_current_ist(now_dt)
-    if dt_ist.weekday() >= 5:  # Saturday (5) or Sunday (6)
+    if dt_ist.weekday() >= 5:
         return False
-    curr_time = dt_ist.time()
-    # MCX opens earliest (09:00 IST) and closes latest (23:30 IST) among Indian exchanges
-    return MCX_MARKET_OPEN <= curr_time <= MCX_MARKET_CLOSE
+    return is_market_open("NSE:NIFTY", dt_ist) or is_market_open("MCX:CRUDEOIL", dt_ist)
 
 
 def get_last_completed_trading_session_anchor(
@@ -80,33 +263,37 @@ def get_last_completed_trading_session_anchor(
 ) -> datetime.datetime:
     """
     Returns the latest valid market session timestamp in IST.
-    During market hours: returns the current minute rounded down to resolution bucket.
-    Outside market hours (evening, early morning, or weekend): returns the exact close
-    timestamp of the most recent completed market trading session (e.g. Friday 15:30 IST).
+    During active market hours: returns the current minute rounded down to resolution bucket.
+    Outside market hours (evening, early morning, weekend, or holiday): returns the exact close
+    timestamp of the most recent completed market trading session.
     """
     dt_ist = get_current_ist(now_dt)
     open_time, close_time = get_market_hours_for_symbol(symbol)
     step_min = parse_resolution_minutes(resolution)
 
-    # 1. Weekend (Saturday or Sunday) -> Anchor to most recent Friday's last candle start
-    if dt_ist.weekday() >= 5:
-        days_back = 1 if dt_ist.weekday() == 5 else 2
-        friday_date = dt_ist.date() - datetime.timedelta(days=days_back)
-        friday_close = datetime.datetime.combine(friday_date, close_time, tzinfo=IST_TZ)
-        return friday_close - datetime.timedelta(minutes=step_min)
+    # If MCX on morning-only holiday, open_time shifts to 17:00
+    if is_mcx_symbol(symbol) and dt_ist.date() in MCX_MORNING_ONLY_HOLIDAYS:
+        open_time = MCX_EVENING_SESSION_OPEN
 
+    curr_date = dt_ist.date()
     curr_time = dt_ist.time()
 
-    # 2. Weekday before market open -> Anchor to previous trading day's last candle start
+    # 1. Weekend or Holiday closure -> Anchor to the previous trading day's last candle
+    is_hol, _ = is_trading_holiday(symbol, dt_ist)
+    if dt_ist.weekday() >= 5 or is_hol:
+        prev_date = get_previous_trading_date(symbol, curr_date)
+        prev_close = datetime.datetime.combine(prev_date, close_time, tzinfo=IST_TZ)
+        return prev_close - datetime.timedelta(minutes=step_min)
+
+    # 2. Weekday before market open -> Anchor to previous trading day's last candle
     if curr_time < open_time:
-        days_back = 3 if dt_ist.weekday() == 0 else 1
-        prev_date = dt_ist.date() - datetime.timedelta(days=days_back)
+        prev_date = get_previous_trading_date(symbol, curr_date)
         prev_close = datetime.datetime.combine(prev_date, close_time, tzinfo=IST_TZ)
         return prev_close - datetime.timedelta(minutes=step_min)
 
     # 3. Weekday after market close -> Anchor to today's last candle start
     if curr_time >= close_time:
-        today_close = datetime.datetime.combine(dt_ist.date(), close_time, tzinfo=IST_TZ)
+        today_close = datetime.datetime.combine(curr_date, close_time, tzinfo=IST_TZ)
         return today_close - datetime.timedelta(minutes=step_min)
 
     # 4. Live market session -> Round down to current bucket aligned to session open
@@ -115,7 +302,7 @@ def get_last_completed_trading_session_anchor(
         minute_bucket = (dt_ist.minute // step_min) * step_min
         return dt_ist.replace(minute=minute_bucket, second=0, microsecond=0)
     bucket_offset = (total_mins_since_open // step_min) * step_min
-    return datetime.datetime.combine(dt_ist.date(), open_time, tzinfo=IST_TZ) + datetime.timedelta(minutes=bucket_offset)
+    return datetime.datetime.combine(curr_date, open_time, tzinfo=IST_TZ) + datetime.timedelta(minutes=bucket_offset)
 
 
 def parse_resolution_minutes(resolution: str) -> int:
@@ -130,7 +317,6 @@ def parse_resolution_minutes(resolution: str) -> int:
         return 15
     if res in ["1h", "60m", "60"]:
         return 60
-    # Extract any digits
     digits = "".join([c for c in res if c.isdigit()])
     return int(digits) if digits else 5
 
@@ -143,10 +329,8 @@ def generate_market_session_timestamps(
 ) -> List[datetime.datetime]:
     """
     Generates 'count' timestamps backward from the session anchor, skipping non-trading
-    hours and weekends. For multi-day lookbacks, timestamps cleanly step from 09:15 back
-    to previous trading day's 15:30 (or MCX 23:30), creating two or more continuous
-    trading sessions. This ensures Floor Pivots, Opening Ranges, and session indicators
-    calculate accurately even on weekends and during off-market hours.
+    hours, weekends, and official exchange holidays. For multi-day lookbacks, timestamps
+    cleanly step from session open back to previous trading day's session close.
     """
     anchor = get_last_completed_trading_session_anchor(symbol, resolution, now_dt)
     open_time, close_time = get_market_hours_for_symbol(symbol)
@@ -161,11 +345,15 @@ def generate_market_session_timestamps(
         # Step back by resolution
         prev = curr - datetime.timedelta(minutes=step_min)
 
+        # Determine effective open time for that particular date
+        effective_open = open_time
+        if is_mcx_symbol(symbol) and curr.date() in MCX_MORNING_ONLY_HOLIDAYS:
+            effective_open = MCX_EVENING_SESSION_OPEN
+
         # Check if stepped before market open of that day
-        if prev.time() < open_time:
-            # Jump back to previous trading day's last candle start time
-            days_back = 3 if curr.weekday() == 0 else 1  # Monday -> Friday, else yesterday
-            prev_date = curr.date() - datetime.timedelta(days=days_back)
+        if prev.time() < effective_open:
+            # Jump back to previous valid trading day's last candle start time
+            prev_date = get_previous_trading_date(symbol, curr.date())
             prev_close_dt = datetime.datetime.combine(prev_date, close_time, tzinfo=IST_TZ)
             curr = prev_close_dt - datetime.timedelta(minutes=step_min)
         else:
@@ -186,7 +374,7 @@ def build_market_session_bars(
 ) -> List[Dict[str, Any]]:
     """
     Builds deterministic, market-hours aligned OHLC bars across trading sessions.
-    Guarantees valid OHLC geometry, consistent weekend curve persistence,
+    Guarantees valid OHLC geometry, consistent holiday/weekend curve persistence,
     and valid multi-day shift compatibility for Floor Pivots and Opening Ranges.
     """
     timestamps = generate_market_session_timestamps(symbol, resolution, count, now_dt)
@@ -217,7 +405,6 @@ def build_market_session_bars(
 
     is_option = symbol.endswith("CE") or symbol.endswith("PE")
     if is_option and p_ref > 5000:
-        # Default option strike premium estimation if underlying price was accidentally passed
         p_ref = 350.0
 
     # Deterministic seed anchored to symbol, resolution, and the anchor date

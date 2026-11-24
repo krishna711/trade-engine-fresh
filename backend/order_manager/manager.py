@@ -121,6 +121,25 @@ class OrderManager:
             db.add(order)
             db.commit()
 
+            # Holiday & Market Session guard for live broker orders
+            from backend.feed_manager.market_hours import is_market_open, is_trading_holiday
+            if not effective_is_paper and not is_market_open(symbol):
+                is_hol, hol_name = is_trading_holiday(symbol)
+                block_reason = f"Exchange {segment} is closed today for {hol_name} (Trading Holiday)" if is_hol else f"Exchange {segment} is outside active trading hours."
+                print(f"[OrderManager] Holiday/Session Guard: Blocked live order for {client_id} on {symbol}: {block_reason}")
+                order.status = "REJECTED"
+                order.rejection_reason = block_reason
+                db.commit()
+                return {
+                    "success": False,
+                    "client_id": client_id,
+                    "order_id": engine_order_id,
+                    "broker_order_id": None,
+                    "status": "REJECTED",
+                    "error": block_reason,
+                    "rejection_reason": block_reason
+                }
+
             # Dispatch order
             adapter = create_broker_order_adapter(account.broker, client_id, account.credentials_json, static_ip=account.static_ip)
             order_dict = {

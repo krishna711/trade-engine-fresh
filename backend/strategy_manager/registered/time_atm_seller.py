@@ -216,6 +216,12 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         curr_date = now_ist.date()
         entry_t = self._parse_time_str(self.entry_time)
 
+        # Do not re-arm or reset on weekends or official exchange holidays
+        from backend.feed_manager.market_hours import is_trading_holiday
+        is_hol, hol_name = is_trading_holiday(self.symbol, now_ist)
+        if now_ist.weekday() >= 5 or is_hol:
+            return
+
         # 1. Reset if entering a new trading date
         if getattr(self, "_last_trade_date", None) and curr_date > self._last_trade_date:
             self.trade_state = "IDLE"
@@ -340,6 +346,20 @@ class TimeBasedATMSellerStrategy(BaseStrategy):
         if self.trade_state != "IDLE":
             return
         if not underlying_ltp or underlying_ltp <= 0.0:
+            return
+
+        # STRICT GUARD: Never enter trade if exchange session is closed (weekend, holiday, or before session open)
+        from backend.feed_manager.market_hours import is_market_open, is_trading_holiday
+        if not is_market_open(self.symbol):
+            is_hol, hol_name = is_trading_holiday(self.symbol)
+            today_date = datetime.date.today()
+            if is_hol and getattr(self, "_last_logged_holiday_date", None) != today_date:
+                self._last_logged_holiday_date = today_date
+                self.log_decision(
+                    "MARKET CLOSED (HOLIDAY)",
+                    f"Exchange trading holiday for {self.symbol} ({hol_name}). Trade entry prevented.",
+                    level="INFO"
+                )
             return
 
         curr_time = self._get_current_ist_time()

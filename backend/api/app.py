@@ -1967,6 +1967,62 @@ def get_strategy_chronological_logs(id: int, include_candle_fetch: bool = True, 
 
 
 # ----------------- STATUS & DIAGNOSTICS PAGE -----------------
+@app.get("/api/status/holidays")
+def get_exchange_holidays():
+    """
+    Returns the official exchange trading holiday calendar,
+    today's holiday status, and current session availability across NSE and MCX.
+    """
+    from backend.feed_manager.market_hours import (
+        NSE_HOLIDAYS_2026,
+        MCX_FULL_DAY_HOLIDAYS,
+        MCX_MORNING_ONLY_HOLIDAYS,
+        is_trading_holiday,
+        is_market_open,
+        is_any_market_open,
+        get_current_ist
+    )
+    now_ist = get_current_ist()
+    today_date = now_ist.date()
+
+    is_nse_hol, nse_hol_name = is_trading_holiday("NSE:NIFTY", now_ist)
+    is_mcx_hol, mcx_hol_name = is_trading_holiday("MCX:CRUDEOIL", now_ist)
+
+    # Format 2026 holidays list
+    nse_list = [
+        {"date": d.isoformat(), "day": d.strftime("%A"), "description": name}
+        for d, name in sorted(NSE_HOLIDAYS_2026.items())
+    ]
+    mcx_list = []
+    for d, name in sorted({**MCX_FULL_DAY_HOLIDAYS, **MCX_MORNING_ONLY_HOLIDAYS}.items()):
+        if d.year == 2026:
+            is_full = d in MCX_FULL_DAY_HOLIDAYS
+            mcx_list.append({
+                "date": d.isoformat(),
+                "day": d.strftime("%A"),
+                "description": name,
+                "session": "Full Day Closed" if is_full else "Morning Closed (Open 17:00 IST)"
+            })
+
+    return {
+        "current_time_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
+        "today_date": today_date.isoformat(),
+        "today_day": today_date.strftime("%A"),
+        "nse": {
+            "is_holiday_today": is_nse_hol,
+            "holiday_name": nse_hol_name,
+            "is_market_open": is_market_open("NSE:NIFTY", now_ist)
+        },
+        "mcx": {
+            "is_holiday_today": is_mcx_hol,
+            "holiday_name": mcx_hol_name,
+            "is_market_open": is_market_open("MCX:CRUDEOIL", now_ist)
+        },
+        "is_any_market_open": is_any_market_open(now_ist),
+        "nse_holidays_2026": nse_list,
+        "mcx_holidays_2026": mcx_list
+    }
+
 @app.get("/api/status/feed")
 def get_feed_status(db: Session = Depends(get_db)):
     return get_effective_feed_status(db)

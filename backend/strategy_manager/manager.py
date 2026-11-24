@@ -450,6 +450,29 @@ class StrategySupervisor:
                         elif msg_type == "ORDER":
                             ord_data = msg["data"]
                             client_ids = worker.get("client_ids", [])
+                            sym = ord_data["symbol"]
+
+                            # System-wide Holiday & Session Guard: Prevent dispatching orders when exchange session is closed
+                            from backend.feed_manager.market_hours import is_market_open, is_trading_holiday
+                            if not is_market_open(sym):
+                                is_hol, hol_name = is_trading_holiday(sym)
+                                reason = f"Exchange trading holiday: {hol_name}" if is_hol else "Exchange session is closed (outside market hours or weekend)"
+                                print(f"[Supervisor] ORDER BLOCKED for instance {inst_id} ({sym}): {reason}")
+                                self._log_strategy_decision(inst_id, "WARNING", f"ORDER BLOCKED - Market Closed: {reason}")
+                                worker["in_queue"].put({
+                                    "type": "ORDER_RESULT",
+                                    "data": {
+                                        "order_request": ord_data,
+                                        "results": [{
+                                            "success": False,
+                                            "client_id": c,
+                                            "status": "REJECTED",
+                                            "rejection_reason": f"Market Closed ({reason})"
+                                        } for c in client_ids]
+                                    }
+                                })
+                                continue
+
                             # Dispatch concurrently across all mapped broker accounts
                             order_results = await order_manager.dispatch_parallel_multi_client(
                                 client_ids=client_ids,
