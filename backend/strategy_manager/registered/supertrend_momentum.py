@@ -1001,6 +1001,8 @@ class SupertrendMomentumStrategy(BaseStrategy):
         # State tracking
         if not hasattr(self, "last_underlying_ltp"):
             self.last_underlying_ltp = 0.0
+        if not hasattr(self, "last_trade_ltp"):
+            self.last_trade_ltp = 0.0
         if not hasattr(self, "_session_date"):
             self._session_date: Optional[datetime.date] = None
             self._trades_today = 0
@@ -1069,7 +1071,10 @@ class SupertrendMomentumStrategy(BaseStrategy):
 
         fut_sym = resolve_future_contract(self.underlying_root, now_dt, self.fut_roll_last_friday)
         self.request_subscribe([fut_sym])
-        return fut_sym, side, spot
+        exec_price = float(getattr(self, "last_trade_ltp", 0.0) or 0.0)
+        if exec_price <= 0.0:
+            exec_price = spot
+        return fut_sym, side, exec_price
 
     def on_candle(self, candle: Dict[str, Any], history: List[Dict[str, Any]]):
         """Evaluates completed 5m candle setups and triggers entries / exits."""
@@ -1120,13 +1125,21 @@ class SupertrendMomentumStrategy(BaseStrategy):
         df = pd.DataFrame(rows, index=pd.DatetimeIndex(idx))
         df = df[~df.index.duplicated(keep="last")].sort_index()
 
-        latest_dt = df.index[-1].to_pydatetime()
-        is_new_bar = self._last_bucket_seen is None or latest_dt > self._last_bucket_seen
-        if is_new_bar:
-            if self._session_date != latest_dt.date():
-                self._session_date = latest_dt.date()
-                self._trades_today = 0
-            self._last_bucket_seen = latest_dt
+        # Evaluate setups strictly on COMPLETED bars (df.iloc[:-1] when a new bar bucket opens).
+        # The last bar in df (df.index[-1]) is the currently-forming incomplete candle.
+        latest_bucket_dt = df.index[-1].to_pydatetime()
+        was_uninitialized = self._last_bucket_seen is None
+        is_new_bar = was_uninitialized or latest_bucket_dt > self._last_bucket_seen
+        if not is_new_bar:
+            return
+
+        if self._session_date != latest_bucket_dt.date():
+            self._session_date = latest_bucket_dt.date()
+            self._trades_today = 0
+        self._last_bucket_seen = latest_bucket_dt
+
+        completed_df = df.iloc[:-1] if len(df) > min_req else df
+        latest_dt = completed_df.index[-1].to_pydatetime()
 
         params: MomentumParamsOverrides = {
             "variant": self.variant,
@@ -1150,7 +1163,7 @@ class SupertrendMomentumStrategy(BaseStrategy):
             "square_off_time": self.square_off_time_num,
         }
 
-        sig_df = generate_signals(df, params)
+        sig_df = generate_signals(completed_df, params)
         last = sig_df.iloc[-1]
         self.last_underlying_ltp = float(last["Close"])
 
@@ -1159,14 +1172,17 @@ class SupertrendMomentumStrategy(BaseStrategy):
         rsi_val = float(last["RSI"]) if math.isfinite(last["RSI"]) else 50.0
         atr_val = float(last["ATR"]) if math.isfinite(last.get("ATR", np.nan)) else 0.0
 
-        if is_new_bar:
-            self.log_decision(
-                "Candle Fetch Success",
-                f"{self.symbol} C={last['Close']:.2f} | ST={st_val:.2f} ({'BULL' if st_dir == 1 else 'BEAR'}) | "
-                f"ATR={atr_val:.1f} (Bounds: [{self.minimum_entry_atr:.1f}, {self.maximum_entry_atr:.1f}]) | "
-                f"RSI={rsi_val:.1f} | BB=[{last['BBLower']:.1f} - {last['BBUpper']:.1f}] | "
-                f"Pivot=[S1:{last['PivotS1']:.1f} R1:{last['PivotR1']:.1f}] | Variant={self.variant}",
-            )
+        self.log_decision(
+            "Candle Fetch Success",
+            f"{self.symbol} ({latest_dt.strftime('%H:%M')}) C={last['Close']:.2f} | ST={st_val:.2f} ({'BULL' if st_dir == 1 else 'BEAR'}) | "
+            f"ATR={atr_val:.1f} (Bounds: [{self.minimum_entry_atr:.1f}, {self.maximum_entry_atr:.1f}]) | "
+            f"RSI={rsi_val:.1f} | BB=[{last['BBLower']:.1f} - {last['BBUpper']:.1f}] | "
+            f"Pivot=[S1:{last['PivotS1']:.1f} R1:{last['PivotR1']:.1f}] | Variant={self.variant}",
+        )
+
+        # On first startup poll, sync indicators & trailing stop without firing a retroactive entry on an old bar
+        if was_uninitialized:
+            return
 
         tn_now = int(latest_dt.hour * 10000 + latest_dt.minute * 100 + latest_dt.second)
         is_sq_off_now = tn_now >= self.square_off_time_num
@@ -1316,7 +1332,7 @@ class SupertrendMomentumStrategy(BaseStrategy):
             "trade_instrument": self.trade_instrument,
             "signal_side": sig_side,
             "order_side": order_side,
-            "entry_price": signal_spot,
+            "entry_price": ref_price,
             "entry_spot": signal_spot,
             "quantity": order_qty,
             "lots": lots,
@@ -1330,9 +1346,9 @@ class SupertrendMomentumStrategy(BaseStrategy):
                 {
                     "leg": trade_symbol.split(":")[-1],
                     "symbol": trade_symbol,
-                    "entry": signal_spot,
+                    "entry": ref_price,
                     "exit": None,
-                    "ltp": signal_spot,
+                    "ltp": ref_price,
                     "qty": leg_qty,
                     "pnl": 0.0,
                     "status": "PENDING",
@@ -1401,7 +1417,6 @@ class SupertrendMomentumStrategy(BaseStrategy):
             return
 
         ltp_f = float(ltp)
-        trade_inst = getattr(self, "trade_instrument", "FUTURE")
         target_signal = self.symbol
         is_signal_sym = (
             (sym == target_signal)
@@ -1410,28 +1425,37 @@ class SupertrendMomentumStrategy(BaseStrategy):
         if is_signal_sym:
             self.last_underlying_ltp = ltp_f
 
+        is_future_sig = (
+            hasattr(self, "signal_symbol")
+            and (sym == self.signal_symbol or (":" in sym and sym.split(":")[-1] == self.signal_symbol.split(":")[-1]))
+        )
+        if is_future_sig:
+            self.last_trade_ltp = ltp_f
+
         if self.trade_state != "IN_TRADE" or not self.current_trade:
             return
 
         trade_sym = self.current_trade.get("symbol", "")
         is_trade_sym = (sym == trade_sym) or (":" in sym and sym.split(":")[-1] == trade_sym.split(":")[-1])
 
-        # Strictly ignore ticks for other instruments (e.g. spot index ticks when trading futures)
-        if not is_trade_sym:
+        if is_trade_sym:
+            self.last_trade_ltp = ltp_f
+            if self.current_trade.get("legs"):
+                leg = self.current_trade["legs"][0]
+                leg["ltp"] = ltp_f
+                ep = float(leg.get("entry") or 0.0)
+                if ep > 0 and leg.get("status") in ["FILLED", "OPEN"]:
+                    is_long = int(leg.get("qty", 1)) > 0
+                    diff = (ltp_f - ep) if is_long else (ep - ltp_f)
+                    pnl = round(diff * abs(int(leg.get("qty", 1))), 2)
+                    leg["pnl"] = pnl
+                    self.current_trade["total_pnl"] = pnl
+
+        # Sub-second Stop Loss & Target checks against the Spot signal instrument
+        # (stop_price & target_price are computed in Spot points)
+        if not is_signal_sym:
             return
 
-        if self.current_trade.get("legs"):
-            leg = self.current_trade["legs"][0]
-            leg["ltp"] = ltp_f
-            ep = float(leg.get("entry") or 0.0)
-            if ep > 0 and leg.get("status") in ["FILLED", "OPEN"]:
-                is_long = int(leg.get("qty", 1)) > 0
-                diff = (ltp_f - ep) if is_long else (ep - ltp_f)
-                pnl = round(diff * abs(int(leg.get("qty", 1))), 2)
-                leg["pnl"] = pnl
-                self.current_trade["total_pnl"] = pnl
-
-        # Sub-second Stop Loss & Target checks strictly against the traded contract's tick LTP
         stop_p = float(self.current_trade.get("stop_price") or 0.0)
         target_p = float(self.current_trade.get("target_price") or 0.0)
         sig_side = self.current_trade.get("signal_side")
