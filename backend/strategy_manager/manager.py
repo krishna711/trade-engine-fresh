@@ -403,6 +403,10 @@ class StrategySupervisor:
         if not sym:
             return
 
+        # Keep local process feed_manager.ticks_cache in sync (essential in multi-terminal IPC mode)
+        from backend.feed_manager.manager import feed_manager
+        feed_manager.ticks_cache[sym] = tick
+
         for inst_id, worker in self.active_workers.items():
             worker_sym = worker.get("symbol")
             extra_syms = worker.get("extra_symbols", set())
@@ -937,6 +941,12 @@ class StrategySupervisor:
 
                             # Check tick cache for current LTP
                             cached_tick = feed_manager.ticks_cache.get(sym)
+                            if not cached_tick and sym:
+                                tok = symbol_mapper.get_broker_token(sym, "XTS")
+                                if tok:
+                                    alias_sym = symbol_mapper.get_canonical_by_token("XTS", tok)
+                                    if alias_sym:
+                                        cached_tick = feed_manager.ticks_cache.get(alias_sym)
                             if not cached_tick and ":" in str(sym):
                                 suffix = sym.split(":")[-1]
                                 for k, v in feed_manager.ticks_cache.items():
@@ -960,7 +970,7 @@ class StrategySupervisor:
                                     leg_pnl = float(leg.get("pnl") or 0.0)
                                 leg["pnl"] = leg_pnl
                                 tot_realized += leg_pnl
-                            elif status in ["FILLED", "EXIT_PENDING"] and entry > 0:
+                            elif status in ["FILLED", "OPEN", "EXIT_PENDING"] and entry > 0:
                                 leg_pnl = _calc_leg_pnl(entry, current_ltp, raw_qty, sym)
                                 leg["pnl"] = leg_pnl
                                 tot_unrealized += leg_pnl

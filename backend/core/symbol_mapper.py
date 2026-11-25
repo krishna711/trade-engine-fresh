@@ -143,8 +143,11 @@ class UniversalSymbolMapper:
                 can_root = f"{prefix}:{root}"
                 self._xts_canonical_to_token[can_root] = token
                 self._xts_canonical_to_symbol[can_root] = trading_sym
-                # Map token directly to canonical root so incoming ticks stream as e.g. MCX:CRUDEOILM
-                self._xts_token_to_canonical[token] = can_root
+                # For MCX commodities, map token to canonical root so incoming ticks stream as e.g. MCX:CRUDEOILM.
+                # For NFO futures (e.g. NFO:NIFTY26DECFUT, NFO:HAL26DECFUT), preserve the exact contract symbol
+                # so live ticks match open positions, strategy legs, and charts 1:1.
+                if prefix == "MCX":
+                    self._xts_token_to_canonical[token] = can_root
                 # If NFO, also alias as NSE:HAL if not present (never overwrite benchmark spot indices!)
                 if prefix == "NFO" and root not in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"]:
                     if f"NSE:{root}" not in self._xts_canonical_to_token:
