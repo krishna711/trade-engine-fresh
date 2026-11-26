@@ -472,16 +472,23 @@ class FeedManager:
         is_stale = False
         if bars:
             try:
-                last_t_str = str(bars[-1].get("time") or "")
-                if "T" in last_t_str:
-                    last_dt = datetime.datetime.fromisoformat(last_t_str)
-                    if last_dt.tzinfo is None:
-                        last_dt = last_dt.replace(tzinfo=IST_TZ)
-                    else:
-                        last_dt = last_dt.astimezone(IST_TZ)
-                    # If last candle is from an older day or more than 3 candle intervals behind current anchor
-                    if last_dt.date() < anchor.date() or (anchor - last_dt) > datetime.timedelta(minutes=step_min * 3):
+                def _parse_bar_dt(b_item):
+                    ts_str = str(b_item.get("time") or "")
+                    if "T" not in ts_str:
+                        return None
+                    dt_v = datetime.datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                    return dt_v.replace(tzinfo=IST_TZ) if dt_v.tzinfo is None else dt_v.astimezone(IST_TZ)
+
+                last_dt = _parse_bar_dt(bars[-1])
+                if last_dt:
+                    # 1. Stale if last candle is from an older day or behind current session anchor by > 1 interval
+                    if last_dt.date() < anchor.date() or (anchor - last_dt) > datetime.timedelta(minutes=step_min):
                         is_stale = True
+                    # 2. Stale if there is an intraday gap between the last completed bar and the current building bar
+                    elif len(bars) >= 2:
+                        prev_dt = _parse_bar_dt(bars[-2])
+                        if prev_dt and prev_dt.date() == last_dt.date() and (last_dt - prev_dt) > datetime.timedelta(minutes=step_min * 2):
+                            is_stale = True
             except Exception:
                 is_stale = False
 

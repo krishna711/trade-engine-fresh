@@ -27,8 +27,14 @@ async def on_startup():
     init_db()
     # Connect to live IPC event broadcast from Feed Manager
     asyncio.create_task(event_bus.start_ipc_client())
-    # Cache live ticks received via IPC into feed_manager.ticks_cache for dashboard REST queries
-    event_bus.subscribe("feed.tick", lambda tick: feed_manager.ticks_cache.update({tick["symbol"]: tick}))
+    # Cache live ticks received via IPC into feed_manager.ticks_cache and keep local OHLCBuilder updated
+    def _on_ipc_tick(tick):
+        sym = tick.get("symbol")
+        if sym:
+            feed_manager.ticks_cache[sym] = tick
+            feed_manager.ohlc_builder.on_tick(tick)
+
+    event_bus.subscribe("feed.tick", _on_ipc_tick)
 
     # Start Telegram Notification Scheduler
     from backend.core.telegram_notifier import telegram_notifier
