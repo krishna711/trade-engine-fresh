@@ -18,6 +18,7 @@ class ChartsPageManager {
         this.refreshTimer = null;
         this.resizeObserver = null;
         this.currentPcpStock = "HAL";
+        this.showIndicatorLabels = false;
 
         this.initListeners();
     }
@@ -67,6 +68,15 @@ class ChartsPageManager {
         if (refreshIntSel) {
             refreshIntSel.onchange = () => {
                 this.startAutoRefresh();
+            };
+        }
+
+        const labelsChk = document.getElementById("charts-page-show-labels");
+        if (labelsChk) {
+            labelsChk.checked = this.showIndicatorLabels;
+            labelsChk.onchange = () => {
+                this.showIndicatorLabels = !!labelsChk.checked;
+                this.renderCurrent();
             };
         }
 
@@ -959,7 +969,14 @@ class ChartsPageManager {
                 });
                 if (linePts.length) {
                     try {
-                        const ls = chart.addLineSeries({ color, lineWidth, lineStyle, title, priceLineVisible: false });
+                        const ls = chart.addLineSeries({
+                            color,
+                            lineWidth,
+                            lineStyle,
+                            title: this.showIndicatorLabels ? title : "",
+                            lastValueVisible: this.showIndicatorLabels,
+                            priceLineVisible: false,
+                        });
                         ls.setData(linePts);
                     } catch (errLine) {
                         console.warn("[ChartsPage] Failed addOverlayLine for", title, errLine);
