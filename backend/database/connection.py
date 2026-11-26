@@ -440,6 +440,37 @@ def seed_initial_data():
                     "auto_chase": True
                 },
                 python_module="backend.strategy_manager.registered.supertrend_momentum"
+            ),
+            StrategyTemplate(
+                key="strat_lr_mcx_v06",
+                name_admin="LR v0.6 MCX 10m Trend Engine (CRUDEOILM)",
+                name_user="LR 10 MCX Trend Alpha (CRUDEOILM)",
+                description="LR v0.6 on MCX 10-minute chart (CRUDEOILM). Combines KAMA(80) ValueWave, Dual-Period Linear Regression(40) Basis, 12-day WMA Daily High/Low filter, Swing(21) breakouts, ADX(15)>25, and Cumulative Volume Delta risk-budget sizing (11:00-17:00 IST).",
+                default_config={
+                    "symbol": "MCX:CRUDEOILM",
+                    "timeframe": "10m",
+                    "timeframe_min": 10,
+                    "kama_period": 80,
+                    "linear_regression_period": 40,
+                    "equity_risk_per_trade": 25000,
+                    "swing_low_lookback": 21,
+                    "swing_high_lookback": 21,
+                    "adx_period": 15,
+                    "adx_threshold": 25,
+                    "first_trade_time": 110000,
+                    "last_trade_time": 170000,
+                    "max_lots": 2,
+                    "capital_limit": 7500000,
+                    "trade_average_period": 12,
+                    "use_delta_sizing": True,
+                    "round_lot_size": 10,
+                    "box_size": None,
+                    "product": "NRML",
+                    "order_type": "LIMIT",
+                    "limit_buffer_pct": 0.015,
+                    "auto_chase": True
+                },
+                python_module="backend.strategy_manager.registered.lr_10_mcx"
             )
         ]
         allowed_keys = [t.key for t in templates]

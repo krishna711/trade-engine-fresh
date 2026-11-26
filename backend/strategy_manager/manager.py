@@ -15,6 +15,7 @@ MODULE_CLASS_MAP = {
     "strat_time_atm_seller_v1": ("backend.strategy_manager.registered.time_atm_seller", "TimeBasedATMSellerStrategy"),
     "strat_pcp_pro_v201": ("backend.strategy_manager.registered.pcp_pro_v201", "PivotChandelierProV201Strategy"),
     "strat_supertrend_momentum_v1": ("backend.strategy_manager.registered.supertrend_momentum", "SupertrendMomentumStrategy"),
+    "strat_lr_mcx_v06": ("backend.strategy_manager.registered.lr_10_mcx", "LR10MCXStrategy"),
 }
 
 
@@ -892,13 +893,14 @@ class StrategySupervisor:
                 for inst_id, worker in list(self.active_workers.items()):
                     cfg = worker.get("config", {})
                     sym = worker.get("symbol", "MCX:CRUDEOILM")
-                    # Support 1m, 3m, 5m, 15m, 1h
+                    # Support 1m, 3m, 5m, 10m, 15m, 1h
                     tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or "5m").strip().lower()
                     if tf.isdigit():
                         tf = f"{tf}m"
-                    if tf not in ["1m", "3m", "5m", "15m", "1h"]:
-                        tf = "3m" if "pcp_pro" in str(worker.get("template_key", "")) else ("1m" if "ftx" in str(worker.get("template_key", "")) else "5m")
-                    count = int(cfg.get("candle_count") or 500)
+                    if tf not in ["1m", "3m", "5m", "10m", "15m", "1h"]:
+                        tf = "10m" if "lr_mcx" in str(worker.get("template_key", "")) else ("3m" if "pcp_pro" in str(worker.get("template_key", "")) else ("1m" if "ftx" in str(worker.get("template_key", "")) else "5m"))
+                    default_cnt = 2000 if "lr_mcx" in str(worker.get("template_key", "")) else 500
+                    count = int(cfg.get("candle_count") or default_cnt)
                     bars = await feed_manager.get_ohlc(sym, resolution=tf, count=count)
                     if bars:
                         latest_bar = bars[-1]

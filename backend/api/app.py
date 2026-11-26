@@ -1402,8 +1402,8 @@ async def get_strategy_chart(id: int, db: Session = Depends(get_db)):
     tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or "5m").strip().lower()
     if tf.isdigit():
         tf = f"{tf}m"
-    if tf not in ["1m", "3m", "5m", "15m", "1h"]:
-        tf = "3m" if "pcp_pro" in str(inst.template_key) else ("1m" if "ftx" in str(inst.template_key) else "5m")
+    if tf not in ["1m", "3m", "5m", "10m", "15m", "1h"]:
+        tf = "10m" if "lr_mcx" in str(inst.template_key) else ("3m" if "pcp_pro" in str(inst.template_key) else ("1m" if "ftx" in str(inst.template_key) else "5m"))
 
     ohlc = await feed_manager.get_ohlc(symbol, resolution=tf, count=40)
     
@@ -1653,21 +1653,21 @@ async def get_strategy_chart_data(
         symbol = f"NSE:{raw_sym}" if (":" not in raw_sym and not raw_sym.startswith("NFO")) else raw_sym
         cfg["symbol"] = symbol
         cfg["underlying"] = symbol
-    default_tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or ("3m" if "pcp_pro" in template_key else ("1m" if "ftx" in template_key else "5m"))).lower()
+    default_tf = str(cfg.get("timeframe") or cfg.get("timeframe_min") or ("10m" if "lr_mcx" in template_key else ("3m" if "pcp_pro" in template_key else ("1m" if "ftx" in template_key else "5m")))).lower()
     if default_tf.isdigit():
         default_tf = f"{default_tf}m"
     tf = (resolution or default_tf).strip().lower()
     if tf.isdigit():
         tf = f"{tf}m"
-    if tf not in ["1m", "3m", "5m", "15m", "1h"]:
-        tf = "3m" if "pcp_pro" in template_key else ("1m" if "ftx" in template_key else "5m")
+    if tf not in ["1m", "3m", "5m", "10m", "15m", "1h"]:
+        tf = "10m" if "lr_mcx" in template_key else ("3m" if "pcp_pro" in template_key else ("1m" if "ftx" in template_key else "5m"))
 
     # Determine target bar count based on requested lookback & resolution
     lb = (lookback or "1w").lower().strip()
     if count is not None and count > 0:
         target_count = min(3500, count)
     else:
-        step_min = 3 if "3m" in tf else (1 if "1m" in tf else (5 if "5m" in tf else (15 if "15m" in tf else 60)))
+        step_min = 10 if "10m" in tf else (3 if "3m" in tf else (1 if "1m" in tf else (5 if "5m" in tf else (15 if "15m" in tf else 60))))
         trading_hours_per_day = 14.5 if "MCX" in symbol.upper() else 6.25
         bars_per_day = int((trading_hours_per_day * 60) / step_min) + 5
         if lb == "1d":
@@ -1881,6 +1881,9 @@ async def get_strategy_chart_data(
     elif template_key == "strat_supertrend_momentum_v1":
         from backend.strategy_manager.registered.supertrend_momentum import compute_supertrend_chart_payload
         payload = compute_supertrend_chart_payload(bars, cfg)
+    elif template_key == "strat_lr_mcx_v06":
+        from backend.strategy_manager.registered.lr_10_mcx import compute_lr_chart_payload
+        payload = compute_lr_chart_payload(bars, cfg)
     else:
         from backend.strategy_manager.registered.ftx_paper_research import compute_ftx_chart_payload
         payload = compute_ftx_chart_payload(bars, cfg)

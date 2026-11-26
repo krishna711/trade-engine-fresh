@@ -751,7 +751,7 @@ class XTSFeedBroker(BaseFeedBroker):
             tok = symbol_mapper.get_broker_token(canonical_symbol, "XTS")
             if tok and str(tok).isdigit():
                 seg_code = 51 if "MCX" in canonical_symbol else (12 if "BSEFO" in canonical_symbol else (11 if "BSE" in canonical_symbol else (2 if "NFO" in canonical_symbol else 1)))
-                comp_map = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "1h": 3600}
+                comp_map = {"1m": 60, "3m": 180, "5m": 300, "10m": 600, "15m": 900, "1h": 3600}
                 comp_val = comp_map.get(resolution.lower().strip(), 180 if "3m" in resolution else 300)
 
                 # Dynamically set lookback based on requested count (7 days to 35 days)

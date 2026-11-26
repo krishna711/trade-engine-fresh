@@ -305,6 +305,7 @@ class ChartsPageManager {
         if (res.includes("1m")) stepSec = 60;
         else if (res.includes("3m")) stepSec = 180;
         else if (res.includes("5m")) stepSec = 300;
+        else if (res.includes("10m")) stepSec = 600;
         else if (res.includes("15m")) stepSec = 900;
         else if (res.includes("1h")) stepSec = 3600;
 
@@ -492,6 +493,7 @@ class ChartsPageManager {
         const osc = data.oscillators || {};
         const isPcp = data.template_key === "strat_pcp_pro_v201";
         const isSupertrend = data.template_key === "strat_supertrend_momentum_v1";
+        const isLrMcx = data.template_key === "strat_lr_mcx_v06";
 
         const open = Number(candle.open || 0);
         const high = Number(candle.high || 0);
@@ -526,6 +528,21 @@ class ChartsPageManager {
                 ${r1Val !== null ? `<span style="color: #a855f7;">R1: ₹${r1Val.toFixed(2)}</span>` : ""}
                 ${s1Val !== null ? `<span style="color: #f59e0b;">S1: ₹${s1Val.toFixed(2)}</span>` : ""}
                 ${(bbUVal !== null && bbLVal !== null) ? `<span style="color: #60a5fa;">BB: [₹${bbLVal.toFixed(2)} - ₹${bbUVal.toFixed(2)}]</span>` : ""}
+                <span>Signals: <strong>${(data.signals || []).length}</strong></span>
+            `;
+        } else if (isLrMcx) {
+            const basisVal = overlays.linear_reg_basis && idx >= 0 ? overlays.linear_reg_basis[idx] : null;
+            const kamaVal = overlays.value_wave && idx >= 0 ? overlays.value_wave[idx] : null;
+            const trailVal = overlays.trail_exit && idx >= 0 ? overlays.trail_exit[idx] : null;
+            const tMode = overlays.trend_mode && idx >= 0 ? overlays.trend_mode[idx] : false;
+            const adxVal = osc.adx && idx >= 0 ? osc.adx[idx] : null;
+            metricsEl.innerHTML = `
+                ${ohlcSummary}
+                <span style="color: ${tMode ? '#10b981' : '#ef4444'}; font-weight: 700;">TrendMode: ${tMode ? '▲ BULL' : '▼ BEAR'}</span>
+                ${basisVal !== null ? `<span style="color: #a855f7;">Basis: ₹${basisVal.toFixed(2)}</span>` : ""}
+                ${kamaVal !== null ? `<span style="color: #38bdf8;">KAMA(80): ₹${kamaVal.toFixed(2)}</span>` : ""}
+                ${trailVal !== null ? `<span style="color: #f59e0b;">TrailExit: ₹${trailVal.toFixed(2)}</span>` : ""}
+                ${adxVal !== null ? `<span style="color: ${adxVal > (osc.adx_threshold || 25) ? '#f59e0b' : '#94a3b8'};">ADX(15): ${adxVal.toFixed(1)}</span>` : ""}
                 <span>Signals: <strong>${(data.signals || []).length}</strong></span>
             `;
         } else if (isPcp) {
@@ -844,6 +861,7 @@ class ChartsPageManager {
         const osc = data.oscillators || {};
         const isPcp = data.template_key === "strat_pcp_pro_v201";
         const isSupertrend = data.template_key === "strat_supertrend_momentum_v1";
+        const isLrMcx = data.template_key === "strat_lr_mcx_v06";
         const lastC = candles.length ? candles[candles.length - 1] : null;
         const lastIdx = candles.length - 1;
 
@@ -862,6 +880,13 @@ class ChartsPageManager {
                     <span style="color: #a855f7;">┄ Pivot R1</span>
                     <span style="color: #f59e0b;">┄ Pivot S1</span>
                     <span style="color: #fbbf24;">┄ OR High / Low</span>
+                    <span style="color: #94a3b8;">▲ BUY / COVER | ▼ SHORT / SELL</span>
+                `;
+            } else if (isLrMcx) {
+                legendEl.innerHTML = `
+                    <span style="color: #a855f7;">━ LinearReg Basis</span>
+                    <span style="color: #38bdf8;">━ KAMA(80) ValueWave</span>
+                    <span style="color: #f59e0b;">┄ TrailExit</span>
                     <span style="color: #94a3b8;">▲ BUY / COVER | ▼ SHORT / SELL</span>
                 `;
             } else if (isPcp) {
@@ -956,6 +981,10 @@ class ChartsPageManager {
                 addOverlayLine(overlays.short_stop, "#ef4444", "Short SL", LightweightCharts.LineStyle.Dashed, 1.5);
                 addOverlayLine(overlays.long_target, "#10b981", "Target R:R", LightweightCharts.LineStyle.Dashed, 1.5);
                 addOverlayLine(overlays.short_target, "#10b981", "Target R:R", LightweightCharts.LineStyle.Dashed, 1.5);
+            } else if (isLrMcx) {
+                addOverlayLine(overlays.linear_reg_basis, "#a855f7", "LinearReg Basis", LightweightCharts.LineStyle.Solid, 2);
+                addOverlayLine(overlays.value_wave, "#38bdf8", "KAMA(80) ValueWave", LightweightCharts.LineStyle.Solid, 2);
+                addOverlayLine(overlays.trail_exit, "#f59e0b", "TrailExit", LightweightCharts.LineStyle.Dashed, 1.5);
             } else if (isPcp) {
                 addOverlayLine(overlays.long_stop, "#10b981", "LongStop");
                 addOverlayLine(overlays.short_stop, "#ef4444", "ShortStop");
@@ -1146,6 +1175,28 @@ class ChartsPageManager {
                                 grid: { drawOnChartArea: false },
                                 title: { display: true, text: "ATR" }
                             },
+                        },
+                    },
+                });
+            } else if (isLrMcx) {
+                if (subTitle) subTitle.innerText = `LR v0.6 Oscillators: ADX(15) [Threshold ${osc.adx_threshold || 25}] & Intraday Cumulative Volume Delta`;
+                this.subChart = new Chart(subCanvas.getContext("2d"), {
+                    type: "line",
+                    data: {
+                        labels,
+                        datasets: [
+                            { label: "ADX(15)", data: osc.adx || [], borderColor: "#60a5fa", yAxisID: "yAdx", tension: 0.2, pointRadius: 0 },
+                            { label: "CumDelta", data: osc.cumulative_delta || [], borderColor: "#10b981", yAxisID: "yDelta", tension: 0.2, pointRadius: 0 },
+                        ],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: "index", intersect: false },
+                        scales: {
+                            x: { grid: { color: theme.grid } },
+                            yAdx: { type: "linear", position: "left", grid: { color: theme.grid }, title: { display: true, text: "ADX(15)" } },
+                            yDelta: { type: "linear", position: "right", grid: { drawOnChartArea: false }, title: { display: true, text: "CumDelta" } },
                         },
                     },
                 });

@@ -311,6 +311,8 @@ def parse_resolution_minutes(resolution: str) -> int:
         return 3
     if res in ["5m", "5"]:
         return 5
+    if res in ["10m", "10"]:
+        return 10
     if res in ["15m", "15"]:
         return 15
     if res in ["1h", "60m", "60"]:

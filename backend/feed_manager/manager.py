@@ -31,10 +31,10 @@ class OHLCBuilder:
         now = datetime.datetime.now(IST_TZ)
 
         if symbol not in self.candles:
-            self.candles[symbol] = {"1m": [], "3m": [], "5m": [], "15m": [], "1h": []}
+            self.candles[symbol] = {"1m": [], "3m": [], "5m": [], "10m": [], "15m": [], "1h": []}
             self.current_bars[symbol] = {}
 
-        for res, step_minutes in [("1m", 1), ("3m", 3), ("5m", 5), ("15m", 15), ("1h", 60)]:
+        for res, step_minutes in [("1m", 1), ("3m", 3), ("5m", 5), ("10m", 10), ("15m", 15), ("1h", 60)]:
             curr = self.current_bars[symbol].get(res)
             # Candle bucket time in IST aligned to session open
             from backend.feed_manager.market_hours import get_market_hours_for_symbol
@@ -518,7 +518,7 @@ class FeedManager:
 
             if is_real_broker and broker_bars:
                 if canonical_symbol not in self.ohlc_builder.candles:
-                    self.ohlc_builder.candles[canonical_symbol] = {"1m": [], "3m": [], "5m": [], "15m": [], "1h": []}
+                    self.ohlc_builder.candles[canonical_symbol] = {"1m": [], "3m": [], "5m": [], "10m": [], "15m": [], "1h": []}
                 self.ohlc_builder.candles[canonical_symbol][resolution] = [dict(b) for b in broker_bars[:-1]]
                 if broker_bars:
                     self.ohlc_builder.current_bars.setdefault(canonical_symbol, {})[resolution] = dict(broker_bars[-1])
