@@ -558,6 +558,9 @@ class LR10MCXStrategy(BaseStrategy):
             raw_qty = int(leg0.get("qty") or 1)
             side = "BUY" if raw_qty > 0 else "SELL"
             entry_p = float(leg0.get("entry") or 0.0)
+            rehydrated_legs = [dict(l) for l in legs]
+            if rehydrated_legs and rehydrated_legs[0].get("status") == "PENDING" and entry_p > 0:
+                rehydrated_legs[0]["status"] = "FILLED"
             self.current_trade = {
                 "symbol": sym,
                 "signal_side": side,
@@ -565,7 +568,7 @@ class LR10MCXStrategy(BaseStrategy):
                 "quantity": abs(raw_qty),
                 "trail_exit": float(leg0.get("stop_price") or entry_p),
                 "entry_time": initial_state.get("last_trade_at") or datetime.datetime.utcnow().isoformat(),
-                "legs": [dict(l) for l in legs],
+                "legs": rehydrated_legs,
                 "total_pnl": float(initial_state.get("unrealized_pnl", 0.0) or 0.0),
             }
             self.log_decision(
@@ -764,3 +767,45 @@ class LR10MCXStrategy(BaseStrategy):
             pnl = round(diff * abs(int(leg.get("qty", 1))) * self.round_lot_size, 2)
             leg["pnl"] = pnl
             self.current_trade["total_pnl"] = pnl
+
+    def on_order_update(self, update_data: Dict[str, Any]):
+        """Synchronizes genuine broker fill prices and transitions PENDING legs to FILLED."""
+        ord_req = update_data.get("order_request", {})
+        results = update_data.get("results", [])
+        if not results or not self.current_trade or not self.current_trade.get("legs"):
+            return
+
+        filled = [r for r in results if r.get("success") and str(r.get("status") or "").upper() == "FILLED"]
+        open_pending = [r for r in results if r.get("success") and str(r.get("status") or "").upper() in ["OPEN", "PENDING", "NEW"]]
+
+        leg0 = self.current_trade["legs"][0]
+        if filled:
+            avg_fill = round(sum(float(r.get("price", 0.0)) for r in filled) / len(filled), 2)
+            req_side = str(ord_req.get("side") or "").upper()
+            entry_side = self.current_trade.get("signal_side", "BUY")
+
+            if req_side == entry_side or not req_side:
+                if avg_fill > 0:
+                    leg0["entry"] = avg_fill
+                    if float(leg0.get("ltp") or 0.0) <= 0:
+                        leg0["ltp"] = avg_fill
+                    self.current_trade["entry_price"] = avg_fill
+                leg0["status"] = "FILLED"
+                cur_ltp = float(leg0.get("ltp") or avg_fill)
+                ep = float(leg0.get("entry") or avg_fill)
+                if ep > 0 and cur_ltp > 0:
+                    is_long = int(leg0.get("qty", 1)) > 0
+                    diff = (cur_ltp - ep) if is_long else (ep - cur_ltp)
+                    pnl = round(diff * abs(int(leg0.get("qty", 1))) * self.round_lot_size, 2)
+                    leg0["pnl"] = pnl
+                    self.current_trade["total_pnl"] = pnl
+                self.log_decision(
+                    "ORDER FILLED",
+                    f"Broker execution confirmed {self.current_trade['symbol']} @ ₹{avg_fill:.2f}",
+                    level="SUCCESS",
+                )
+        elif not open_pending and self.trade_state == "IN_TRADE" and leg0.get("status") in ["PENDING", "SENT"]:
+            rej = "; ".join(set(r.get("rejection_reason") for r in results if r.get("rejection_reason"))) or "Order rejected"
+            leg0["status"] = "REJECTED"
+            self.trade_state = "IDLE"
+            self.log_decision("ORDER REJECTED", f"Entry order rejected: {rej}", level="ERROR")
