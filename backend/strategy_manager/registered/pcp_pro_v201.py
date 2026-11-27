@@ -1595,7 +1595,7 @@ class PivotChandelierProV201Strategy(BaseStrategy):
             side=exit_side,
             quantity=qty,
             order_type=self.order_type,
-            price=cur_ltp if self.trade_instrument != "OPTION" else 0.0,
+            price=cur_ltp,
             product=self.product,
             leg_id="EXIT_PRIMARY",
             buffer_pct=self.limit_buffer_pct,
@@ -1707,7 +1707,7 @@ class PivotChandelierProV201Strategy(BaseStrategy):
                     leg0["entry"] = avg_fill
                     leg0["ltp"] = avg_fill
                     self.current_trade["entry_price"] = avg_fill
-                    if self.trade_instrument != "ATM_OPTION":
+                    if self.trade_instrument not in ["OPTION", "ATM_OPTION"]:
                         self.current_trade["entry_spot"] = avg_fill
                         tl = float(self.pcp_params.get("target_long_pct", 0.027))
                         ts = float(self.pcp_params.get("target_short_pct", 0.023))

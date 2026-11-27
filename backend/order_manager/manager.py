@@ -140,6 +140,19 @@ class OrderManager:
                     "rejection_reason": block_reason
                 }
 
+            # Resolve live market LTP when price is omitted or in paper mode (never fall back to tick_size 0.05!)
+            live_ltp = float(price or 0.0)
+            if live_ltp <= 0.0:
+                try:
+                    from backend.feed_manager.manager import feed_manager
+                    q = await feed_manager.get_live_quote(symbol)
+                    if q and float(q.get("ltp") or 0.0) > 0:
+                        live_ltp = float(q["ltp"])
+                except Exception:
+                    pass
+            if live_ltp <= 0.0:
+                live_ltp = 100.0
+
             # Dispatch order
             adapter = create_broker_order_adapter(account.broker, client_id, account.credentials_json, static_ip=account.static_ip)
             order_dict = {
@@ -149,13 +162,13 @@ class OrderManager:
                 "side": side.upper(),
                 "quantity": quantity,
                 "order_type": order_type.upper(),
-                "price": price,
+                "price": float(price or 0.0) if float(price or 0.0) > 0 else live_ltp,
                 "trigger_price": trigger_price,
                 "product": prod_upper,
                 "is_paper": effective_is_paper,
                 "buffer_pct": float(buffer_pct),
                 "auto_chase": bool(auto_chase),
-                "ltp": price or (mapping.tick_size if mapping else 100.0)
+                "ltp": live_ltp
             }
 
             resp = await adapter.place_order(order_dict)
